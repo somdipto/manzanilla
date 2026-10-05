@@ -40,6 +40,7 @@ class HotelActivity : Activity() {
     private var companionReady = false
     private var companionFailed = false
     private var dialog: AlertDialog? = null
+    private val updater by lazy { Updater(this) { } }
     private val pulse = object : Runnable {
         override fun run() {
             scene.invalidate()
@@ -174,7 +175,7 @@ class HotelActivity : Activity() {
         if (code == KeyEvent.KEYCODE_ENDCALL && event.repeatCount == 0) { stop(); return true }
         return super.onKeyDown(code, event)
     }
-    override fun onResume() { super.onResume(); handler.post(pulse); handler.removeCallbacks(beat); handler.post(beat) }
+    override fun onResume() { super.onResume(); updater.check(); handler.post(pulse); handler.removeCallbacks(beat); handler.post(beat) }
     override fun onPause() { super.onPause(); stop(); handler.removeCallbacks(pulse); companion.updateStage(false, "idle", 0f, true, 0, false) }
     override fun onDestroy() { handler.removeCallbacksAndMessages(null); stop(); cloud?.dispose(); companion.disposeStage(); super.onDestroy() }
     inner class CallView : View(this@HotelActivity) {

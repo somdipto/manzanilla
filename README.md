@@ -1,3 +1,7 @@
+# Manzanilla Orange Reception
+
+**Install on an Android phone/tablet:** [Download the latest APK](https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk) (open it on the device, allow "install unknown apps" for your browser once). Every push to `main` builds and publishes a new signed release; the app checks for updates on launch and installs them itself (Android may show one confirmation tap unless the device is set up as device owner).
+
 # Orange Night Reception — development implementation
 
 Code derived from the supplied UI ZIP. This is **not a completed four-hotel production pilot**. Original Android app is retained; independent `hotel` module connects to cloud with HTTPS/WSS. No backend secret is in the APK.

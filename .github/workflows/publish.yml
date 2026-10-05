@@ -1,0 +1,37 @@
+name: Build and publish Reception APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
+      - name: Build signed release APK
+        env:
+          ORANGE_KEYSTORE_BASE64: ${{ secrets.ORANGE_KEYSTORE_BASE64 }}
+          ORANGE_STORE_PASSWORD: ${{ secrets.ORANGE_STORE_PASSWORD }}
+          ORANGE_KEY_ALIAS: ${{ secrets.ORANGE_KEY_ALIAS }}
+          ORANGE_KEY_PASSWORD: ${{ secrets.ORANGE_KEY_PASSWORD }}
+        working-directory: android
+        run: |
+          test -n "$ORANGE_KEYSTORE_BASE64"
+          export ORANGE_KEYSTORE="$RUNNER_TEMP/orange-release.jks"
+          printf '%s' "$ORANGE_KEYSTORE_BASE64" | base64 --decode > "$ORANGE_KEYSTORE"
+          bash gradlew :hotel:assembleRelease --no-daemon
+          rm -f "$ORANGE_KEYSTORE"
+          cp hotel/build/outputs/apk/release/*.apk "$RUNNER_TEMP/Manzanilla-Reception.apk"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${GITHUB_RUN_NUMBER}" "$RUNNER_TEMP/Manzanilla-Reception.apk" \
+            --repo "$GITHUB_REPOSITORY" --title "Build ${GITHUB_RUN_NUMBER}" \
+            --notes "Automatic build of ${GITHUB_SHA::7}" --latest
