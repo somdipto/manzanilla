@@ -2,10 +2,10 @@
 
 **Faster execution hardware for the hospitality industry.**
 
-Manzanilla Orange Reception is the front-desk screen of the Manzanilla system: a landscape Android app that gives a hotel's night reception a calm, always-ready voice assistant and a one-tap way to reach a person. It runs on the Android device at the desk and stays out of the way: the assistant helps with routine requests, and "Speak to a person" is always one tap away.
+Manzanilla Reception is the front-desk screen of the Manzanilla system: a landscape Android app with a reception bell and a 3D host. Guests ring the bell, pick one of eight languages, and choose Live translation or Hotel assistance (Check in, Talk to a person, Get a taxi, Ask anything). A Night reception mode goes straight to language choice.
 
 <p align="center">
-  <img src="docs/screenshots/call-active.png" alt="Orange Reception during a call, with the 3D companion" width="720">
+  <img src="docs/screens/4-hotel-assistance.png" alt="Manzanilla reception: Hotel assistance" width="720">
 </p>
 
 <p align="center">
@@ -18,9 +18,9 @@ Manzanilla Orange Reception is the front-desk screen of the Manzanilla system: a
 
 1. On the Android device, open this link and download the APK: **[Manzanilla-Reception.apk (latest)](https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk)**
 2. Open the downloaded file. If Android asks, allow "Install unknown apps" for the browser or file manager you used, then tap Install.
-3. Open **Orange Reception**. It starts straight on the reception screen: no login, no setup.
+3. Open **Manzanilla Reception**. It starts straight on the reception screen: no login, no setup.
 
-<p align="center"><img src="docs/screenshots/reception-home.png" alt="Ready screen" width="520"></p>
+<p align="center"><img src="docs/screens/1-bell.png" alt="Reception bell" width="520"></p>
 
 All releases: https://github.com/somdipto/manzanilla/releases
 
