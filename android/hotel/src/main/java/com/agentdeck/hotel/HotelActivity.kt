@@ -67,7 +67,7 @@ class HotelActivity : Activity() {
         val settings = Button(this).apply { setText(R.string.setup); setOnClickListener { setup() } }
         root.addView(settings, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
         setContentView(root)
-        if (prefs.getString("base", "").isNullOrEmpty()) setup() else configure()
+        if (!prefs.getString("base", "").isNullOrEmpty()) configure() else settings.visibility = View.GONE
     }
     private fun configure() {
         cloud?.dispose()
@@ -102,7 +102,7 @@ class HotelActivity : Activity() {
         }.show()
     }
     private fun start() {
-        if (cloud == null) { setup(); return }
+        if (cloud == null) { active = true; phase = "listening"; message = "Demo mode: no server connected"; started = System.currentTimeMillis(); return }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 7); return
         }
