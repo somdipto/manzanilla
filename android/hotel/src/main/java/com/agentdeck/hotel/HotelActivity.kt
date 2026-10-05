@@ -65,42 +65,17 @@ class HotelActivity : Activity() {
         root.addView(companion, FrameLayout.LayoutParams((resources.displayMetrics.widthPixels * .49f).toInt(), (resources.displayMetrics.heightPixels * .65f).toInt()).apply { leftMargin = 12; topMargin = 65 })
         val operator = Button(this).apply { setText(R.string.operator); setOnClickListener { stop(); dial(primary, backup, null) } }
         root.addView(operator, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END))
-        val settings = Button(this).apply { setText(R.string.setup); setOnClickListener { setup() } }
-        root.addView(settings, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
         setContentView(root)
-        if (!prefs.getString("base", "").isNullOrEmpty()) configure() else settings.visibility = View.GONE
+        configure()
     }
     private fun configure() {
-        cloud?.dispose()
+        cloud?.dispose(); cloud = null
+        if (BuildConfig.BACKEND_URL.isBlank() || BuildConfig.DEVICE_TOKEN.isBlank()) return
         val gen = ++generation
-        cloud = CloudClient(prefs.getString("base", "")!!, prefs.getString("token", "")!!,
+        cloud = CloudClient(BuildConfig.BACKEND_URL.trimEnd('/'), BuildConfig.DEVICE_TOKEN,
             { event -> handler.post { if (gen == generation) onEvent(event) } },
             { bytes -> handler.post { if (gen == generation && active) { speaker.append(bytes); itemReceived += bytes.size / 2; phase = "speaking" } } })
         handler.removeCallbacks(beat); handler.post(beat)
-    }
-    private fun setup() {
-        stop()
-        if (cloud != null) {
-            val staff = EditText(this).apply { hint = "Hotel staff authorization token"; inputType = 129 }
-            AlertDialog.Builder(this).setTitle("Staff authorization").setView(staff)
-                .setNegativeButton("Cancel", null).setPositiveButton("Authorize") { _, _ ->
-                    cloud?.authorizeStaff(staff.text.toString().trim()) { handler.post { enrollment() } }
-                }.show()
-        } else enrollment()
-    }
-    private fun enrollment() {
-        // Enrollment belongs to hotel staff. Device token must never be an OpenAI API key.
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 16, 24, 16) }
-        val base = EditText(this).apply { hint = "https://orange.example.com"; setText(prefs.getString("base", "")) }
-        val token = EditText(this).apply { hint = "Device enrollment token"; inputType = 129 }
-        box.addView(base); box.addView(token)
-        AlertDialog.Builder(this).setTitle("Staff device enrollment").setView(box).setNegativeButton("Cancel", null).setPositiveButton("Save") { _, _ ->
-            val value = base.text.toString().trim().trimEnd('/')
-            val secret = token.text.toString().trim()
-            if (!value.startsWith("https://") || secret.isBlank()) { failure("HTTPS URL and device token required."); return@setPositiveButton }
-            prefs.edit().putString("base", value).putString("token", secret).apply()
-            configure()
-        }.show()
     }
     private fun start() {
         if (cloud == null) { active = true; phase = "listening"; message = "Demo mode: no server connected"; started = System.currentTimeMillis(); return }

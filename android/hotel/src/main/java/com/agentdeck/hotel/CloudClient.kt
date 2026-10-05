@@ -30,9 +30,6 @@ class CloudClient(private val base: String, private val token: String,
             }
         })
     }
-    fun authorizeStaff(secret: String, approved: () -> Unit) {
-        post("/api/device/staff-check", JSONObject().put("staff_token", secret)) { if (it.optBoolean("authorized")) approved() }
-    }
     fun heartbeat(version: Int) {
         post("/api/device/heartbeat", JSONObject().put("app_version", "0.1.0").put("config_version", version).put("protocol", 1)) {
             event(JSONObject().put("type", "config").put("hotel", it.getJSONObject("hotel")).put("device_id", it.getString("device_id")))

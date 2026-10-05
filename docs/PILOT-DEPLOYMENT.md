@@ -57,7 +57,7 @@ Foreground alternative: set Edge variables in the shell and run `python -m edge.
 5. Confirm note → actual morning inbox after refresh/restart. Staff take responsibility for queued taxi requests; otherwise configure and test a real taxi/telephony provider before relying on it.
 6. Verify actual operator dialer/SIM and primary/backup numbers; add answered/no-answer detection or managed SIP transfer before claiming reliable connected handoff.
 7. Run verified reservation lookup/guidance. Staff retain sensitive check-in actions and identity checks. Install Edge only for required legacy access; disconnect PC to prove core cloud operation survives.
-8. Lock staff setup/enrollment with managed device provisioning, configure privacy/retention, backup/restore and release key. Deploy signed APK to one device first, then other three after acceptance.
+8. Configure privacy/retention, backup/restore and release key. Deploy signed APK to one device first, then other three after acceptance.
 9. Execute docs/TEST-PLAN.md and record evidence per hotel. Do not mark a pilot complete using mock test results.
 
 ## Updates and rollback

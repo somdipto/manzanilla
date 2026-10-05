@@ -2,16 +2,6 @@
 
 Real screenshots from the Android emulator (854x480, landscape).
 
-## Original supplied build (before our changes)
-
-| Screen | File |
-| --- | --- |
-| Staff device enrollment dialog (opens on first launch) | [original-1-enrollment-dialog.png](original-1-enrollment-dialog.png) |
-| Main screen with the SETUP button | [original-2-main-screen-with-setup-button.png](original-2-main-screen-with-setup-button.png) |
-| Enrollment dialog being filled in (URL + device token) | [original-3-enrollment-filled.png](original-3-enrollment-filled.png) |
-
-The original also has a "Staff authorization" dialog that only appears when a server is configured and reachable. It could not be shown without a server.
-
 ## Current build
 
 | Screen | File |
