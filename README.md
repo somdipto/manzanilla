@@ -1,48 +1,60 @@
-# Manzanilla Orange Reception
+# Manzanilla
 
-**Install on an Android phone/tablet:** [Download the latest APK](https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk) (open it on the device, allow "install unknown apps" for your browser once). Every push to `main` builds and publishes a new signed release; the app checks for updates on launch and installs them itself (Android may show one confirmation tap unless the device is set up as device owner).
+**Faster execution hardware for the hospitality industry.**
 
-# Orange Night Reception — development implementation
+Manzanilla Orange Reception is the front-desk screen of the Manzanilla system: a landscape Android app that gives a hotel's night reception a calm, always-ready voice assistant and a one-tap way to reach a person. It runs on the Android device at the desk and stays out of the way: the assistant helps with routine requests, and "Speak to a person" is always one tap away.
 
-Code derived from the supplied UI ZIP. This is **not a completed four-hotel production pilot**. Original Android app is retained; independent `hotel` module connects to cloud with HTTPS/WSS. No backend secret is in the APK.
+<p align="center">
+  <img src="docs/screenshots/reception-home.png" alt="Reception screen" width="640">
+</p>
 
-## Reused
-Original `android/app` and Gradle wrapper preserved. Hotel module reuses/adapts LiveCompanionView, packaged voice-companion assets, LiveVoiceScene, LiveSpeaker and PcmEnvelope. MicStreamer capture concept becomes HotelMic at 24 kHz. Upstream license inventory retained. Desktop source stays in the original ZIP and is not required by the hotel SKU.
+## Install
 
-## Replaced in hotel SKU
-BridgeClient/mDNS/PC ws:// → authenticated CloudClient. General MainActivity/DeckView → HotelActivity with the supplied scene/companion. Laptop microphone → native capture (hardware unverified). Separate manifest removes camera/PC permissions and denies cleartext. The original SKU is intact.
+1. On the Android device, open this link and download the APK: **[Manzanilla-Reception.apk (latest)](https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk)**
+2. Open the downloaded file. If Android asks, allow "Install unknown apps" for the browser or file manager you used, then tap Install.
+3. Open **Orange Reception**. It starts straight on the reception screen: no login, no setup.
 
-## Added
-Cloud realtime relay, hotel policy/tool gateway, device/staff/Edge authentication, persistent SQLite inbox/audit/call ledger, booking access scoped to session, demo/REST/Edge connector boundaries, restricted outbound Edge executor, admin hotel/config/fleet/integration/inbox/session/morning views, Docker/TLS/service templates, Windows startup scripts, CI/debug build and signed pilot release workflow.
+All releases: https://github.com/somdipto/manzanilla/releases
 
-## Verified
-16 application tests pass, including actual relay execution against a **simulated** OpenAI connection. Hotel debug APK builds and Android lint passes (nonfatal warnings on the retained decorative WebView). An actual Edge subprocess performs a reservation lookup through cloud over trusted local TLS, then degrades safely when disconnected. Original archive integrity passes. Admin JavaScript syntax and Python module compilation pass. Real OpenAI/PMS/telephony/device acceptance remains open.
+## Updates install themselves
 
-| Capability | Current code | Still required |
-|---|---|---|
-| Multilingual voice | Realtime session + language instructions | Real key, voice/language and handset tests |
-| Taxi | Device-confirmed durable staff inbox request, optional dialer | Staff workflow or real taxi provider booking/call |
-| Reception note | Confirmation → durable cloud inbox | Physical phone/reception workflow QA |
-| Check-in | Verified demo/gateway lookup and eligibility-based guidance | Actual hotel PMS/vendor/policy |
-| Operator | Immediate tool/button, configured primary/backup, escalation inbox | Answered/no-answer-aware transfer; dialer opening is not a connected call |
-| Concierge | Trusted configurable knowledge/services | Actual property data and language QA |
+Every push to `main` builds a new signed release automatically. The app checks for a newer release each time it opens, downloads it, and asks Android to install it. You do not reinstall by hand.
 
-Demo reservation: DEMO-204 / Smith, marked synthetic. PMS note delivery is not claimed. No completed check-in, taxi booking or answered call is fabricated.
+<p align="center">
+  <img src="docs/screenshots/auto-update-prompt.png" alt="Update prompt" width="520">
+</p>
 
-## Run
+Android shows one "Update" confirmation for apps that were installed from a file. A device set up as device owner (kiosk) installs updates with no tap at all.
+
+## What is in this repository
+
+| Folder | What it is |
+| --- | --- |
+| `android/hotel` | The Orange Reception app (landscape, microphone, auto-update) |
+| `android/app` | Earlier general-purpose controller app, kept for reference |
+| `cloud` | Backend for hotel setup, device sessions and voice calls |
+| `admin` | Small web dashboard for hotel setup |
+| `edge`, `infra`, `shared` | Supporting services and shared definitions |
+| `docs` | Architecture, pilot deployment notes, test plan |
+| `.github/workflows` | CI: build, test and publish releases |
+
+The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-README.md).
+
+## Status
+
+The reception screen, installation and automatic updates work today. Voice calls need the backend in `cloud` to be running and connected; until then the app runs in a local demo mode that shows the screen and the call states without a server.
+
+## Build it yourself
+
+Requires JDK 17 and the Android SDK.
+
 ```sh
-python -m venv .venv
-. .venv/bin/activate
-pip install -r requirements-dev.txt
-python -m pytest tests -q
-# Export backend secrets from .env.example first:
-uvicorn cloud.app:app --host 127.0.0.1 --port 8080 --workers 1
-# JDK 17 + SDK 34:
 cd android
-bash gradlew :hotel:assembleDebug --no-daemon
+./gradlew :hotel:assembleDebug
 ```
-Local admin: http://127.0.0.1:8080/admin. Phone/Edge require trusted HTTPS/WSS. Exact deployment, signing, Edge installation, rollback and Hotel #1 onboarding commands are in docs/PILOT-DEPLOYMENT.md. Required environment: docs/ENVIRONMENT.md. Audit: docs/CURRENT-STATE.md. Protocol/limits: docs/ARCHITECTURE.md and shared/protocol.md. Evidence and release gates: docs/TEST-PLAN.md.
 
-Phases 0–4 have code, with live voice/device acceptance pending. Phases 5–8 have connector/Edge/admin/fleet implementations and templates, with real vendor integration and deployment unverified. Automated hardening is present; physical failure tests and four-hotel pilot remain open. Mac Arc is a separate project and was not altered.
+Signed release builds are produced by GitHub Actions; the signing key is stored as a repository secret and is never committed.
 
-Releases: https://github.com/somdipto/manzanilla/releases
+## License
+
+See [LICENSE](LICENSE).
