@@ -5,7 +5,13 @@
 Manzanilla Orange Reception is the front-desk screen of the Manzanilla system: a landscape Android app that gives a hotel's night reception a calm, always-ready voice assistant and a one-tap way to reach a person. It runs on the Android device at the desk and stays out of the way: the assistant helps with routine requests, and "Speak to a person" is always one tap away.
 
 <p align="center">
-  <img src="docs/screenshots/reception-home.png" alt="Reception screen" width="640">
+  <img src="docs/screenshots/call-active.png" alt="Orange Reception during a call, with the 3D companion" width="720">
+</p>
+
+<p align="center">
+  <a href="https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Manzanilla%20Reception-2ea44f?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="56"></a>
+  &nbsp;
+  <a href="https://github.com/somdipto/manzanilla/releases"><img src="https://img.shields.io/badge/All%20releases-GitHub-24292e?style=for-the-badge&logo=github" alt="All releases" height="56"></a>
 </p>
 
 ## Install
@@ -13,6 +19,8 @@ Manzanilla Orange Reception is the front-desk screen of the Manzanilla system: a
 1. On the Android device, open this link and download the APK: **[Manzanilla-Reception.apk (latest)](https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk)**
 2. Open the downloaded file. If Android asks, allow "Install unknown apps" for the browser or file manager you used, then tap Install.
 3. Open **Orange Reception**. It starts straight on the reception screen: no login, no setup.
+
+<p align="center"><img src="docs/screenshots/reception-home.png" alt="Ready screen" width="520"></p>
 
 All releases: https://github.com/somdipto/manzanilla/releases
 
