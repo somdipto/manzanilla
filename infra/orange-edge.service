@@ -1,0 +1,17 @@
+[Unit]
+Description=Orange hotel read-only Edge
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=orange-edge
+WorkingDirectory=/opt/orange
+EnvironmentFile=/etc/orange-edge.env
+ExecStart=/opt/orange/.venv/bin/python -m edge.executor
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target

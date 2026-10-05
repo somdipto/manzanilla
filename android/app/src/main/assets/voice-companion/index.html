@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+    <meta name="color-scheme" content="light">
+    <title>Orange companion loading</title>
+    <style>
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #FAFBFC; }
+      body { touch-action: none; user-select: none; -webkit-user-select: none; }
+      canvas { display: block; width: 100%; height: 100%; background: #FAFBFC; }
+      #greeting { position: absolute; left: calc(50% + 78px); top: 25%; margin: 0; color: #42504a; font: 600 22px/1.2 system-ui, sans-serif; opacity: 0; pointer-events: none; }
+    </style>
+    <script defer src="./companion.js"></script>
+  </head>
+  <body><canvas id="companion" role="img" aria-label="Manzanilla sprout companion"></canvas><span id="greeting" aria-hidden="true">Hi!</span></body>
+</html>
