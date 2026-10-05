@@ -44,3 +44,5 @@ bash gradlew :hotel:assembleDebug --no-daemon
 Local admin: http://127.0.0.1:8080/admin. Phone/Edge require trusted HTTPS/WSS. Exact deployment, signing, Edge installation, rollback and Hotel #1 onboarding commands are in docs/PILOT-DEPLOYMENT.md. Required environment: docs/ENVIRONMENT.md. Audit: docs/CURRENT-STATE.md. Protocol/limits: docs/ARCHITECTURE.md and shared/protocol.md. Evidence and release gates: docs/TEST-PLAN.md.
 
 Phases 0–4 have code, with live voice/device acceptance pending. Phases 5–8 have connector/Edge/admin/fleet implementations and templates, with real vendor integration and deployment unverified. Automated hardening is present; physical failure tests and four-hotel pilot remain open. Mac Arc is a separate project and was not altered.
+
+Releases: https://github.com/somdipto/manzanilla/releases
