@@ -2,10 +2,10 @@
 
 **Faster execution hardware for the hospitality industry.**
 
-Manzanilla Reception is the front-desk screen of the Manzanilla system: a landscape Android app with a reception bell and a 3D host. Guests ring the bell, pick one of eight languages, and choose Live translation or Hotel assistance (Check in, Talk to a person, Get a taxi, Ask anything). A Night reception mode goes straight to language choice.
+Manzanilla Reception is a landscape Android app with a reception bell and a hands-free live-translation screen. Choose the guest and hotel languages from the top language pill. Add your Gemini API key in Settings; it is encrypted on the device and is not included in the APK.
 
 <p align="center">
-  <img src="docs/screens/4-hotel-assistance.png" alt="Manzanilla reception: Hotel assistance" width="720">
+  <img src="docs/screens/design-u-emulator.png" alt="Manzanilla translation screen, scripted UI replay" width="720">
 </p>
 
 <p align="center">
@@ -18,7 +18,7 @@ Manzanilla Reception is the front-desk screen of the Manzanilla system: a landsc
 
 1. On the Android device, open this link and download the APK: **[Manzanilla-Reception.apk (latest)](https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk)**
 2. Open the downloaded file. If Android asks, allow "Install unknown apps" for the browser or file manager you used, then tap Install.
-3. Open **Manzanilla Reception**. It starts straight on the reception screen: no login, no setup.
+3. Open **Manzanilla**. It starts straight on reception, without staff enrollment. Add your Gemini API key in Settings before trying translation.
 
 <p align="center"><img src="docs/screens/1-bell.png" alt="Reception bell" width="520"></p>
 
@@ -42,7 +42,7 @@ Every reception screen, original and current, is listed in [docs/screens](docs/s
 
 | Folder | What it is |
 | --- | --- |
-| `android/hotel` | The Orange Reception app (landscape, microphone, auto-update) |
+| `android/hotel` | The Manzanilla Reception app (landscape, microphone, auto-update) |
 | `android/app` | Earlier general-purpose controller app, kept for reference |
 | `cloud` | Backend for hotel setup, device sessions and voice calls |
 | `admin` | Small web dashboard for hotel setup |
@@ -54,7 +54,7 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 
 ## Status
 
-The reception screen, installation and automatic updates work today. Voice calls need the backend in `cloud` to be running and connected; until then the app runs in a local demo mode that shows the screen and the call states without a server.
+Beta: design U has been built, installed and visually checked on an Android emulator. The screenshot and [screen recording](docs/videos/design-u-ui-replay.mp4) use debug-only scripted conversation events, not live Gemini output. The app uses `gemini-3.5-live-translate-preview` with two language sessions and on-device key entry. Real-key translation, microphone/speaker performance, echo cancellation and reconnect behavior have not yet been verified on a phone. Do not treat this as a production-ready interpreter. A paid key is recommended for real guest audio; free-tier use may be used for training.
 
 ## Build it yourself
 

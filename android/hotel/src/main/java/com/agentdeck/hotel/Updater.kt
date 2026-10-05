@@ -32,6 +32,7 @@ class Updater(private val context: Context, private val onStatus: (String) -> Un
     }
 
     fun check() {
+        if (BuildConfig.DEBUG) return
         if (busy) return
         busy = true
         Thread {

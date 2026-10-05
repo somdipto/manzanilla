@@ -49,7 +49,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit) 
             @JavascriptInterface fun postMessage(raw: String) {
                 if (raw.length > 8192) return
                 val message = try { JSONObject(raw) } catch (_: Exception) { return }
-                if (message.optString("action") !in setOf("start", "stop", "info", "exit", "speak", "silence", "bell", "night", "activity", "confirm", "message", "operator", "checkin", "taxi", "question")) return
+                if (message.optString("action") !in setOf("start", "stop", "info", "exit", "speak", "set_key", "turn", "silence", "bell", "night", "activity", "confirm", "message", "operator", "checkin", "taxi", "question")) return
                 post { if (!disposed && shown) action(message) }
             }
         }, "ManzaniaNative")
