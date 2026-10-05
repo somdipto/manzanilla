@@ -34,6 +34,10 @@ Every push to `main` builds a new signed release automatically. The app checks f
 
 Android shows one "Update" confirmation for apps that were installed from a file. A device set up as device owner (kiosk) installs updates with no tap at all.
 
+## Screens
+
+Every reception screen, original and current, is listed in [docs/screens](docs/screens/README.md).
+
 ## What is in this repository
 
 | Folder | What it is |
