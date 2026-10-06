@@ -290,3 +290,30 @@ html[data-night="true"] .choice svg{color:#6fe0b0}
 html[data-night="true"] .settings-link,html[data-night="true"] .link{color:#6fe0b0}
 html[data-night="true"] .night-toggle:before{box-shadow:inset -4px -2px 0 #f2f7ff}
 html[data-night="true"] .stop{background:#fff!important}
+
+/* Night reception v3: neutral charcoal, warm green accent, no blue */
+html[data-night="true"]{--ink:#f3f1ea;--muted:#b4bab4;--surface:#1c201e;--focus:#6fe0b0;color-scheme:dark}
+html[data-night="true"] body{background:#0d0f0e!important}
+html[data-night="true"] .room-light{background:radial-gradient(ellipse 55% 50% at 24% 45%,rgba(80,200,150,.13) 0%,transparent 70%),radial-gradient(ellipse 60% 40% at 90% 0%,rgba(255,255,255,.05) 0%,transparent 70%),linear-gradient(170deg,#181b1a 0%,#101312 55%,#0b0d0c 100%)!important}
+html[data-night="true"] .character-stage canvas{filter:brightness(.82) contrast(1.05) saturate(.95) drop-shadow(0 18px 26px rgba(0,0,0,.55))}
+html[data-night="true"] .wordmark,html[data-night="true"] h1,html[data-night="true"] h2,html[data-night="true"] .lead,html[data-night="true"] .fieldlabel{color:#f3f1ea!important}
+html[data-night="true"] .brand-sub,html[data-night="true"] .stage-caption,html[data-night="true"] .note,html[data-night="true"] .fine{color:#b4bab4!important}
+html[data-night="true"] .night-toggle,html[data-night="true"] .icon-button,html[data-night="true"] .back{background:rgba(255,255,255,.07)!important;border:1px solid rgba(255,255,255,.14)!important;color:#f3f1ea!important;box-shadow:none!important}
+html[data-night="true"] .choice,html[data-night="true"] .chip,html[data-night="true"] .shortcut,html[data-night="true"] .language,html[data-night="true"] .service,html[data-night="true"] .secondary{background:linear-gradient(180deg,#232826,#1a1e1c)!important;border:1px solid rgba(255,255,255,.09)!important;color:#f3f1ea!important;box-shadow:0 10px 24px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.06)!important}
+html[data-night="true"] .choice strong,html[data-night="true"] .shortcut strong,html[data-night="true"] .language strong{color:#f3f1ea!important}
+html[data-night="true"] .choice:active,html[data-night="true"] .shortcut:active,html[data-night="true"] .language:active{background:linear-gradient(180deg,#2c3330,#212624)!important}
+html[data-night="true"] .choice svg,html[data-night="true"] .wordmark svg{color:#5fd8a5!important}
+html[data-night="true"] .key{color:#8e958f!important}
+html[data-night="true"] .primary{background:linear-gradient(180deg,#43d39a,#26a673)!important;color:#05150f!important;border:0!important;box-shadow:0 12px 28px rgba(50,190,135,.28),inset 0 1px 0 rgba(255,255,255,.3)!important}
+html[data-night="true"] .primary svg{color:#05150f!important}
+html[data-night="true"] .stop{background:rgba(255,120,110,.12)!important;color:#ffb4ab!important;border:1px solid rgba(255,140,130,.45)!important;box-shadow:none!important}
+html[data-night="true"] .connection,html[data-night="true"] #connection-text,html[data-night="true"] .prep,html[data-night="true"] .prep.ready{color:#7fe3b8!important}
+html[data-night="true"] .settings-link,html[data-night="true"] .link{color:#7fe3b8!important}
+html[data-night="true"] .field{background:#1a1e1c!important;border:1px solid rgba(255,255,255,.14)!important;box-shadow:none!important}
+html[data-night="true"] #keyfield{color:#f3f1ea!important;background:transparent!important}
+html[data-night="true"] #keyfield::placeholder{color:#8e958f}
+html[data-night="true"] .fieldbtn{background:#2a2f2c!important;color:#e8e6df!important}
+html[data-night="true"] .keymsg{color:#7fe3b8}
+html[data-night="true"] .keymsg.err,html[data-night="true"] .notice.error{color:#ffb4ab!important}
+html[data-night="true"] .notice.error{background:rgba(255,120,110,.12)!important;border-color:rgba(255,140,130,.35)!important}
+html[data-night="true"] .night-toggle:before{box-shadow:inset -4px -2px 0 #f3f1ea!important}

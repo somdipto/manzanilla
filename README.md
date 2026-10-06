@@ -54,7 +54,7 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 
 ## Status
 
-Beta (10.0.1): design U, Hotel assistance and Night reception were built, installed and checked on an Android emulator, see the [screen recording](docs/videos/10.0.1-emulator-walkthrough.mp4). Live translation needs your own Gemini API key in Settings. The conversation shown in the translation screenshot comes from a debug-only scripted replay that is not in release builds. Real-key speech, microphone, speaker, echo and reconnect behavior are not yet verified. Hotel assistance is not connected yet.
+Beta (10.0.1): design U, Hotel assistance and Night reception were built, installed and checked on an Android emulator, see the [screen recording](docs/videos/10.0.2-emulator-walkthrough.mp4). Live translation needs your own Gemini API key in Settings. The conversation shown in the translation screenshot comes from a debug-only scripted replay that is not in release builds. Real-key speech, microphone, speaker, echo and reconnect behavior are not yet verified. Hotel assistance is not connected yet.
 
 ## Build it yourself
 

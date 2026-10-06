@@ -80,7 +80,7 @@ class HotelActivity : Activity() {
             }
             "stop" -> { local.stop(true); tts?.stop() }
             "info" -> reception?.push(JSONObject().put("type", "prep").put("status", if (store.has()) "ready" else "nokey"))
-            "save_key" -> { val v = message.optString("key").trim(); if (v.length >= 20) { store.save(v); reception?.push(JSONObject().put("type", "prep").put("status", "ready")) } }
+            "save_key" -> { val v = message.optString("key").trim(); reception?.push(JSONObject().put("type", "prep").put("status", if (v.length >= 20 && store.save(v)) "ready" else "keyfail")) }
             "clear_key" -> { store.clear(); reception?.push(JSONObject().put("type", "prep").put("status", "nokey")) }
             "turn" -> local.setTurn(message.optString("side", "guest"))
             "silence" -> tts?.stop()

@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-feature android:name="android.hardware.microphone" android:required="true"/>
-    <application android:label="Manzanilla" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:usesCleartextTraffic="false" android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules" android:icon="@drawable/ic_manzanilla">
+    <application android:label="Manzanilla" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:usesCleartextTraffic="${cleartext}" android:allowBackup="false" android:dataExtractionRules="@xml/data_extraction_rules" android:icon="@drawable/ic_manzanilla">
         <activity android:name=".HotelActivity" android:exported="true" android:launchMode="singleTask" android:screenOrientation="landscape">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.HOME"/><category android:name="android.intent.category.DEFAULT"/></intent-filter>

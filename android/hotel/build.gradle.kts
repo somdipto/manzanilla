@@ -12,6 +12,8 @@ android {
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         buildConfigField("String", "BACKEND_URL", "\"" + (System.getenv("ORANGE_BACKEND_URL") ?: "") + "\"")
         buildConfigField("String", "DEVICE_TOKEN", "\"" + (System.getenv("ORANGE_DEVICE_TOKEN") ?: "") + "\"")
+        buildConfigField("String", "FEED_URL", "\"" + (project.findProperty("feedUrl") as String? ?: "https://api.github.com/repos/somdipto/manzanilla/releases/latest") + "\"")
+        manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl")) "true" else "false"
         versionName = rootProject.file("VERSION").readText().trim()
     }
     buildFeatures { buildConfig = true }

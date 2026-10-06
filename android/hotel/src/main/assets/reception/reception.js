@@ -271,10 +271,10 @@
     if (name.startsWith('setlang:')) { const id = name.split(':')[1]; if (!languages[id]) return; const other = state.picking === 'staff' ? 'language' : 'staff_language'; const mine = state.picking === 'staff' ? 'staff_language' : 'language'; if (state[other] === id) state[other] = state[mine]; state[mine] = id; page('ready'); return; }
     if (name.startsWith('turn:')) { state.turn = name.split(':')[1]; send('turn', { side: state.turn }); render(); return; }
     if (name === 'toggle_key') { state.keyDraft = document.getElementById('keyfield')?.value || ''; state.showKey = !state.showKey; render(); document.getElementById('keyfield')?.focus(); return; }
-    if (name === 'save_key') { const v = (document.getElementById('keyfield')?.value || '').trim(); if (v.length < 20 || /\s/.test(v)) { state.keyDraft = v; state.keyMsg = 'That does not look like a Gemini key.'; state.keyErr = true; render(); return; } send('save_key', { key: v }); state.keyDraft = ''; state.keyMsg = 'Saved on this device.'; state.keyErr = false; state.showKey = false; state.prep = 'ready'; render(); return; }
+    if (name === 'save_key') { const v = (document.getElementById('keyfield')?.value || '').trim(); if (v.length < 20 || /\s/.test(v)) { state.keyDraft = v; state.keyMsg = 'That does not look like a Gemini key.'; state.keyErr = true; render(); return; } send('save_key', { key: v }); state.keyDraft = ''; state.keyMsg = 'Saving…'; state.keyErr = false; state.showKey = false; render(); return; }
     if (name === 'clear_key') { send('clear_key'); state.prep = 'nokey'; state.keyMsg = 'Key removed.'; state.keyErr = false; render(); return; }
-    if (name === 'settings') { page('settings'); return; }
-    if (name === 'closeset') { state.keyDraft = ''; state.keyMsg = ''; state.showKey = false; page('idle'); return; }
+    if (name === 'settings' || name === 'set_key') { state.afterSettings = (state.page === 'error' || state.page === 'ready') ? 'ready' : 'idle'; state.keyMsg = ''; page('settings'); return; }
+    if (name === 'closeset') { state.keyDraft = ''; state.keyMsg = ''; state.showKey = false; state.needKey = false; if (state.error && state.prep === 'ready') state.error = ''; page(state.prep === 'ready' && state.afterSettings === 'ready' ? 'ready' : 'idle'); return; }
     switch (name) {
       case 'wake': wake(); break;
       case 'translation': chooseMode('translation'); break;
@@ -353,7 +353,13 @@
     if (type === 'mic_level') { state.lvl = Number(event.level) || 0; const lv = Math.max(0, Math.min(1, Number(event.level) || 0)); state.hearing = lv > .08 ? Date.now() : state.hearing; const el = document.querySelector('.session-icon'); if (el) el.style.setProperty('--level', lv.toFixed(2)); if (state.active && state.phase === 'listening') { const h = document.querySelector('.status-line h2'); if (h) h.textContent = (Date.now() - state.hearing < 700) ? 'Hearing you' : 'Listening'; } return; }
     if (type === 'goto') { page(String(event.page)); return; }
     if (type === 'metrics') { state.metrics = (String(event.text || '') + '\n' + (state.metrics || '')).split('\n').slice(0, 4).join(' | '); return; }
-    if (type === 'prep') { state.prep = String(event.status || ''); render(); return; }
+    if (type === 'prep') {
+      const st = String(event.status || '');
+      if (st === 'keyfail') { state.prep = 'nokey'; state.keyMsg = 'This device could not save the key. Paste it again.'; state.keyErr = true; state.page = 'settings'; render(); return; }
+      state.prep = st; if (st === 'ready' && state.page === 'settings') { state.keyMsg = 'Saved on this device.'; state.keyErr = false; }
+      if (st === 'ready' && state.needKey) { state.needKey = false; state.error = ''; if (state.page === 'error') state.page = 'ready'; }
+      render(); return;
+    }
     if (type === 'voice_status') { state.voices = event.voices || {}; render(); return; }
     if (type === 'connection') {
       const wasConnected = state.connected;
@@ -414,7 +420,8 @@
   }
   window.manzania = Object.freeze({ receive });
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape') { event.preventDefault(); hardware('back'); }
+    if (event.target && (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA")) return;
+    if (event.key === "Escape") { event.preventDefault(); hardware('back'); }
     else if (/^[0-9]$/.test(event.key)) hardware(event.key);
   });
   setInterval(() => {

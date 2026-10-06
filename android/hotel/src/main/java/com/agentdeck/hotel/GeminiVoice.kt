@@ -31,17 +31,30 @@ class SecretStore(ctx: Context) {
             .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE).build())
         return g.generateKey()
     }
-    fun has() = prefs.contains("k")
-    fun save(v: String) {
-        val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding"); c.init(javax.crypto.Cipher.ENCRYPT_MODE, key())
-        prefs.edit().putString("k", Base64.encodeToString(c.iv + c.doFinal(v.trim().toByteArray()), Base64.NO_WRAP)).apply()
+    fun has() = !load().isNullOrBlank()
+    /** Saves the key. Tries the Android Keystore first; some low-end devices break it, so fall back to app-private storage. Returns true only if it reads back identical. */
+    fun save(v: String): Boolean {
+        val t = v.trim()
+        var stored = false
+        try {
+            val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding"); c.init(javax.crypto.Cipher.ENCRYPT_MODE, key())
+            stored = prefs.edit().putString("k", "ks:" + Base64.encodeToString(c.iv + c.doFinal(t.toByteArray()), Base64.NO_WRAP)).commit()
+        } catch (e: Throwable) { Log.e("GV", "keystore save failed: ${e.javaClass.simpleName}") }
+        if (!stored || load() != t) {
+            stored = prefs.edit().putString("k", "pl:" + Base64.encodeToString(t.toByteArray(), Base64.NO_WRAP)).commit()
+        }
+        val ok = stored && load() == t
+        Log.i("GV", "key save ok=$ok len=${t.length}")
+        return ok
     }
     fun load(): String? { return try {
-        val raw = Base64.decode(prefs.getString("k", null) ?: return null, Base64.NO_WRAP)
+        val v = prefs.getString("k", null) ?: return null
+        if (v.startsWith("pl:")) return String(Base64.decode(v.substring(3), Base64.NO_WRAP))
+        val raw = Base64.decode(v.removePrefix("ks:"), Base64.NO_WRAP)
         val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding"); c.init(javax.crypto.Cipher.DECRYPT_MODE, key(), javax.crypto.spec.GCMParameterSpec(128, raw.copyOfRange(0, 12)))
         String(c.doFinal(raw.copyOfRange(12, raw.size)))
-    } catch (e: Throwable) { Log.e("GV", "key unreadable"); null } }
-    fun clear() = prefs.edit().clear().apply()
+    } catch (e: Throwable) { Log.e("GV", "key unreadable: ${e.javaClass.simpleName}"); null } }
+    fun clear() { prefs.edit().clear().commit() }
 }
 
 /**
@@ -136,7 +149,7 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
     fun start(guestLang: String, staffLang: String, turnMode: String = "guest", stubWav: String? = null) {
         if (running) return
         val k = store.load()
-        if (k.isNullOrBlank()) { push(ev("error").put("text", "Add your Gemini key to start live translation.").put("need_key", true)); return }
+        if (k.isNullOrBlank()) { push(ev("error").put("text", "Add your Gemini key to start live translation. If you already saved one, open Settings and paste it again.").put("need_key", true)); return }
         if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED && stubWav == null) { push(ev("error").put("text", "Microphone permission is needed for live translation.")); return }
         running = true; guest = guestLang; staff = staffLang; turn = turnMode
         push(ev("connecting"))

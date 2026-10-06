@@ -44,20 +44,19 @@ class Updater(private val context: Context, private val onStatus: (String) -> Un
         if (busy) return
         val prefs = context.getSharedPreferences("upd", Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
-        if (now - prefs.getLong("last", 0L) < 6 * 3600_000L) return
+        if (now - prefs.getLong("last", 0L) < 1 * 3600_000L) return
         prefs.edit().putLong("last", now).apply()
         busy = true
         Thread {
             try {
-                val feed = Request.Builder().url("https://api.github.com/repos/somdipto/manzanilla/releases/latest")
+                val feed = Request.Builder().url(BuildConfig.FEED_URL)
                     .header("Accept", "application/vnd.github+json").build()
                 val body = http.newCall(feed).execute().use { if (!it.isSuccessful) return@Thread; it.body?.string() ?: return@Thread }
                 val rel = JSONObject(body)
                 val latest = rel.optString("tag_name").removePrefix("v")
                 if (!newer(latest, BuildConfig.VERSION_NAME)) { post("Up to date (${BuildConfig.VERSION_NAME})"); return@Thread }
                 if (prefs.getString("offered", "") == latest && now - prefs.getLong("offeredAt", 0L) < 24 * 3600_000L) return@Thread
-                prefs.edit().putString("offered", latest).putLong("offeredAt", now).apply()
-                val assets = rel.optJSONArray("assets") ?: return@Thread
+                                val assets = rel.optJSONArray("assets") ?: return@Thread
                 var url = ""
                 for (i in 0 until assets.length()) {
                     val a = assets.getJSONObject(i)
@@ -70,7 +69,7 @@ class Updater(private val context: Context, private val onStatus: (String) -> Un
                     if (!r.isSuccessful) return@Thread
                     r.body!!.byteStream().use { input -> file.outputStream().use { input.copyTo(it) } }
                 }
-                install(file)
+                install(file) { ok -> if (ok) prefs.edit().putString("offered", latest).putLong("offeredAt", System.currentTimeMillis()).apply() }
             } catch (_: Exception) {
             } finally { busy = false }
         }.start()
@@ -78,7 +77,7 @@ class Updater(private val context: Context, private val onStatus: (String) -> Un
 
     private fun post(text: String) { ui.post { onStatus(text) } }
 
-    private fun install(file: File) {
+    private fun install(file: File, done: (Boolean) -> Unit) {
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         if (Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
@@ -91,7 +90,7 @@ class Updater(private val context: Context, private val onStatus: (String) -> Un
                     if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
                         val confirm = i.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
                         confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); if (confirm != null) c.startActivity(confirm)
-                    } else { post("Update result $status"); try { c.unregisterReceiver(this) } catch (_: Exception) {} }
+                    } else { done(status == PackageInstaller.STATUS_SUCCESS); post("Update result $status"); try { c.unregisterReceiver(this) } catch (_: Exception) {} }
                 }
             }
             if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(receiver, IntentFilter(action), Context.RECEIVER_NOT_EXPORTED) else context.registerReceiver(receiver, IntentFilter(action))
