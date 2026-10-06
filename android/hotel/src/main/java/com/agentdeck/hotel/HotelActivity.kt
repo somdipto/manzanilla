@@ -48,6 +48,7 @@ class HotelActivity : Activity() {
         reception = view
         root.addView(view, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
+        window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         view.setShown(true)
         view.push(JSONObject().put("type", "demo_mode").put("enabled", true))
         view.push(JSONObject().put("type", "local_voice").put("enabled", true))
@@ -77,9 +78,10 @@ class HotelActivity : Activity() {
                     else local.start(g, st)
                 }
             }
-            "stop" -> { local.stop(); tts?.stop() }
+            "stop" -> { local.stop(true); tts?.stop() }
             "info" -> reception?.push(JSONObject().put("type", "prep").put("status", if (store.has()) "ready" else "nokey"))
-            "set_key" -> askKey()
+            "save_key" -> { val v = message.optString("key").trim(); if (v.length >= 20) { store.save(v); reception?.push(JSONObject().put("type", "prep").put("status", "ready")) } }
+            "clear_key" -> { store.clear(); reception?.push(JSONObject().put("type", "prep").put("status", "nokey")) }
             "turn" -> local.setTurn(message.optString("side", "guest"))
             "silence" -> tts?.stop()
             "install_voice" -> try { startActivity(android.content.Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (e: Throwable) { android.util.Log.e("LV", "install voice", e) }
@@ -87,12 +89,6 @@ class HotelActivity : Activity() {
         }
     }
 
-    private fun askKey() {
-        val et = android.widget.EditText(this).apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD; hint = "Gemini API key" }
-        android.app.AlertDialog.Builder(this).setTitle("Gemini API key").setMessage("Stored encrypted on this device only.").setView(et)
-            .setPositiveButton("Save") { _, _ -> val v = et.text.toString().trim(); if (v.isNotEmpty()) { store.save(v); reception?.push(JSONObject().put("type", "prep").put("status", "ready")) } }
-            .setNegativeButton("Cancel", null).show()
-    }
 
     override fun onRequestPermissionsResult(code: Int, p: Array<out String>, r: IntArray) {
         super.onRequestPermissionsResult(code, p, r)

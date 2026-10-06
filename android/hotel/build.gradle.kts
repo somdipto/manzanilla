@@ -12,7 +12,7 @@ android {
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         buildConfigField("String", "BACKEND_URL", "\"" + (System.getenv("ORANGE_BACKEND_URL") ?: "") + "\"")
         buildConfigField("String", "DEVICE_TOKEN", "\"" + (System.getenv("ORANGE_DEVICE_TOKEN") ?: "") + "\"")
-        versionName = "0.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+        versionName = rootProject.file("VERSION").readText().trim()
     }
     buildFeatures { buildConfig = true }
     signingConfigs {

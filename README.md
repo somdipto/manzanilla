@@ -26,7 +26,7 @@ All releases: https://github.com/somdipto/manzanilla/releases
 
 ## Updates install themselves
 
-Every push to `main` builds a new signed release automatically. The app checks for a newer release each time it opens, downloads it, and asks Android to install it. You do not reinstall by hand.
+Every push to `main` builds a new signed release automatically. The app checks for a newer release when it opens (at most every six hours), downloads it, and asks Android to install it.
 
 <p align="center">
   <img src="docs/screenshots/auto-update-prompt.png" alt="Update prompt" width="520">
@@ -54,7 +54,7 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 
 ## Status
 
-Beta: design U has been built, installed and visually checked on an Android emulator. The screenshot and [screen recording](docs/videos/design-u-ui-replay.mp4) use debug-only scripted conversation events, not live Gemini output. The app uses `gemini-3.5-live-translate-preview` with two language sessions and on-device key entry. Real-key translation, microphone/speaker performance, echo cancellation and reconnect behavior have not yet been verified on a phone. Do not treat this as a production-ready interpreter. A paid key is recommended for real guest audio; free-tier use may be used for training.
+Beta (10.0.1): design U, Hotel assistance and Night reception were built, installed and checked on an Android emulator, see the [screen recording](docs/videos/10.0.1-emulator-walkthrough.mp4). Live translation needs your own Gemini API key in Settings. The conversation shown in the translation screenshot comes from a debug-only scripted replay that is not in release builds. Real-key speech, microphone, speaker, echo and reconnect behavior are not yet verified. Hotel assistance is not connected yet.
 
 ## Build it yourself
 

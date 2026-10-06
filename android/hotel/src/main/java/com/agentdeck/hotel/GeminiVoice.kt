@@ -74,7 +74,8 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
         var tIn = 0L; var tOut = 0L; var tAud = 0L
         fun handle(raw: String) {
             val j = try { JSONObject(raw) } catch (_: Throwable) { return }
-            if (j.has("setupComplete")) { ready = true; tries = 0; Log.i("GV", "$side session ready"); if (sessions.all { it.ready }) push(ev("listening")); return }
+            if (j.has("setupComplete")) { ready = true; tries = 0; Log.i("GV", "$side session ready"); if (sessions.all { it.ready }) { push(ev("listening")); tone(true) }; return }
+            j.optJSONObject("error")?.let { fail("Gemini error: " + it.optString("message").take(140)); return }
             val sc = j.optJSONObject("serverContent") ?: return
             sc.optJSONObject("inputTranscription")?.optString("text")?.takeIf { it.isNotEmpty() }?.let { if (tIn == 0L) tIn = System.currentTimeMillis(); inBuf.append(it); partial() }
             sc.optJSONObject("outputTranscription")?.optString("text")?.takeIf { it.isNotEmpty() }?.let { if (tOut == 0L) tOut = System.currentTimeMillis(); outBuf.append(it); partial() }
@@ -122,7 +123,7 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
                 if (code != 400 && code != 401 && code != 403 && retry(s, apiKey)) return
                 fail(if (code == 400 || code == 401 || code == 403) "Gemini rejected the key ($code). Check the key in settings." else if (t is java.net.UnknownHostException || t is java.net.ConnectException || t is java.net.SocketTimeoutException) "No internet. Live translation needs a connection." else "Connection to Gemini failed: ${t.javaClass.simpleName}")
             }
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { if (running && code != 1000 && !retry(s, apiKey)) fail("Gemini closed the session ($code).") }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { if (running && code != 1000 && !retry(s, apiKey)) fail("Gemini closed the session ($code${if (reason.isNotBlank()) ": " + reason.take(120) else ""}).") }
         })
     }
 
@@ -142,12 +143,13 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
         sessions.clear(); sessions.add(Sess("guest", guest, staff)); sessions.add(Sess("staff", staff, guest))
         if (k == "STUB" && stubWav != null) { runStub(stubWav); return }
         sessions.forEach { open(it, k) }
+        main.postDelayed({ if (running && sessions.any { !it.ready }) fail("Could not start live translation. Check the key and the internet connection.") }, 12000)
         Thread {
             try {
                 val min = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
                 val r = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, 32000))
                 rec = r; aec = if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) try { android.media.audiofx.AcousticEchoCanceler.create(r.audioSessionId)?.also { it.enabled = true } } catch (_: Throwable) { null } else null; Log.i("GV", "aec=${aec != null}"); r.startRecording()
-                val buf = ByteArray(3200); var lastLvl = 0L; var lastTick = 0L; startedAt = System.currentTimeMillis(); lastSpeech = startedAt
+                val buf = ByteArray(3200); var floor = 120.0; var lastLvl = 0L; var lastTick = 0L; startedAt = System.currentTimeMillis(); lastSpeech = startedAt
                 while (running) {
                     val n = r.read(buf, 0, buf.size); if (n <= 0) continue
                     var sum = 0.0; var q = 0
@@ -155,7 +157,7 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
                     val muted = aec == null && (System.currentTimeMillis() < muteUntil || sessions.any { it.speaking })
                     val now = System.currentTimeMillis()
                     if (now - lastLvl > 90) { lastLvl = now; push(JSONObject().put("type", "mic_level").put("level", if (muted) 0.0 else Math.min(1.0, Math.sqrt(sum / maxOf(1, n / 2)) / 32768.0 * 6))) }
-                    val rms = Math.sqrt(sum / maxOf(1, n / 2)); if (rms > 500) lastSpeech = now
+                    val rms = Math.sqrt(sum / maxOf(1, n / 2)); if (rms > maxOf(180.0, floor * 3.0)) lastSpeech = now else floor = floor * 0.98 + rms * 0.02
                     if (now - lastSpeech > 120000) { push(ev("idle")); stop(); break }
                     if (!muted && now - lastSpeech < 800) { val msg = JSONObject().put("realtimeInput", JSONObject().put("audio", JSONObject().put("data", Base64.encodeToString(buf, 0, n, Base64.NO_WRAP)).put("mimeType", "audio/pcm;rate=16000"))).toString(); for (s in sessions) if (s.ready) s.ws?.send(msg) }
                 }
@@ -192,7 +194,23 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
         } catch (e: Throwable) { Log.e("GV", "playback", e) }
     }
 
-    fun stop() {
+    private fun tone(up: Boolean) {
+        Thread {
+            try {
+                val sr = 24000; val notes = if (up) doubleArrayOf(659.0, 880.0) else doubleArrayOf(880.0, 587.0)
+                val per = (sr * 0.11).toInt(); val pcm = ShortArray(per * notes.size)
+                for (k in notes.indices) for (i in 0 until per) { val e = Math.sin(Math.PI * i / per); pcm[k * per + i] = (Math.sin(2 * Math.PI * notes[k] * i / sr) * e * e * 0.16 * 32767).toInt().toShort() }
+                muteUntil = System.currentTimeMillis() + 600
+                val t = AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                    .setAudioFormat(AudioFormat.Builder().setSampleRate(sr).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                    .setBufferSizeInBytes(pcm.size * 2).setTransferMode(AudioTrack.MODE_STATIC).build()
+                t.write(pcm, 0, pcm.size); t.play(); Thread.sleep(pcm.size * 1000L / sr + 150); t.release()
+            } catch (e: Throwable) { Log.e("GV", "tone", e) }
+        }.start()
+    }
+
+    fun stop(userEnd: Boolean = false) {
+        if (userEnd && running) tone(false)
         running = false
         sessions.forEach { try { it.ws?.close(1000, "bye") } catch (_: Throwable) {} }
         sessions.clear()

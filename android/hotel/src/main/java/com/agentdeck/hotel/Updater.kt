@@ -31,9 +31,21 @@ class Updater(private val context: Context, private val onStatus: (String) -> Un
         return if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
     }
 
+    /** Semantic version compare, a.b.c. A tag that is not numeric never counts as newer. */
+    private fun newer(tag: String, current: String): Boolean {
+        fun parts(v: String): List<Int>? { val p = v.trim().split("."); if (p.isEmpty() || p.any { it.toIntOrNull() == null }) return null; return p.map { it.toInt() } }
+        val a = parts(tag) ?: return false; val b = parts(current) ?: return false
+        for (i in 0 until maxOf(a.size, b.size)) { val x = a.getOrElse(i) { 0 }; val y = b.getOrElse(i) { 0 }; if (x != y) return x > y }
+        return false
+    }
+
     fun check() {
         if (BuildConfig.DEBUG) return
         if (busy) return
+        val prefs = context.getSharedPreferences("upd", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong("last", 0L) < 6 * 3600_000L) return
+        prefs.edit().putLong("last", now).apply()
         busy = true
         Thread {
             try {
@@ -41,8 +53,10 @@ class Updater(private val context: Context, private val onStatus: (String) -> Un
                     .header("Accept", "application/vnd.github+json").build()
                 val body = http.newCall(feed).execute().use { if (!it.isSuccessful) return@Thread; it.body?.string() ?: return@Thread }
                 val rel = JSONObject(body)
-                val latest = rel.optString("tag_name").removePrefix("v").toLongOrNull() ?: return@Thread
-                if (latest <= currentCode()) { post("Up to date (build ${currentCode()})"); return@Thread }
+                val latest = rel.optString("tag_name").removePrefix("v")
+                if (!newer(latest, BuildConfig.VERSION_NAME)) { post("Up to date (${BuildConfig.VERSION_NAME})"); return@Thread }
+                if (prefs.getString("offered", "") == latest && now - prefs.getLong("offeredAt", 0L) < 24 * 3600_000L) return@Thread
+                prefs.edit().putString("offered", latest).putLong("offeredAt", now).apply()
                 val assets = rel.optJSONArray("assets") ?: return@Thread
                 var url = ""
                 for (i in 0 until assets.length()) {

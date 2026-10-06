@@ -184,38 +184,38 @@ h1,h2{letter-spacing:-.03em;font-weight:650;color:var(--ink)}
 .turn.auto{flex:0 0 70px}
 
 /* v-layout: disciplined live session */
-html[data-page="active"] .topbar{height:52px}
-html[data-page="active"] .glass-desk{grid-template-columns:19% 81%;gap:6px;padding-bottom:8px}
-.content[data-page="active"]{padding:0 8px 0 4px;gap:8px;justify-content:flex-start!important;overflow:hidden}
-.content[data-page="active"] .status-line{flex:0 0 auto;justify-content:flex-start;gap:10px;min-height:20px}
-.content[data-page="active"] .status-line h2{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#5b6673}
-.content[data-page="active"] .session-icon{height:16px}
-.content[data-page="active"] .session-icon i{width:3px}
-.content[data-page="active"]>.session-scroll{flex:1 1 0;min-height:0;overflow-y:auto;padding-right:4px}
-.content[data-page="active"] .session-scroll>*+*{margin-top:8px}
-.content[data-page="active"] .pair{font-size:12px;font-weight:500;gap:6px;color:#5b6673}
-.content[data-page="active"] .pair svg{width:14px;height:14px}
-.content[data-page="active"] .conversation{padding:0;font-size:13px;display:flex;flex-direction:column;gap:8px}
-.content[data-page="active"] .bubble{margin:0;padding:8px 12px;border-radius:14px;max-width:84%;box-shadow:none}
-.content[data-page="active"] .bubble.staff{margin-left:auto}
-.content[data-page="active"] .bubble small{font-size:9px;margin-bottom:2px}
-.content[data-page="active"] .bubble .orig{font-size:12px;line-height:1.35;opacity:.7;margin:0 0 4px}
-.content[data-page="active"] .bubble .trans{font-size:16px;font-weight:500;line-height:1.3}
-.content[data-page="active"] .bubble .trans small{font-size:9px;margin-right:6px}
-.content[data-page="active"] .bubble.live .trans{font-size:14px;font-weight:300}
-.content[data-page="active"] .session-actions{flex:0 0 auto;display:flex;flex-wrap:nowrap;gap:8px;align-items:stretch;border-top:1px solid #e3e7ec;padding-top:8px}
-.content[data-page="active"] .turns{flex:1 1 0;margin:0;gap:8px}
-.content[data-page="active"] .turn{min-height:42px;padding:5px 12px;font-size:14px;border-radius:12px;box-shadow:none}
-.content[data-page="active"] .session-actions .stop{flex:0 0 auto;grid-column:auto;width:auto;min-height:42px;padding:0 14px;font-size:12px;border-radius:12px}
-@media(max-width:599px){html[data-page="active"] .app{height:100dvh;overflow:hidden}html[data-page="active"] .glass-desk{grid-template-columns:1fr;grid-template-rows:84px 1fr}html[data-page="active"] .content[data-page="active"]{padding:0}}
+html[data-u="true"] .topbar{height:52px}
+html[data-u="true"] .glass-desk{grid-template-columns:19% 81%;gap:6px;padding-bottom:8px}
+html[data-u="true"] .content[data-page="active"]{padding:0 8px 0 4px;gap:8px;justify-content:flex-start!important;overflow:hidden}
+html[data-u="true"] .content[data-page="active"] .status-line{flex:0 0 auto;justify-content:flex-start;gap:10px;min-height:20px}
+html[data-u="true"] .content[data-page="active"] .status-line h2{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:#5b6673}
+html[data-u="true"] .content[data-page="active"] .session-icon{height:16px}
+html[data-u="true"] .content[data-page="active"] .session-icon i{width:3px}
+html[data-u="true"] .content[data-page="active"]>.session-scroll{flex:1 1 0;min-height:0;overflow-y:auto;padding-right:4px}
+html[data-u="true"] .content[data-page="active"] .session-scroll>*+*{margin-top:8px}
+html[data-u="true"] .content[data-page="active"] .pair{font-size:12px;font-weight:500;gap:6px;color:#5b6673}
+html[data-u="true"] .content[data-page="active"] .pair svg{width:14px;height:14px}
+html[data-u="true"] .content[data-page="active"] .conversation{padding:0;font-size:13px;display:flex;flex-direction:column;gap:8px}
+html[data-u="true"] .content[data-page="active"] .bubble{margin:0;padding:8px 12px;border-radius:14px;max-width:84%;box-shadow:none}
+html[data-u="true"] .content[data-page="active"] .bubble.staff{margin-left:auto}
+html[data-u="true"] .content[data-page="active"] .bubble small{font-size:9px;margin-bottom:2px}
+html[data-u="true"] .content[data-page="active"] .bubble .orig{font-size:12px;line-height:1.35;opacity:.7;margin:0 0 4px}
+html[data-u="true"] .content[data-page="active"] .bubble .trans{font-size:16px;font-weight:500;line-height:1.3}
+html[data-u="true"] .content[data-page="active"] .bubble .trans small{font-size:9px;margin-right:6px}
+html[data-u="true"] .content[data-page="active"] .bubble.live .trans{font-size:14px;font-weight:300}
+html[data-u="true"] .content[data-page="active"] .session-actions{flex:0 0 auto;display:flex;flex-wrap:nowrap;gap:8px;align-items:stretch;border-top:1px solid #e3e7ec;padding-top:8px}
+html[data-u="true"] .content[data-page="active"] .turns{flex:1 1 0;margin:0;gap:8px}
+html[data-u="true"] .content[data-page="active"] .turn{min-height:42px;padding:5px 12px;font-size:14px;border-radius:12px;box-shadow:none}
+html[data-u="true"] .content[data-page="active"] .session-actions .stop{flex:0 0 auto;grid-column:auto;width:auto;min-height:42px;padding:0 14px;font-size:12px;border-radius:12px}
+@media(max-width:599px){html[data-u="true"] .app{height:100dvh;overflow:hidden}html[data-u="true"] .glass-desk{grid-template-columns:1fr;grid-template-rows:84px 1fr}html[data-u="true"] .content[data-page="active"]{padding:0}}
 
 /* duo layout (concept R2) */
 .settings-link{position:absolute;top:6px;right:12px;font-size:13px}
 .set .lab,.pane .role{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#6b7580;font-weight:600}.set .note{font-size:12px;color:#5b6673;margin:6px 0}
-html[data-page="active"] .glass-desk{grid-template-columns:1fr;gap:0;padding:0 16px 8px}
-html[data-page="active"] .character-stage{display:none}
-html[data-page="active"] .topbar{height:44px}
-.content[data-page="active"]{padding:0;gap:0;overflow:hidden;position:relative;justify-content:flex-start!important}
+html[data-u="true"] .glass-desk{grid-template-columns:1fr;gap:0;padding:0 16px 8px}
+html[data-u="true"] .character-stage{display:none}
+html[data-u="true"] .topbar{height:44px}
+html[data-u="true"] .content[data-page="active"]{padding:0;gap:0;overflow:hidden;position:relative;justify-content:flex-start!important}
 .duo{flex:1 1 0;min-height:0;display:grid;grid-template-columns:1fr 1fr;border-radius:18px;overflow:hidden;border:1px solid #e9ecef}
 .pane{display:flex;flex-direction:column;min-height:0;padding:12px 16px;background:#fff}.pane.staff{background:#f6f0e8}
 .pane header{display:flex;flex-direction:column;gap:1px;margin-bottom:8px}.pane header b{font-size:20px;font-weight:400;letter-spacing:-.01em}
@@ -238,11 +238,11 @@ html[data-page="active"] .topbar{height:44px}
 
 
 /* Approved design U. Exact existing flower paths. */
-html[data-page="active"],html[data-page="active"] body{background:#FAF6EC!important;height:100%;overflow:hidden}
-html[data-page="active"] .room-light,html[data-page="active"] .topbar,html[data-page="active"] .character-stage,html[data-page="active"] #privacy,html[data-page="active"] #hardware-hint{display:none!important}
-html[data-page="active"] .app{padding:0!important;background:#FAF6EC;height:100dvh;min-height:0}
-html[data-page="active"] .glass-desk{display:block!important;padding:0!important;height:100%}
-.content[data-page="active"]{padding:0!important;height:100%;overflow:hidden;background:#FAF6EC;color:#111111}
+html[data-u="true"],html[data-u="true"] body{background:#FAF6EC!important;height:100%;overflow:hidden}
+html[data-u="true"] .room-light,html[data-u="true"] .topbar,html[data-u="true"] .character-stage,html[data-u="true"] #privacy,html[data-u="true"] #hardware-hint{display:none!important}
+html[data-u="true"] .app{padding:0!important;background:#FAF6EC;height:100dvh;min-height:0}
+html[data-u="true"] .glass-desk{display:block!important;padding:0!important;height:100%}
+html[data-u="true"] .content[data-page="active"]{padding:0!important;height:100%;overflow:hidden;background:#FAF6EC;color:#111111}
 .uchat{position:relative;display:flex;flex-direction:column;height:100%;padding:0 28px;font-family:Inter,Roboto,Arial,sans-serif;color:#111111}
 .uhead{height:64px;flex:none;display:flex;align-items:center;justify-content:space-between;position:relative;gap:12px}
 .ulogo{display:flex;align-items:center;gap:10px;font-size:23px;font-weight:400;color:#1f2937;white-space:nowrap}
@@ -262,3 +262,31 @@ html[data-page="active"] .glass-desk{display:block!important;padding:0!important
 .usheet{background:#FAF6EC;width:min(100%,650px);border-radius:24px 24px 0 0;padding:18px 24px 24px;box-shadow:0 -8px 40px #0001}.usheet header{display:flex;align-items:center;justify-content:space-between}.usheet h2{font-size:20px;font-weight:500}.usheet button{min-height:40px;border:1px solid #d6d3ce;background:transparent;border-radius:12px;padding:8px 12px;color:#1f2937;font-size:14px;box-shadow:none}.usheet .uclose{border:0;color:#14794c}.utabs{display:flex;gap:8px;margin:12px 0}.utabs button{flex:1}.ulanguages{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.usheet button.selected{background:#CDEBD6;border-color:#84b596}
 @media(max-width:599px){.uchat{padding:0 16px}.uhead{height:100px;align-items:flex-start;padding-top:14px}.ulogo{font-size:19px}.upill{top:58px}.ububble{max-width:90%}.ulanguages{grid-template-columns:repeat(2,1fr)}}
 @media(min-width:600px) and (max-height:540px){.uhead{height:58px}.ufooter{height:44px}.ufeed{gap:10px;padding-top:4px}.ububble{padding:11px 17px}.urole{margin-bottom:5px}.utranslation{margin-top:7px;padding-top:7px}}
+
+/* Settings and key field, design U language */
+html[data-page="settings"] body,html[data-page="settings"] .room-light{background:#FAF6EC!important}
+.set{max-width:560px}
+.fieldlabel{display:block;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#6b6a5f;margin:0 0 8px}
+.field{display:flex;align-items:center;gap:8px;background:#fff;border:1.5px solid #e6dfcd;border-radius:20px;padding:0 8px 0 18px;min-height:56px;box-shadow:0 1px 2px #1018280a;transition:border-color .15s,box-shadow .15s}
+.field:focus-within{border-color:#087b52;box-shadow:0 0 0 4px #087b5226}
+.field input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:500 17px/1.2 Inter,Roboto,"Noto Sans",sans-serif;color:#111;padding:14px 0;letter-spacing:.02em}
+.field input::placeholder{color:#9a9788;font-weight:400;letter-spacing:0}
+.fieldbtn{border:0;background:#f3eee0;border-radius:14px;padding:9px 16px;font-size:14px;font-weight:600;color:#173451;min-height:40px}
+.keymsg{font-size:13px;margin:8px 2px;color:#087b52}.keymsg.err{color:#9a2b36}
+html[data-page="settings"] .button-row{margin-top:12px;gap:10px}
+html[data-page="settings"] .button-row button{border-radius:20px;min-height:48px}
+
+/* Night reception: real dark theme (the light restyle left light text on a light background) */
+:root[data-night="true"]{--ink:#f2f7ff;--muted:#c3d3e6;--surface:#223f61;--focus:#8fd0ff}
+html[data-night="true"] body{background:#10213a!important}
+html[data-night="true"] .room-light{background:radial-gradient(ellipse at 25% 30%,#2b4c75 0%,transparent 55%),linear-gradient(160deg,#1c3351,#10213a)!important}
+html[data-night="true"] .wordmark,html[data-night="true"] .brand-sub,html[data-night="true"] h1,html[data-night="true"] h2,html[data-night="true"] .stage-caption,html[data-night="true"] .lead{color:#f2f7ff}
+html[data-night="true"] .brand-sub,html[data-night="true"] .stage-caption{color:#c3d3e6}
+html[data-night="true"] .night-toggle,html[data-night="true"] .icon-button,html[data-night="true"] .back,html[data-night="true"] .choice,html[data-night="true"] .chip{background:#223f61;border-color:#37587f;color:#f2f7ff;box-shadow:0 8px 24px #00000040}
+html[data-night="true"] .choice strong,html[data-night="true"] .shortcut strong,html[data-night="true"] .language strong{color:#f2f7ff}
+html[data-night="true"] .shortcut{color:#f2f7ff;background:#223f61!important}
+html[data-night="true"] .key{color:#8fa8c4}
+html[data-night="true"] .choice svg{color:#6fe0b0}
+html[data-night="true"] .settings-link,html[data-night="true"] .link{color:#6fe0b0}
+html[data-night="true"] .night-toggle:before{box-shadow:inset -4px -2px 0 #f2f7ff}
+html[data-night="true"] .stop{background:#fff!important}
