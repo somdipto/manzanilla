@@ -21,8 +21,8 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /** Stores the Gemini key encrypted with an Android Keystore AES key. Never logged, never in the APK. */
-class SecretStore(ctx: Context) {
-    private val prefs = ctx.getSharedPreferences("gem", Context.MODE_PRIVATE)
+class SecretStore(ctx: Context, prefsName: String = "gem") {
+    private val prefs = ctx.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
     private fun key(): javax.crypto.SecretKey {
         val ks = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (ks.getKey("manz_gem", null) as? javax.crypto.SecretKey)?.let { return it }

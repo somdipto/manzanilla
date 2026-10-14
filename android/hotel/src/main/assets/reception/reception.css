@@ -317,3 +317,8 @@ html[data-night="true"] .keymsg{color:#7fe3b8}
 html[data-night="true"] .keymsg.err,html[data-night="true"] .notice.error{color:#ffb4ab!important}
 html[data-night="true"] .notice.error{background:rgba(255,120,110,.12)!important;border-color:rgba(255,140,130,.35)!important}
 html[data-night="true"] .night-toggle:before{box-shadow:inset -4px -2px 0 #f3f1ea!important}
+.content[data-page="languages"],.content[data-page="picker"],.content[data-page="settings"]{overflow:auto}
+.language-list,.ulanguages{max-height:min(58vh,640px);overflow-y:auto;align-content:start}
+.update-offer{position:fixed;z-index:40;left:50%;top:18px;transform:translateX(-50%);border:0;border-radius:999px;background:#087b52;color:#fff;font-size:16px;font-weight:600;padding:12px 18px;box-shadow:0 8px 24px #10182833}
+html[data-night="true"] #fishfield{color:#f3f1ea!important;background:transparent!important}
+html[data-night="true"] #fishfield::placeholder{color:#8e958f}

@@ -3,7 +3,60 @@
   'use strict';
   const native = !!window.ManzaniaNative;
   const content = document.getElementById('content');
-  const languages = { en: { name: 'English', native: 'English' }, es: { name: 'Spanish', native: 'Español' }, ja: { name: 'Japanese', native: '日本語' }, zh: { name: 'Chinese', native: '中文' }, fr: { name: 'French', native: 'Français' }, de: { name: 'German', native: 'Deutsch' }, it: { name: 'Italian', native: 'Italiano' }, pt: { name: 'Portuguese', native: 'Português' } };
+  const languages = {
+    es: { name: 'Spanish', native: 'Español' },
+    en: { name: 'English', native: 'English' },
+    ca: { name: 'Catalan', native: 'Català' },
+    fr: { name: 'French', native: 'Français' },
+    de: { name: 'German', native: 'Deutsch' },
+    it: { name: 'Italian', native: 'Italiano' },
+    pt: { name: 'Portuguese', native: 'Português' },
+    nl: { name: 'Dutch', native: 'Nederlands' },
+    ar: { name: 'Arabic', native: 'العربية' },
+    zh: { name: 'Chinese', native: '中文' },
+    ru: { name: 'Russian', native: 'Русский' },
+    uk: { name: 'Ukrainian', native: 'Українська' },
+    pl: { name: 'Polish', native: 'Polski' },
+    ro: { name: 'Romanian', native: 'Română' },
+    sv: { name: 'Swedish', native: 'Svenska' },
+    el: { name: 'Greek', native: 'Ελληνικά' },
+    tr: { name: 'Turkish', native: 'Türkçe' },
+    ja: { name: 'Japanese', native: '日本語' },
+    ko: { name: 'Korean', native: '한국어' },
+    hi: { name: 'Hindi', native: 'हिन्दी' },
+    cs: { name: 'Czech', native: 'Čeština' },
+    da: { name: 'Danish', native: 'Dansk' },
+    fi: { name: 'Finnish', native: 'Suomi' },
+    hu: { name: 'Hungarian', native: 'Magyar' },
+    bg: { name: 'Bulgarian', native: 'Български' },
+    hr: { name: 'Croatian', native: 'Hrvatski' },
+    sk: { name: 'Slovak', native: 'Slovenčina' },
+    sr: { name: 'Serbian', native: 'Српски' },
+    no: { name: 'Norwegian', native: 'Norsk' },
+    id: { name: 'Indonesian', native: 'Bahasa Indonesia' },
+    th: { name: 'Thai', native: 'ไทย' },
+    vi: { name: 'Vietnamese', native: 'Tiếng Việt' },
+    ms: { name: 'Malay', native: 'Bahasa Melayu' },
+    tl: { name: 'Tagalog', native: 'Tagalog' },
+    he: { name: 'Hebrew', native: 'עברית' },
+    fa: { name: 'Persian', native: 'فارسی' },
+    ur: { name: 'Urdu', native: 'اردو' },
+    bn: { name: 'Bengali', native: 'বাংলা' },
+    ta: { name: 'Tamil', native: 'தமிழ்' },
+    te: { name: 'Telugu', native: 'తెలుగు' },
+    kn: { name: 'Kannada', native: 'ಕನ್ನಡ' },
+    mr: { name: 'Marathi', native: 'मराठी' },
+    gu: { name: 'Gujarati', native: 'ગુજરાતી' },
+    pa: { name: 'Punjabi', native: 'ਪੰਜਾਬੀ' },
+    ne: { name: 'Nepali', native: 'नेपाली' },
+    kk: { name: 'Kazakh', native: 'Қазақша' },
+    ka: { name: 'Georgian', native: 'ქართული' },
+    hy: { name: 'Armenian', native: 'Հայերեն' },
+    et: { name: 'Estonian', native: 'Eesti' },
+    lv: { name: 'Latvian', native: 'Latviešu' },
+    lt: { name: 'Lithuanian', native: 'Lietuvių' },
+    af: { name: 'Afrikaans', native: 'Afrikaans' }
+  };
   const copy = {
     en: { welcome: 'How can I help?', reception: 'Hotel assistance', ready: 'Ready when you are.', start: 'Start conversation', listen: 'Listening', speaking: 'Speaking', connect: 'Connecting', end: 'End conversation', translate: 'Live translation', quiet: 'The microphone stays off until you start.', draft: 'Save this message?', save: 'Save message', cancel: 'Cancel', saved: 'Saved for reception', local: 'Saved on this computer. Not sent to a staff member.', message: 'Leave a message', operator: 'Contact reception', noOperator: 'An operator connection is not set up. Please use the hotel’s posted contact number.', request: 'Ask about your stay, arrival instructions, or a message for reception.', begin: 'Speak naturally. Take turns with reception.' },
     es: { welcome: '¿En qué puedo ayudarte?', reception: 'Asistencia del hotel', ready: 'Todo listo.', start: 'Iniciar conversación', listen: 'Escuchando', speaking: 'Hablando', connect: 'Conectando', end: 'Finalizar', translate: 'Traducción en directo', quiet: 'El micrófono permanece apagado hasta que comiences.', draft: '¿Guardar este mensaje?', save: 'Guardar mensaje', cancel: 'Cancelar', saved: 'Guardado para recepción', local: 'Guardado en este ordenador. No enviado al personal.', message: 'Dejar un mensaje', operator: 'Contactar con recepción', noOperator: 'No hay conexión con un operador. Usa el número de contacto indicado por el hotel.', request: 'Pregunta sobre tu estancia, la llegada o deja un mensaje para recepción.', begin: 'Habla con naturalidad y espera tu turno.' },
@@ -86,16 +139,16 @@
     document.getElementById('connection-text').textContent = state.demo ? 'Preview · AI not connected' : state.connected ? 'PC connected' : 'PC not connected';
     document.getElementById('hotel-label').textContent = state.demo ? 'Example experience' : state.active && native ? 'Laptop mic · Manzanilla speaker' : state.hotel ? state.hotel + (state.sample ? ' · Sample' : '') : 'Hotel reception';
     document.getElementById('privacy').innerHTML = `<span class="mic-dot${state.mic ? ' mic-live' : ''}"></span>${state.audioUnknown ? 'Audio state unconfirmed' : state.phase === 'ending' ? 'Closing microphone' : state.mic ? 'Microphone on' : 'Microphone off'}`;
-    document.getElementById('hardware-hint').textContent = state.active ? 'Green or red to end' : state.page === 'ready' ? 'Press 1 to start' : state.page === 'languages' ? 'Choose 1 to 8' : 'Green button to begin';
+    document.getElementById('hardware-hint').textContent = state.active ? 'Green or red to end' : state.page === 'ready' ? 'Press 1 to start' : state.page === 'languages' ? '1–8 or tap a language' : 'Green button to begin';
     document.getElementById('stage-caption').textContent = state.page === 'idle' ? 'A little help. A warmer welcome.' : state.page === 'active' && state.mode === 'reception' ? (state.transcript || concierge()[4]) : '';
     const html = {
-      idle: () => `<button class="link settings-link" data-action="settings">Settings</button><h1>A warm welcome<br>in every language.</h1>${action('wake', icons.bell + 'Ring for reception', 'primary ring-button')}${state.prep ? `<div class="prep ${state.prep}">${state.prep === 'preparing' ? '<span class="spinner"></span> Connecting…' : state.prep === 'ready' ? 'Gemini live translation ready' : '<button class="link" data-action="set_key">Add Gemini key to enable live translation</button>'}</div>` : ''}`,
+      idle: () => `<button class="link settings-link" data-action="settings">Settings</button><h1>A warm welcome<br>in every language.</h1>${action('wake', icons.bell + 'Ring for reception', 'primary ring-button')}${state.prep ? `<div class="prep ${state.prep}">${state.prep === 'preparing' ? '<span class="spinner"></span> Connecting…' : state.prep === 'ready' ? (state.engine === 'fish' ? 'Fish duplex ready' : 'Gemini live translation ready') : '<button class="link" data-action="set_key">Add a Fish key to test live duplex</button>'}</div>` : ''}${state.version ? `<p class="note">${esc(state.version)}</p>` : ''}`,
       modes: () => `<h2>How can we help?</h2><div class="choice-list">${action('translation', icons.translate + '<strong>Live translation</strong>', 'choice service')}${action('reception', icons.bell + '<strong>Hotel assistance</strong>', 'choice service')}</div>`,
-      languages: () => `<h2 class="language-heading">Choose your language</h2><div class="language-list">${Object.entries(languages).map(([id, item], i) => action('language:' + id, `<span class="key">${i + 1}</span><strong lang="${id}">${item.native}</strong>`, 'choice language language-' + id)).join('')}</div>`,
+      languages: () => `<h2 class="language-heading">Choose your language</h2><div class="language-list">${Object.entries(languages).map(([id, item], i) => action('language:' + id, `${i < 8 ? `<span class="key">${i + 1}</span>` : ''}<strong lang="${id}">${item.native}</strong>`, 'choice language language-' + id)).join('')}</div>`,
       picker: () => `${back()}<h2 class="language-heading">${state.picking === 'staff' ? 'Reception speaks' : 'Guest speaks'}</h2><div class="language-list">${Object.entries(languages).map(([id, item]) => action('setlang:' + id, `<strong lang="${id}">${item.native}</strong>`, 'choice language' + ((state.picking === 'staff' ? state.staff_language : state.language) === id ? ' on' : ''))).join('')}</div>`,
       ready: () => `${back()}<h2>${esc(t().ready)}</h2><div class="session-scroll">${state.mode === 'translation' ? `<div class="pair chips"><button class="chip" data-action="pick:staff"><small>Reception speaks</small>${esc(langName(state.staff_language))}</button>${icons.exchange}<button class="chip" data-action="pick:guest"><small>Guest speaks</small>${esc(langName(state.language))}</button></div>` : `<p class="lead">${esc(t().welcome)}</p>`}${sameLanguage() ? '<div class="notice">Choose a different guest language for translation.</div>' : ''}${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}${!state.connected && native && !state.demo ? '<div class="notice">Reception is temporarily unavailable. Please ask a member of staff.</div>' : ''}</div>${action('start', esc(t().start), 'primary', (native && !state.demo && !state.connected) || sameLanguage())}`,
       active: () => { const lines = state.lines.slice(-3); const lv = state.live; const bubble = (l, live=false) => `<article class="ububble ${l.side === 'guest' ? 'guest' : 'hotel'}${live ? ' streaming' : ''}"><div class="urole">${l.side === 'guest' ? 'GUEST' : 'HOTEL'}</div><div class="uspoken">${esc(l.orig || l.text)}${live ? '<span class="udots">•••</span>' : ''}</div>${l.orig ? `<div class="utranslation">${esc(l.text)}</div>` : ''}</article>`; return `<section class="uchat"><header class="uhead"><span class="ulogo"><svg xmlns="http://www.w3.org/2000/svg" width="29" height="29" viewBox="0 0 64 64"><path fill="#FFF7E6" d="M0,0h64v64h-64z"/><path fill="#0F1E3A" d="M28,5h8v4h5v9h-4v4h-10v-4h-4v-9h5z M43,11h8v4h4v9h-4v4h-10v-4h-4v-9h6z M49,25h9v4h3v9h-3v4h-9v-4h-4v-9h4z M42,39h10v4h3v9h-4v4h-8v-4h-5v-9h4z M28,45h9v4h3v9h-4v4h-8v-4h-4v-9h4z M13,39h10v4h4v9h-5v4h-8v-4h-4v-9h3z M6,25h9v4h4v9h-4v4h-9v-4h-3v-9h3z M13,11h8v4h6v9h-5v4h-9v-4h-4v-9h4z"/><path fill="#FFF7E6" d="M29,7h6v4h4v6h-4v3h-6v-3h-4v-6h4z M44,13h6v3h3v7h-3v3h-7v-3h-4v-7h5z M50,27h6v3h3v7h-3v3h-6v-3h-3v-7h3z M43,41h7v3h3v7h-3v3h-6v-3h-4v-7h3z M29,47h6v3h3v7h-3v3h-6v-3h-3v-7h3z M14,41h7v3h4v7h-4v3h-6v-3h-3v-7h2z M7,27h7v3h3v7h-3v3h-7v-3h-2v-7h2z M14,13h6v3h5v7h-4v3h-7v-3h-3v-7h3z"/><path fill="#0F1E3A" d="M23,22h18v19h-18z"/><path fill="#F5C842" d="M25,24h14v15h-14z"/><path fill="#0F1E3A" d="M30,26h4v4h-4z M26,30h4v4h-4z M30,30h4v4h-4z M34,30h4v4h-4z M30,34h4v4h-4z"/><path fill="#0F1E3A" d="M30,41h4v19h-4z M10,48h15v4h5v7h-9v-3h-7v-4h-4z M39,48h15v4h-4v4h-7v3h-9v-7h5z"/><path fill="#6F8F5A" d="M31,42h2v18h-2z M13,50h11v3h5v4h-7v-3h-6v-2h-3z M40,50h11v2h-3v2h-6v3h-7v-4h5z"/></svg><span>Manzanilla</span></span><button class="upill" data-action="u-picker">${esc(langName(state.language))} <span>⇄</span> ${esc(langName(state.staff_language))} <span>⌄</span></button><button class="uend" data-action="stop">End</button></header><div class="ufeed">${lines.map(l => bubble(l)).join('')}${lv ? bubble(lv, true) : ''}${!lines.length && !lv ? `<div class="uidle">${state.phase === 'connecting' ? 'Connecting…' : 'Listening…'}<small>${esc(langName(state.language))} ⇄ ${esc(langName(state.staff_language))}</small></div>` : ''}</div><footer class="ufooter"><canvas class="orb" width="240" height="240" aria-label="Hands-free listening"></canvas></footer>${state.uPicker ? `<div class="uscrim"><section class="usheet"><header><h2>Languages</h2><button class="uclose" data-action="u-close">Done</button></header><div class="utabs"><button class="${state.uSide !== 'staff' ? 'selected' : ''}" data-action="u-side:guest">Guest</button><button class="${state.uSide === 'staff' ? 'selected' : ''}" data-action="u-side:staff">Hotel</button></div><div class="ulanguages">${Object.entries(languages).map(([id,item]) => `<button class="${(state.uSide === 'staff' ? state.staff_language : state.language) === id ? 'selected' : ''}" data-action="u-lang:${id}">${esc(item.native)}</button>`).join('')}</div></section></div>` : ''}</section>`; },
-      settings: () => `<h2>Settings</h2><div class="set"><label class="fieldlabel" for="keyfield">Gemini API key</label><div class="field"><input id="keyfield" type="${state.showKey ? 'text' : 'password'}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${state.prep === 'ready' ? 'Saved. Paste a new key to replace it' : 'Paste your key'}" value="${esc(state.keyDraft || '')}"><button class="fieldbtn" data-action="toggle_key">${state.showKey ? 'Hide' : 'Show'}</button></div>${state.keyMsg ? `<p class="keymsg${state.keyErr ? ' err' : ''}">${esc(state.keyMsg)}</p>` : `<p class="note">Stored encrypted on this device only. Free-tier keys may train on audio: use a paid key for real guests.</p>`}<div class="button-row">${action('save_key', 'Save key', 'primary')}${state.prep === 'ready' ? action('clear_key', 'Remove key', 'secondary') : ''}${action('closeset', 'Done', 'secondary')}</div></div>`,
+      settings: () => `<h2>Settings${state.version ? ' · ' + esc(state.version) : ''}</h2><div class="set"><label class="fieldlabel" for="fishfield">Fish Audio key</label><div class="field"><input id="fishfield" type="${state.showFish ? 'text' : 'password'}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${state.baked ? 'Included in this build' : 'Paste your Fish key'}" value="${esc(state.fishDraft || '')}"><button class="fieldbtn" data-action="toggle_fish">${state.showFish ? 'Hide' : 'Show'}</button></div>${state.baked ? '<p class="note">A Fish key is included in this build.</p>' : '<p class="note">Stored encrypted on this device. It is not written into source.</p>'}<label class="fieldlabel" for="keyfield">Gemini API key</label><div class="field"><input id="keyfield" type="${state.showKey ? 'text' : 'password'}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="${state.engine === 'gemini' ? 'Saved. Paste a new key to replace it' : 'Paste your key'}" value="${esc(state.keyDraft || '')}"><button class="fieldbtn" data-action="toggle_key">${state.showKey ? 'Hide' : 'Show'}</button></div>${state.keyMsg ? `<p class="keymsg${state.keyErr ? ' err' : ''}">${esc(state.keyMsg)}</p>` : `<p class="note">Gemini remains available if no Fish key is set. Free-tier Gemini keys may train on audio.</p>`}<div class="button-row">${action('save_fish_key', 'Save Fish key', 'primary')}${action('save_key', 'Save Gemini key', 'secondary')}${state.engine === 'fish' && !state.baked ? action('clear_fish_key', 'Remove Fish key', 'secondary') : ''}${state.engine === 'gemini' ? action('clear_key', 'Remove Gemini key', 'secondary') : ''}${action('closeset', 'Done', 'secondary')}</div></div>`,
       confirming: () => `<h2>${esc(t().draft)}</h2><div class="draft">${state.draft?.guest_name || state.draft?.room_reference ? `<div class="draft-meta">${esc([state.draft?.guest_name, state.draft?.room_reference].filter(Boolean).join(' · '))}</div>` : ''}${esc(state.draft?.message || '')}</div><div class="button-row">${action('confirm', esc(state.confirmed ? t().saving : t().save), 'primary', state.confirmed)}${action('cancel-draft', esc(t().cancel), 'secondary', state.confirmed)}</div>`,
       saved: () => `<h2>${esc(state.demo ? t().prepared : t().saved)}</h2><p class="lead">${esc(state.demo ? t().notSent : t().local)}</p><div class="button-row">${action('continue', esc(t().continue))}${action('stop', esc(t().end), 'secondary')}</div>`,
       ending: () => `<div class="status-line"><h2>Ending conversation</h2><span class="spinner" aria-label="Closing microphone"></span></div>${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}`,
@@ -266,12 +319,15 @@
     if (name === 'u-close') { state.uPicker = false; render(); return; }
     if (name.startsWith('u-side:')) { state.uSide = name.split(':')[1]; render(); return; }
     if (name.startsWith('u-lang:')) { const id=name.split(':')[1]; if (!languages[id]) return; const mine=state.uSide === 'staff' ? 'staff_language' : 'language', other=state.uSide === 'staff' ? 'language' : 'staff_language'; if(state[other] === id) state[other]=state[mine]; state[mine]=id; state.lines=[]; state.live=null; state.uPicker=false; state.phase='connecting'; send('stop'); send('start', {mode:'translation',language:state.language,staff_language:state.staff_language}); render(); return; }
-    if (name.startsWith('language:')) { const language=name.split(':')[1]; if(state.page !== 'languages' || !languages[language])return;state.language = language; if(state.mode === 'reception') start(); else page('ready'); return; }
+    if (name.startsWith('language:')) { const language=name.split(':')[1]; if(state.page !== 'languages' || !languages[language])return; if (state.staff_language === language) state.staff_language = state.language !== language ? state.language : (language === 'es' ? 'en' : 'es'); state.language = language; if(state.mode === 'reception') start(); else page('ready'); return; }
     if (name.startsWith('pick:')) { state.picking = name.split(':')[1]; page('picker'); return; }
     if (name.startsWith('setlang:')) { const id = name.split(':')[1]; if (!languages[id]) return; const other = state.picking === 'staff' ? 'language' : 'staff_language'; const mine = state.picking === 'staff' ? 'staff_language' : 'language'; if (state[other] === id) state[other] = state[mine]; state[mine] = id; page('ready'); return; }
     if (name.startsWith('turn:')) { state.turn = name.split(':')[1]; send('turn', { side: state.turn }); render(); return; }
+    if (name === 'toggle_fish') { state.fishDraft = document.getElementById('fishfield')?.value || ''; state.showFish = !state.showFish; render(); document.getElementById('fishfield')?.focus(); return; }
     if (name === 'toggle_key') { state.keyDraft = document.getElementById('keyfield')?.value || ''; state.showKey = !state.showKey; render(); document.getElementById('keyfield')?.focus(); return; }
+    if (name === 'save_fish_key') { const v = (document.getElementById('fishfield')?.value || '').trim(); if (v.length < 20 || /\s/.test(v)) { state.fishDraft = v; state.keyMsg = 'That does not look like a Fish key.'; state.keyErr = true; render(); return; } send('save_fish_key', { key: v }); state.fishDraft = ''; state.keyMsg = 'Saving…'; state.keyErr = false; state.showFish = false; render(); return; }
     if (name === 'save_key') { const v = (document.getElementById('keyfield')?.value || '').trim(); if (v.length < 20 || /\s/.test(v)) { state.keyDraft = v; state.keyMsg = 'That does not look like a Gemini key.'; state.keyErr = true; render(); return; } send('save_key', { key: v }); state.keyDraft = ''; state.keyMsg = 'Saving…'; state.keyErr = false; state.showKey = false; render(); return; }
+    if (name === 'clear_fish_key') { send('clear_fish_key'); state.keyMsg = 'Fish key removed.'; state.keyErr = false; render(); return; }
     if (name === 'clear_key') { send('clear_key'); state.prep = 'nokey'; state.keyMsg = 'Key removed.'; state.keyErr = false; render(); return; }
     if (name === 'settings' || name === 'set_key') { state.afterSettings = (state.page === 'error' || state.page === 'ready') ? 'ready' : 'idle'; state.keyMsg = ''; page('settings'); return; }
     if (name === 'closeset') { state.keyDraft = ''; state.keyMsg = ''; state.showKey = false; state.needKey = false; if (state.error && state.prep === 'ready') state.error = ''; page(state.prep === 'ready' && state.afterSettings === 'ready' ? 'ready' : 'idle'); return; }
@@ -302,9 +358,9 @@
     }
   }
   content.addEventListener('click', event => { const button = event.target.closest('[data-action]'); if (button && !button.disabled) perform(button.dataset.action); });
-  document.addEventListener('input', event => { if (event.target?.id === 'keyfield') state.keyDraft = event.target.value; });
-  document.addEventListener('keydown', event => { if (event.target?.id === 'keyfield' && event.key === 'Enter') { event.preventDefault(); event.target.blur(); perform('save_key'); } });
-  document.addEventListener('focusin', event => { if (event.target?.id === 'keyfield') setTimeout(() => event.target.scrollIntoView({ block: 'center' }), 250); });
+  document.addEventListener('input', event => { if (event.target?.id === 'keyfield') state.keyDraft = event.target.value; if (event.target?.id === 'fishfield') state.fishDraft = event.target.value; });
+  document.addEventListener('keydown', event => { if (event.target?.id === 'keyfield' && event.key === 'Enter') { event.preventDefault(); event.target.blur(); perform('save_key'); } if (event.target?.id === 'fishfield' && event.key === 'Enter') { event.preventDefault(); event.target.blur(); perform('save_fish_key'); } });
+  document.addEventListener('focusin', event => { if (event.target?.id === 'keyfield' || event.target?.id === 'fishfield') setTimeout(() => event.target.scrollIntoView({ block: 'center' }), 250); });
   document.getElementById('exit').addEventListener('click', () => { stop(); send('exit'); if (!native) toast('This button returns to the device launcher.'); });
   document.getElementById('stage').addEventListener('click', () => { activity(); if (state.page === 'idle') wake(); });
   document.getElementById('night-toggle').addEventListener('click', toggleNight);
@@ -323,6 +379,21 @@
     else if (state.page === 'modes' && key === '1') chooseMode('translation');
     else if (state.page === 'modes' && key === '2') chooseMode('reception');
     else if (state.page === 'active' && state.mode === 'reception' && /^[1-4]$/.test(key)) chooseShortcut(shortcuts[Number(key)-1]);
+  }
+
+  function offerUpdate(version, text) {
+    let bar = document.getElementById('update-offer');
+    if (!bar) {
+      bar = document.createElement('button');
+      bar.id = 'update-offer';
+      bar.type = 'button';
+      bar.className = 'update-offer';
+      bar.addEventListener('click', () => { bar.disabled = true; bar.textContent = 'Downloading update…'; send('apply_update'); });
+      document.body.appendChild(bar);
+    }
+    bar.hidden = false;
+    bar.disabled = false;
+    bar.textContent = text || ('Update ' + version + ' is ready. Tap to install.');
   }
 
   function receive(event) {
@@ -353,8 +424,13 @@
     if (type === 'mic_level') { state.lvl = Number(event.level) || 0; const lv = Math.max(0, Math.min(1, Number(event.level) || 0)); state.hearing = lv > .08 ? Date.now() : state.hearing; const el = document.querySelector('.session-icon'); if (el) el.style.setProperty('--level', lv.toFixed(2)); if (state.active && state.phase === 'listening') { const h = document.querySelector('.status-line h2'); if (h) h.textContent = (Date.now() - state.hearing < 700) ? 'Hearing you' : 'Listening'; } return; }
     if (type === 'goto') { page(String(event.page)); return; }
     if (type === 'metrics') { state.metrics = (String(event.text || '') + '\n' + (state.metrics || '')).split('\n').slice(0, 4).join(' | '); return; }
+    if (type === 'update') { state.updateVersion = String(event.version || ''); offerUpdate(state.updateVersion); return; }
+    if (type === 'update_status') { offerUpdate(state.updateVersion || '', String(event.text || 'Updating…')); return; }
     if (type === 'prep') {
       const st = String(event.status || '');
+      if (event.engine) state.engine = String(event.engine);
+      if (event.version) state.version = String(event.version);
+      state.baked = event.baked === true;
       if (st === 'keyfail') { state.prep = 'nokey'; state.keyMsg = 'This device could not save the key. Paste it again.'; state.keyErr = true; state.page = 'settings'; render(); return; }
       state.prep = st; if (st === 'ready' && state.page === 'settings') { state.keyMsg = 'Saved on this device.'; state.keyErr = false; }
       if (st === 'ready' && state.needKey) { state.needKey = false; state.error = ''; if (state.page === 'error') state.page = 'ready'; }

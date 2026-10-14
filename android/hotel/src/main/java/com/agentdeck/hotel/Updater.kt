@@ -16,35 +16,36 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
- * Self-update from the public GitHub Releases feed. Checks for a release whose tag number (v<N>) is
- * higher than this build's versionCode, downloads the APK and hands it to Android's PackageInstaller.
- * Android decides whether a confirmation tap is needed (not needed for a device owner).
+ * Self-update from the public GitHub Releases feed. A release tag newer than versionName
+ * shows an offer; the user taps it, then Android's installer confirms. Debug builds do not check.
  */
 class Updater(private val context: Context, private val onStatus: (String) -> Unit) {
-    private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
+    private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(180, TimeUnit.SECONDS).build()
     private val ui = Handler(Looper.getMainLooper())
     @Volatile private var busy = false
     private val action = "dev.orange.hotel.UPDATE_RESULT"
 
-    private fun currentCode(): Long {
+    private fun versionCode(): Long {
         val info = context.packageManager.getPackageInfo(context.packageName, 0)
         return if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
     }
-
-    /** Semantic version compare, a.b.c. A tag that is not numeric never counts as newer. */
-    private fun newer(tag: String, current: String): Boolean {
-        fun parts(v: String): List<Int>? { val p = v.trim().split("."); if (p.isEmpty() || p.any { it.toIntOrNull() == null }) return null; return p.map { it.toInt() } }
-        val a = parts(tag) ?: return false; val b = parts(current) ?: return false
-        for (i in 0 until maxOf(a.size, b.size)) { val x = a.getOrElse(i) { 0 }; val y = b.getOrElse(i) { 0 }; if (x != y) return x > y }
-        return false
-    }
+    private fun newer(tag: String) = ReleaseVersion.offer(tag, BuildConfig.VERSION_NAME, versionCode())
+    @Volatile private var pendingUrl = ""
+    @Volatile private var pendingVersion = ""
 
     fun check() {
         if (BuildConfig.DEBUG) return
         if (busy) return
         val prefs = context.getSharedPreferences("upd", Context.MODE_PRIVATE)
+        val cached = prefs.getString("pendingVersion", "").orEmpty()
+        val cachedUrl = prefs.getString("pendingUrl", "").orEmpty()
+        if (cached.isNotBlank() && cachedUrl.isNotBlank() && newer(cached)) {
+            pendingVersion = cached
+            pendingUrl = cachedUrl
+            post("offer:$cached")
+        }
         val now = System.currentTimeMillis()
-        if (now - prefs.getLong("last", 0L) < 1 * 3600_000L) return
+        if (now - prefs.getLong("last", 0L) < 10 * 60_000L) return
         prefs.edit().putLong("last", now).apply()
         busy = true
         Thread {
@@ -54,23 +55,46 @@ class Updater(private val context: Context, private val onStatus: (String) -> Un
                 val body = http.newCall(feed).execute().use { if (!it.isSuccessful) return@Thread; it.body?.string() ?: return@Thread }
                 val rel = JSONObject(body)
                 val latest = rel.optString("tag_name").removePrefix("v")
-                if (!newer(latest, BuildConfig.VERSION_NAME)) { post("Up to date (${BuildConfig.VERSION_NAME})"); return@Thread }
-                if (prefs.getString("offered", "") == latest && now - prefs.getLong("offeredAt", 0L) < 24 * 3600_000L) return@Thread
-                                val assets = rel.optJSONArray("assets") ?: return@Thread
+                if (!newer(latest)) {
+                    prefs.edit().remove("pendingVersion").remove("pendingUrl").apply()
+                    return@Thread
+                }
+                val assets = rel.optJSONArray("assets") ?: return@Thread
                 var url = ""
                 for (i in 0 until assets.length()) {
                     val a = assets.getJSONObject(i)
                     if (a.optString("name").endsWith(".apk")) url = a.optString("browser_download_url")
                 }
                 if (url.isEmpty()) return@Thread
-                post("Downloading update $latest")
+                pendingVersion = latest
+                pendingUrl = url
+                prefs.edit().putString("pendingVersion", latest).putString("pendingUrl", url).apply()
+                post("offer:$latest")
+            } catch (_: Exception) {
+            } finally { busy = false }
+        }.start()
+    }
+
+    fun installOffered() {
+        val url = pendingUrl
+        val latest = pendingVersion
+        if (url.isBlank() || latest.isBlank() || busy) return
+        busy = true
+        post("Downloading update $latest")
+        Thread {
+            try {
                 val file = File(context.cacheDir, "update.apk")
                 http.newCall(Request.Builder().url(url).build()).execute().use { r ->
-                    if (!r.isSuccessful) return@Thread
+                    if (!r.isSuccessful) { post("Update download failed"); return@Thread }
                     r.body!!.byteStream().use { input -> file.outputStream().use { input.copyTo(it) } }
                 }
-                install(file) { ok -> if (ok) prefs.edit().putString("offered", latest).putLong("offeredAt", System.currentTimeMillis()).apply() }
+                post("Installing update $latest")
+                install(file) { ok ->
+                    if (ok) context.getSharedPreferences("upd", Context.MODE_PRIVATE).edit().remove("pendingVersion").remove("pendingUrl").apply()
+                    post(if (ok) "Update installed" else "Update needs a confirmation tap")
+                }
             } catch (_: Exception) {
+                post("Update download failed")
             } finally { busy = false }
         }.start()
     }
