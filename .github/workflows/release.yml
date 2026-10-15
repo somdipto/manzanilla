@@ -29,7 +29,8 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
       - uses: android-actions/setup-android@v3
-      - run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
       - name: Read semantic publication identity
         shell: bash
         run: |

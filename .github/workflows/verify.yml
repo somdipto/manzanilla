@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: '17'}
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
       - run: bash gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug --no-daemon
         working-directory: android
       - uses: actions/upload-artifact@v4

@@ -5,9 +5,11 @@ import tempfile
 _previous_db = os.environ.get('ORANGE_DB')
 _bootstrap = tempfile.TemporaryDirectory(prefix='manzanilla-tests-')
 os.environ['ORANGE_DB'] = os.path.join(_bootstrap.name,'bootstrap.db')
+from cloud.app import store as _bootstrap_store
 
 
 def pytest_unconfigure(config):
+    _bootstrap_store.db.close()
     if _previous_db is None:
         os.environ.pop('ORANGE_DB',None)
     else:
