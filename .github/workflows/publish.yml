@@ -1,39 +1,68 @@
-name: Build and publish Reception APK
+name: Publish verified Reception APK
 on:
   push:
-    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+    inputs:
+      keyed_pilot:
+        description: Publish a signed pilot APK containing the Fish credential
+        type: boolean
+        required: false
+        default: false
 permissions:
-  contents: write
+  contents: read
+concurrency:
+  group: reception-publication
+  cancel-in-progress: false
 jobs:
+  candidate:
+    uses: ./.github/workflows/release.yml
+    with:
+      keyed_pilot: ${{ github.event_name == 'workflow_dispatch' && inputs.keyed_pilot || false }}
+    secrets: inherit
   publish:
+    needs: candidate
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with: {distribution: temurin, java-version: '17'}
-      - name: Android SDK packages (preinstalled SDK on the runner)
-        run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-34' 'build-tools;34.0.0'
-      - name: Build signed release APK
-        env:
-          ORANGE_KEYSTORE_BASE64: ${{ secrets.ORANGE_KEYSTORE_BASE64 }}
-          ORANGE_STORE_PASSWORD: ${{ secrets.ORANGE_STORE_PASSWORD }}
-          ORANGE_KEY_ALIAS: ${{ secrets.ORANGE_KEY_ALIAS }}
-          ORANGE_KEY_PASSWORD: ${{ secrets.ORANGE_KEY_PASSWORD }}
-        working-directory: android
-        run: |
-          test -n "$ORANGE_KEYSTORE_BASE64"
-          export ORANGE_KEYSTORE="$RUNNER_TEMP/orange-release.jks"
-          printf '%s' "$ORANGE_KEYSTORE_BASE64" | base64 --decode > "$ORANGE_KEYSTORE"
-          bash gradlew :hotel:assembleRelease --no-daemon
-          rm -f "$ORANGE_KEYSTORE"
-          cp hotel/build/outputs/apk/release/*.apk "$RUNNER_TEMP/Manzanilla-Reception.apk"
-      - name: Publish release
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: orange-signed-pilot-apk
+          path: candidate
+      - name: Recheck exact artifact and latest published APK before publication
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          gh release create "v${GITHUB_RUN_NUMBER}" "$RUNNER_TEMP/Manzanilla-Reception.apk" \
-            --repo "$GITHUB_REPOSITORY" --title "Build ${GITHUB_RUN_NUMBER}" \
-            --notes "Automatic build of ${GITHUB_SHA::7}" --latest
+          set -euo pipefail
+          export PATH="$ANDROID_HOME/build-tools/34.0.0:$PATH"
+          version="$(tr -d '\r\n' < android/VERSION)"
+          tag="v${version}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then test "$GITHUB_REF_NAME" = "$tag"; fi
+          mkdir -p "$RUNNER_TEMP/previous"
+          git fetch origin "refs/tags/$tag:refs/tags/$tag"
+          test "$(git rev-parse "$tag^{commit}")" = "$GITHUB_SHA"
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern '*.apk' --dir "$RUNNER_TEMP/previous"
+          previous=("$RUNNER_TEMP/previous/"*.apk)
+          test "${#previous[@]}" -eq 1
+          python android/release_identity.py --apk candidate/Manzanilla-Reception.apk \
+            --previous-apk "${previous[0]}" --tag "$tag" --repository "$GITHUB_REPOSITORY" \
+            --output "$RUNNER_TEMP/rechecked-metadata.json"
+          cmp candidate/release-metadata.json "$RUNNER_TEMP/rechecked-metadata.json"
+          printf 'RELEASE_TAG=%s\n' "$tag" >> "$GITHUB_ENV"
+      - name: Publish the verified immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" candidate/Manzanilla-Reception.apk candidate/release-metadata.json \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Manzanilla ${RELEASE_TAG#v}" \
+            --notes "Verified candidate ${GITHUB_SHA}. Physical-device, voice entitlement and real-service acceptance remain separate release gates." \
+            --latest --verify-tag

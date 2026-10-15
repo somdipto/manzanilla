@@ -1,32 +1,73 @@
-import hashlib, json
+import asyncio, hashlib, json, re
 from .models import TOOL_MODELS
 from .connectors import connector, ConnectorUnavailable
 
 WRITES = {'leave_reception_note','call_taxi','notify_staff','create_guest_request'}
 
+def phone_number(value):
+    # Permit ordinary international or local emergency numbers, never URI/USSD.
+    return value if isinstance(value,str) and re.fullmatch(r'\+?[0-9]{3,15}',value) else ''
+
 class Gateway:
-    def __init__(self, store, hid, sid, edge_execute, confirm=None, handoff=None):
+    def __init__(self, store, hid, sid, edge_execute, confirm=None, handoff=None, authorized=None):
         self.store, self.hid, self.sid = store, hid, sid
         self.edge_execute, self.confirm, self.handoff = edge_execute, confirm, handoff
+        self.authorized = authorized or (lambda: True)
+        self.require_session = authorized is not None
         self.verified = {}  # Booking access is scoped to this authenticated conversation.
     async def execute(self, name, arguments, call_id):
+        if not self.authorized(): return {'status':'denied','reason':'Session ended or device revoked'}
+        if not isinstance(call_id,str) or not 1 <= len(call_id) <= 160:
+            return {'status':'invalid_arguments'}
         if name not in TOOL_MODELS: return {'status':'denied','reason':'Tool not allowed'}
         try: args = TOOL_MODELS[name].model_validate(arguments).model_dump()
         except Exception: return {'status':'invalid_arguments'}
         args_hash = hashlib.sha256(json.dumps(args, sort_keys=True).encode()).hexdigest()
-        old = self.store.rows('SELECT * FROM calls WHERE session=? AND call_id=?', (self.sid,call_id))
-        if old:
-            if old[0]['tool'] != name or old[0]['args_hash'] != args_hash:
+        # Claim before awaiting confirmation or external IO. A new call ID must not
+        # create a second write of the same exact operation in this session.
+        with self.store.lock, self.store.db:
+            db = self.store.db
+            claimed = db.execute('INSERT OR IGNORE INTO calls(session,call_id,tool,args_hash) VALUES(?,?,?,?)',
+                                 (self.sid,call_id,name,args_hash)).rowcount
+            own = db.execute('SELECT * FROM calls WHERE session=? AND call_id=?',(self.sid,call_id)).fetchone()
+            if own['tool'] != name or own['args_hash'] != args_hash:
                 return {'status':'denied','reason':'Idempotency conflict'}
-            return json.loads(old[0]['result']) if old[0]['result'] else {'status':'pending','reason':'Already executing; do not retry with a new ID'}
-        self.store.run('INSERT INTO calls(session,call_id,tool,args_hash) VALUES(?,?,?,?)', (self.sid,call_id,name,args_hash))
+            owner = call_id
+            if name in WRITES | {'connect_operator'}:
+                db.execute('INSERT OR IGNORE INTO write_claims VALUES(?,?,?,?)',(self.sid,name,args_hash,call_id))
+                owner = db.execute('SELECT call_id FROM write_claims WHERE session=? AND tool=? AND args_hash=?',
+                                   (self.sid,name,args_hash)).fetchone()['call_id']
+            if not claimed or owner != call_id:
+                old = db.execute('SELECT result FROM calls WHERE session=? AND call_id=?',(self.sid,owner)).fetchone()
+                return json.loads(old['result']) if old and old['result'] else {
+                    'status':'pending','reason':'Already executing; do not retry with a new ID'}
+        executing = False
         try:
             if name in WRITES and (not self.confirm or not await self.confirm(name,args)):
                 result = {'status':'cancelled','reason':'Guest confirmation not received'}
-            else: result = await self._execute(name,args)
+            elif not self.authorized():
+                result = {'status':'denied','reason':'Session ended or device revoked'}
+            else:
+                executing = True
+                result = await self._execute(name,args)
+        except asyncio.CancelledError:
+            if not executing:
+                with self.store.lock, self.store.db:
+                    db = self.store.db
+                    db.execute('DELETE FROM write_claims WHERE session=? AND tool=? AND args_hash=? AND call_id=?',
+                               (self.sid,name,args_hash,call_id))
+                    # Remove duplicate pending rows too: Store's bootstrap would
+                    # otherwise recreate the abandoned claim after a restart.
+                    db.execute('DELETE FROM calls WHERE session=? AND tool=? AND args_hash=? AND result IS NULL',
+                               (self.sid,name,args_hash))
+            # Once execution starts, an external write may already have happened.
+            # Keep its pending ledger/claim for reconciliation, never safe retry.
+            raise
         except ConnectorUnavailable:
             result = {'status':'unavailable','reason':'Reservation system unavailable; ask the operator',
                       'operator':self.store.hotel(self.hid)['operator_primary']}
+        except PermissionError:
+            result = {'status':'denied','reason':'Session ended or device revoked'}
         except Exception:
             result = {'status':'failed','reason':'Action failed; no successful result confirmed'}
         self.store.run('UPDATE calls SET result=? WHERE session=? AND call_id=?',(json.dumps(result),self.sid,call_id))
@@ -34,8 +75,11 @@ class Gateway:
         return result
     async def _execute(self, name, args):
         hotel = self.store.hotel(self.hid)
+        hotel = {**hotel, **{key:phone_number(hotel.get(key,'')) for key in
+                 ('operator_primary','operator_secondary','emergency_contact','taxi_number')}}
         if name == 'lookup_booking':
             booking = await connector(hotel,self.edge_execute).lookup(**args)
+            if not self.authorized(): return {'status':'denied','reason':'Session ended or device revoked'}
             if not booking: return {'status':'not_found'}
             self.verified[booking['id']] = booking
             return {'status':'ok','booking_id':booking['id'], 'demo':bool(booking.get('demo'))}
@@ -54,20 +98,25 @@ class Gateway:
             terms = args['query'].casefold().split()
             return {'status':'ok','matches':{k:v for k,v in hotel['knowledge'].items() if any(t in (k+' '+v).casefold() for t in terms)}}
         if name == 'call_taxi':
-            ident = self.store.item(self.hid,self.sid,'taxi',args)
+            ident = self.store.item(self.hid,self.sid,'taxi',args,require_session=self.require_session)
             if hotel['taxi_mode']=='dialer' and hotel['taxi_number'] and self.handoff:
                 result = await self.handoff('taxi', hotel['taxi_number'], '')
                 return {**result,'request_id':ident,'booked':False}
+            if hotel['taxi_mode']=='dialer' and hotel['taxi_number']:
+                return {'status':'dialer_required','number':hotel['taxi_number'],'request_id':ident,'booked':False}
             return {'status':'queued','request_id':ident,'booked':False,
                     'reason':'Request saved in the staff inbox. No taxi booking or call is confirmed.'}
         if name == 'connect_operator':
-            ident = self.store.item(self.hid,self.sid,'escalation',args)
+            ident = self.store.item(self.hid,self.sid,'escalation',args,require_session=self.require_session)
             if hotel['operator_primary'] and self.handoff:
                 result = await self.handoff('operator',hotel['operator_primary'],hotel['operator_secondary'])
                 return {**result,'escalation_id':ident,'connected':False,'fallback':hotel['operator_secondary'] or hotel['emergency_contact']}
+            if hotel['operator_primary']:
+                return {'status':'dialer_required','escalation_id':ident,'connected':False,
+                        'number':hotel['operator_primary'],'fallback':hotel['operator_secondary'] or hotel['emergency_contact']}
             return {'status':'unavailable','escalation_id':ident,'connected':False,
                     'primary':hotel['operator_primary'],'fallback':hotel['operator_secondary'] or hotel['emergency_contact']}
         kind = 'note' if name == 'leave_reception_note' else 'request'
-        ident = self.store.item(self.hid,self.sid,kind,args)
+        ident = self.store.item(self.hid,self.sid,kind,args,require_session=self.require_session)
         # Durable cloud fallback is authoritative; PMS delivery isn't fabricated.
         return {'status':'saved','item_id':ident,'destination':'Orange reception inbox','pms_delivered':False}

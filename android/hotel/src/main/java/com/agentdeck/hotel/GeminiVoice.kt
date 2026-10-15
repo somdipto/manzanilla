@@ -3,231 +3,195 @@ package com.agentdeck.hotel
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioManager
-import android.media.AudioRecord
-import android.media.AudioTrack
-import android.media.MediaRecorder
+import android.os.SystemClock
 import android.util.Base64
-import android.util.Log
+import com.agentdeck.audio.LiveSpeaker
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URLEncoder
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
-/** Stores the Gemini key encrypted with an Android Keystore AES key. Never logged, never in the APK. */
-class SecretStore(ctx: Context, prefsName: String = "gem") {
-    private val prefs = ctx.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
-    private fun key(): javax.crypto.SecretKey {
-        val ks = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (ks.getKey("manz_gem", null) as? javax.crypto.SecretKey)?.let { return it }
-        val g = javax.crypto.KeyGenerator.getInstance(android.security.keystore.KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        g.init(android.security.keystore.KeyGenParameterSpec.Builder("manz_gem", android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or android.security.keystore.KeyProperties.PURPOSE_DECRYPT)
-            .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE).build())
-        return g.generateKey()
-    }
-    fun has() = !load().isNullOrBlank()
-    /** Saves the key. Tries the Android Keystore first; some low-end devices break it, so fall back to app-private storage. Returns true only if it reads back identical. */
-    fun save(v: String): Boolean {
-        val t = v.trim()
-        var stored = false
-        try {
-            val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding"); c.init(javax.crypto.Cipher.ENCRYPT_MODE, key())
-            stored = prefs.edit().putString("k", "ks:" + Base64.encodeToString(c.iv + c.doFinal(t.toByteArray()), Base64.NO_WRAP)).commit()
-        } catch (e: Throwable) { Log.e("GV", "keystore save failed: ${e.javaClass.simpleName}") }
-        if (!stored || load() != t) {
-            stored = prefs.edit().putString("k", "pl:" + Base64.encodeToString(t.toByteArray(), Base64.NO_WRAP)).commit()
-        }
-        val ok = stored && load() == t
-        Log.i("GV", "key save ok=$ok len=${t.length}")
-        return ok
-    }
-    fun load(): String? { return try {
-        val v = prefs.getString("k", null) ?: return null
-        if (v.startsWith("pl:")) return String(Base64.decode(v.substring(3), Base64.NO_WRAP))
-        val raw = Base64.decode(v.removePrefix("ks:"), Base64.NO_WRAP)
-        val c = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding"); c.init(javax.crypto.Cipher.DECRYPT_MODE, key(), javax.crypto.spec.GCMParameterSpec(128, raw.copyOfRange(0, 12)))
-        String(c.doFinal(raw.copyOfRange(12, raw.size)))
-    } catch (e: Throwable) { Log.e("GV", "key unreadable: ${e.javaClass.simpleName}"); null } }
-    fun clear() { prefs.edit().clear().commit() }
-}
-
-/**
- * Live interpreter on the Gemini Live translation model. Two sessions are kept open (guest to reception language,
- * reception to guest language). The mic feeds only the session of the current turn.
- * Model name and message shapes follow https://ai.google.dev/gemini-api/docs/live-api/live-translate
+/** BYOK interpreter, never a concierge. The Live Translate model has no instructions or tools.
+ * https://ai.google.dev/gemini-api/docs/live-api/live-translate
+ * Input PCM16/16kHz, output PCM16/24kHz; capture requires BOTH setupComplete replies and greeting.
  */
 class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Unit, private val store: SecretStore) {
-    companion object {
-        // Model names live here only. Both are preview or current names from ai.google.dev/gemini-api/docs/models.
-        const val MODEL = "gemini-3.5-live-translate-preview"
-    }
-    @Volatile private var lastSpeech = 0L
-    private var startedAt = 0L
-    @Volatile private var running = false
-    @Volatile private var turn = "guest"
-    @Volatile private var muteUntil = 0L
-    private var guest = "en"; private var staff = "es"
-    private var rec: AudioRecord? = null
-    private var track: AudioTrack? = null
-    private var aec: android.media.audiofx.AcousticEchoCanceler? = null
+    companion object { const val MODEL = "gemini-3.5-live-translate-preview" }
     private val http = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).readTimeout(0, TimeUnit.MILLISECONDS).build()
-
-    private inner class Sess(val side: String, val from: String, val to: String) {
+    private inner class Run(val owner: VoiceSession) {
+        val sessions = listOf(Sess(this, "guest", owner.staff, true), Sess(this, "staff", owner.guest, false))
+        val playbackLock = Any()
+        var speaker: LiveSpeaker? = null
+        var mic: HotelMic? = null
+        @Volatile var recording = false
+        @Volatile var lastSpeech = SystemClock.elapsedRealtime()
+        val clock = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "InterpreterClock").apply { isDaemon = true } }
+        var setupTimeout: ScheduledFuture<*>? = null
+    }
+    private inner class Sess(val run: Run, val side: String, val target: String, publishInput: Boolean) {
         var ws: WebSocket? = null
+        val detached = CountDownLatch(1)
         @Volatile var ready = false
-        val inBuf = StringBuilder(); val outBuf = StringBuilder()
-        @Volatile var speaking = false
-        var tries = 0
-        var tIn = 0L; var tOut = 0L; var tAud = 0L
-        fun handle(raw: String) {
-            val j = try { JSONObject(raw) } catch (_: Throwable) { return }
-            if (j.has("setupComplete")) { ready = true; tries = 0; Log.i("GV", "$side session ready"); if (sessions.all { it.ready }) { push(ev("listening")); tone(true) }; return }
-            j.optJSONObject("error")?.let { fail("Gemini error: " + it.optString("message").take(140)); return }
-            val sc = j.optJSONObject("serverContent") ?: return
-            sc.optJSONObject("inputTranscription")?.optString("text")?.takeIf { it.isNotEmpty() }?.let { if (tIn == 0L) tIn = System.currentTimeMillis(); inBuf.append(it); partial() }
-            sc.optJSONObject("outputTranscription")?.optString("text")?.takeIf { it.isNotEmpty() }?.let { if (tOut == 0L) tOut = System.currentTimeMillis(); outBuf.append(it); partial() }
-            sc.optJSONObject("modelTurn")?.optJSONArray("parts")?.let { parts ->
-                for (i in 0 until parts.length()) parts.getJSONObject(i).optJSONObject("inlineData")?.optString("data")?.takeIf { it.isNotEmpty() }?.let { if (tAud == 0L) tAud = System.currentTimeMillis(); playPcm(Base64.decode(it, Base64.DEFAULT)); if (!speaking) { speaking = true; push(ev("speaking")) } }
-            }
-            if (sc.optBoolean("turnComplete") || sc.optBoolean("generationComplete")) finish()
-        }
-        fun partial() { val t = if (outBuf.isNotEmpty()) outBuf.toString() else inBuf.toString(); push(ev("listening").put("transcript", true).put("partial", true).put("source", "input").put("text", outBuf.toString()).put("original", inBuf.toString()).put("side", side)) }
-        fun finish() {
-            if (outBuf.isEmpty() && inBuf.isEmpty()) return
-            Log.i("GV", "$side turn done, in=${inBuf.length} chars out=${outBuf.length} chars")
-            push(ev("speaking").put("transcript", true).put("source", "output").put("text", outBuf.toString().trim()).put("original", inBuf.toString().trim()).put("side", side).put("from", from).put("to", to))
-            if (tIn > 0) push(JSONObject().put("type", "metrics").put("text", "$from to $to: translated text +${if (tOut > 0) tOut - tIn else -1} ms, voice +${if (tAud > 0) tAud - tIn else -1} ms after first words heard"))
-            tIn = 0; tOut = 0; tAud = 0
-            inBuf.setLength(0); outBuf.setLength(0); speaking = false
-            muteUntil = System.currentTimeMillis() + 600
-        }
+        val captions = TranslationCaptions("gemini:$side", run.owner.guest, run.owner.staff, target, publishInput)
     }
-    private val sessions = ArrayList<Sess>()
-    private fun ev(phase: String) = JSONObject().put("type", "reception_event").put("phase", phase)
-    private fun fail(msg: String) { Log.e("GV", msg); push(ev("error").put("text", msg)); stop() }
+    @Volatile private var current: Run? = null
 
-    private val main = android.os.Handler(android.os.Looper.getMainLooper())
-    private fun retry(s: Sess, apiKey: String): Boolean {
-        if (!running || s.tries >= 5) return false
-        s.tries++; s.ready = false; push(ev("connecting").put("text", "Reconnecting"))
-        Log.i("GV", "${s.side} reconnect ${s.tries}")
-        main.postDelayed({ if (running) open(s, apiKey) }, 1500L * s.tries); return true
+    @Synchronized fun start(guest: String, staff: String, mode: String = "translation", sessionId: String = "", epoch: Int = 0) {
+        if (current != null) return
+        val run = Run(VoiceSession(sessionId, epoch, guest, staff, mode, push))
+        current = run
+        run.owner.emit(JSONObject().put("type", "audio_state").put("state", "off"))
+        if (mode != "translation") { terminate(run, "error", "Assistance requires the trusted hotel service; an interpreter cannot provide it."); return }
+        if (!DeskLanguages.has(guest) || !DeskLanguages.has(staff) || guest == staff) {
+            terminate(run, "error", "Choose two different languages for translation."); return
+        }
+        val key = store.load()
+        if (key.isNullOrBlank()) {
+            terminate(run, "error", if (store.errorMessage != null) "The saved voice credential is unavailable. Ask staff to recover it in Settings."
+                else "Ask staff to configure the translation credential in Settings.")
+            return
+        }
+        if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            terminate(run, "error", "Microphone permission is needed for translation."); return
+        }
+        run.owner.phase("connecting")
+        run.owner.use {
+            run.setupTimeout = run.clock.schedule({ terminate(run, "error", "Voice setup timed out. Check the connection or contact reception.") }, 20, TimeUnit.SECONDS)
+            run.sessions.forEach { open(it, key) }
+            run.clock.scheduleAtFixedRate({
+                run.owner.use {
+                    run.owner.emit(JSONObject().put("type", "energy").put("level", run.speaker?.currentEnergy() ?: 0f))
+                    if (run.recording && SystemClock.elapsedRealtime() - run.lastSpeech > 120_000)
+                        terminate(run, "timeout", "Conversation ended after inactivity.")
+                }
+            }, 0, 50, TimeUnit.MILLISECONDS)
+        }
     }
-    private fun open(s: Sess, apiKey: String) {
-        val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=$apiKey"
-        s.ws = http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
+
+    fun greetingDone() { current?.let { run -> run.owner.greeted { capture(run) } } }
+
+    private fun open(session: Sess, key: String) {
+        val run = session.run
+        val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" + URLEncoder.encode(key, "UTF-8")
+        session.ws = http.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                val setup = JSONObject().put("setup", JSONObject().put("model", "models/$MODEL").put("generationConfig", JSONObject()
-                    .put("responseModalities", org.json.JSONArray().put("AUDIO")).put("inputAudioTranscription", JSONObject()).put("outputAudioTranscription", JSONObject())
-                    .put("translationConfig", JSONObject().put("targetLanguageCode", s.to).put("echoTargetLanguage", false))))
-                webSocket.send(setup.toString())
+                run.owner.use {
+                    val config = JSONObject().put("responseModalities", JSONArray().put("AUDIO"))
+                        .put("inputAudioTranscription", JSONObject()).put("outputAudioTranscription", JSONObject())
+                        .put("translationConfig", JSONObject().put("targetLanguageCode", session.target).put("echoTargetLanguage", false))
+                    webSocket.send(JSONObject().put("setup", JSONObject().put("model", "models/$MODEL").put("generationConfig", config)).toString())
+                }
             }
-            override fun onMessage(webSocket: WebSocket, text: String) = s.handle(text)
-            override fun onMessage(webSocket: WebSocket, bytes: ByteString) = s.handle(bytes.utf8())
+            override fun onMessage(webSocket: WebSocket, text: String) = handle(session, text)
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) = handle(session, bytes.utf8())
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, null) }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                if (!running) return
-                val code = response?.code
-                if (code != 400 && code != 401 && code != 403 && retry(s, apiKey)) return
-                fail(if (code == 400 || code == 401 || code == 403) "Gemini rejected the key ($code). Check the key in settings." else if (t is java.net.UnknownHostException || t is java.net.ConnectException || t is java.net.SocketTimeoutException) "No internet. Live translation needs a connection." else "Connection to Gemini failed: ${t.javaClass.simpleName}")
+                try { terminate(run, "error", "Voice connection failed. Check the internet connection or ask staff to check service access.") }
+                finally { session.detached.countDown() }
             }
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { if (running && code != 1000 && !retry(s, apiKey)) fail("Gemini closed the session ($code${if (reason.isNotBlank()) ": " + reason.take(120) else ""}).") }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                try { terminate(run, "error", "Voice connection ended. Please start a new conversation.") }
+                finally { session.detached.countDown() }
+            }
         })
     }
 
-    fun setTurn(side: String) {
-        val old = sessions.firstOrNull { it.side == turn }; turn = side
-        old?.ws?.send(JSONObject().put("realtimeInput", JSONObject().put("audioStreamEnd", true)).toString())
-        Log.i("GV", "turn=$side")
-    }
-
-    fun start(guestLang: String, staffLang: String, turnMode: String = "guest", stubWav: String? = null) {
-        if (running) return
-        val k = store.load()
-        if (k.isNullOrBlank()) { push(ev("error").put("text", "Add your Gemini key to start live translation. If you already saved one, open Settings and paste it again.").put("need_key", true)); return }
-        if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED && stubWav == null) { push(ev("error").put("text", "Microphone permission is needed for live translation.")); return }
-        running = true; guest = guestLang; staff = staffLang; turn = turnMode
-        push(ev("connecting"))
-        sessions.clear(); sessions.add(Sess("guest", guest, staff)); sessions.add(Sess("staff", staff, guest))
-        if (k == "STUB" && stubWav != null) { runStub(stubWav); return }
-        sessions.forEach { open(it, k) }
-        main.postDelayed({ if (running && sessions.any { !it.ready }) fail("Could not start live translation. Check the key and the internet connection.") }, 12000)
-        Thread {
-            try {
-                val min = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-                val r = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(min, 32000))
-                rec = r; aec = if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) try { android.media.audiofx.AcousticEchoCanceler.create(r.audioSessionId)?.also { it.enabled = true } } catch (_: Throwable) { null } else null; Log.i("GV", "aec=${aec != null}"); r.startRecording()
-                val buf = ByteArray(3200); var floor = 120.0; var lastLvl = 0L; var lastTick = 0L; startedAt = System.currentTimeMillis(); lastSpeech = startedAt
-                while (running) {
-                    val n = r.read(buf, 0, buf.size); if (n <= 0) continue
-                    var sum = 0.0; var q = 0
-                    while (q + 1 < n) { val v = ((buf[q + 1].toInt() shl 8) or (buf[q].toInt() and 0xff)).toShort().toDouble(); sum += v * v; q += 2 }
-                    val muted = aec == null && (System.currentTimeMillis() < muteUntil || sessions.any { it.speaking })
-                    val now = System.currentTimeMillis()
-                    if (now - lastLvl > 90) { lastLvl = now; push(JSONObject().put("type", "mic_level").put("level", if (muted) 0.0 else Math.min(1.0, Math.sqrt(sum / maxOf(1, n / 2)) / 32768.0 * 6))) }
-                    val rms = Math.sqrt(sum / maxOf(1, n / 2)); if (rms > maxOf(180.0, floor * 3.0)) lastSpeech = now else floor = floor * 0.98 + rms * 0.02
-                    if (now - lastSpeech > 120000) { push(ev("idle")); stop(); break }
-                    if (!muted && now - lastSpeech < 800) { val msg = JSONObject().put("realtimeInput", JSONObject().put("audio", JSONObject().put("data", Base64.encodeToString(buf, 0, n, Base64.NO_WRAP)).put("mimeType", "audio/pcm;rate=16000"))).toString(); for (s in sessions) if (s.ready) s.ws?.send(msg) }
-                }
-            } catch (e: Throwable) { if (running) fail("Microphone error: ${e.message}") } finally { try { rec?.stop(); rec?.release() } catch (_: Throwable) {} }
-        }.start()
-    }
-
-    /** Debug stub (key "STUB" + wav path): replays Gemini-shaped server messages so the UI and parser can be tested with no key. */
-    private fun runStub(wav: String) {
-        Thread {
-            try {
-                val g = sessions[0]; val st = sessions[1]
-                g.handle("{\"setupComplete\":{}}"); st.handle("{\"setupComplete\":{}}")
-                val s = sessions.first { it.side == turn }
-                Thread.sleep(800)
-                for (w in listOf("Hello", " where is", " the breakfast", " room?")) { s.handle(JSONObject().put("serverContent", JSONObject().put("inputTranscription", JSONObject().put("text", w))).toString()); push(JSONObject().put("type", "mic_level").put("level", 0.5)); Thread.sleep(500) }
-                for (w in listOf("¿Dónde está", " el comedor", " del desayuno?")) { s.handle(JSONObject().put("serverContent", JSONObject().put("outputTranscription", JSONObject().put("text", w))).toString()); Thread.sleep(300) }
-                s.handle("{\"serverContent\":{\"turnComplete\":true}}")
-                Thread.sleep(6000)
-            } finally { if (running) push(ev("idle")); running = false }
-        }.start()
-    }
-
-    private fun playPcm(b: ByteArray) {
+    private fun handle(session: Sess, raw: String) {
+        val run = session.run
+        if (!run.owner.active()) return
         try {
-            if (track == null) {
-                val min = AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
-                track = AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                    .setAudioFormat(AudioFormat.Builder().setSampleRate(24000).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-                    .setBufferSizeInBytes(maxOf(min, 48000)).setTransferMode(AudioTrack.MODE_STREAM).build().also { it.play() }
+            val event = JSONObject(raw)
+            if (event.has("error")) { terminate(run, "error", "The voice service rejected the request. Ask staff to check service access."); return }
+            if (event.has("setupComplete")) {
+                session.ready = true
+                if (run.sessions.all { it.ready }) {
+                    run.setupTimeout?.cancel(false)
+                    run.owner.ready { capture(run) }
+                }
+                return
             }
-            muteUntil = System.currentTimeMillis() + 800 + (b.size / 48L)
-            val n = track!!.write(b, 0, b.size); Log.i("GV", "audio chunk ${b.size}B written=$n")
-        } catch (e: Throwable) { Log.e("GV", "playback", e) }
+            val content = event.optJSONObject("serverContent") ?: return
+            if (content.optBoolean("interrupted")) {
+                synchronized(run.playbackLock) {
+                    run.speaker?.stop()
+                    run.speaker = null
+                    run.owner.emit(JSONObject().put("type", "energy").put("level", 0))
+                }
+            }
+            session.captions.accept(content).forEach { run.owner.emit(it) }
+            content.optJSONObject("modelTurn")?.optJSONArray("parts")?.let { parts ->
+                for (index in 0 until parts.length()) {
+                    val data = parts.getJSONObject(index).optJSONObject("inlineData") ?: continue
+                    if (!data.optString("mimeType").startsWith("audio/pcm")) continue
+                    val encoded = data.optString("data")
+                    if (encoded.isEmpty()) continue
+                    val pcm = Base64.decode(encoded, Base64.DEFAULT)
+                    synchronized(run.playbackLock) {
+                        run.owner.use {
+                            val speaker = run.speaker ?: LiveSpeaker { terminate(run, "error", "Speech playback failed. Please retry.") }
+                                .also { it.start(); run.speaker = it }
+                            if (!speaker.append(pcm)) terminate(run, "error", "Speech playback could not keep up. Please retry.")
+                            else run.owner.phase("speaking")
+                        }
+                    }
+                }
+            }
+            if (content.optBoolean("turnComplete") && run.recording) run.owner.phase("listening")
+        } catch (_: Exception) { terminate(run, "error", "Voice data could not be processed. Please retry or contact reception.") }
     }
 
-    private fun tone(up: Boolean) {
-        Thread {
-            try {
-                val sr = 24000; val notes = if (up) doubleArrayOf(659.0, 880.0) else doubleArrayOf(880.0, 587.0)
-                val per = (sr * 0.11).toInt(); val pcm = ShortArray(per * notes.size)
-                for (k in notes.indices) for (i in 0 until per) { val e = Math.sin(Math.PI * i / per); pcm[k * per + i] = (Math.sin(2 * Math.PI * notes[k] * i / sr) * e * e * 0.16 * 32767).toInt().toShort() }
-                muteUntil = System.currentTimeMillis() + 600
-                val t = AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
-                    .setAudioFormat(AudioFormat.Builder().setSampleRate(sr).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-                    .setBufferSizeInBytes(pcm.size * 2).setTransferMode(AudioTrack.MODE_STATIC).build()
-                t.write(pcm, 0, pcm.size); t.play(); Thread.sleep(pcm.size * 1000L / sr + 150); t.release()
-            } catch (e: Throwable) { Log.e("GV", "tone", e) }
-        }.start()
+    private fun capture(run: Run) {
+        run.mic = HotelMic(ctx, { bytes, size ->
+            var sent = false
+            run.owner.use {
+                val message = JSONObject().put("realtimeInput", JSONObject().put("audio", JSONObject()
+                    .put("data", Base64.encodeToString(bytes, 0, size, Base64.NO_WRAP)).put("mimeType", "audio/pcm;rate=16000"))).toString()
+                sent = run.sessions.all { it.ready && (it.ws?.queueSize() ?: Long.MAX_VALUE) < 64000 && it.ws?.send(message) == true }
+            }
+            sent
+        }, { terminate(run, "error", "Microphone or audio connection failed. Please retry or contact reception.") }, {
+            run.owner.use {
+                run.recording = true
+                run.lastSpeech = SystemClock.elapsedRealtime()
+                run.owner.emit(JSONObject().put("type", "audio_state").put("state", "recording"))
+                run.owner.phase("listening")
+            }
+        }, { level ->
+            if (level > 0.012f) run.lastSpeech = SystemClock.elapsedRealtime()
+            run.owner.emit(JSONObject().put("type", "mic_level").put("level", level))
+        }, sampleRate = 16000)
+        run.mic?.start()
     }
 
-    fun stop(userEnd: Boolean = false) {
-        if (userEnd && running) tone(false)
-        running = false
-        sessions.forEach { try { it.ws?.close(1000, "bye") } catch (_: Throwable) {} }
-        sessions.clear()
-        try { track?.stop(); track?.release() } catch (_: Throwable) {}; track = null
-        try { aec?.release() } catch (_: Throwable) {}; aec = null
+    fun stop(userEnd: Boolean = false, onStopped: () -> Unit = {}) {
+        val run = current
+        if (run == null) onStopped() else detach(run, null, onStopped)
+    }
+    private fun terminate(run: Run, phase: String, text: String) =
+        detach(run, JSONObject().put("type", "reception_event").put("phase", phase).put("text", text))
+
+    private fun detach(run: Run, terminal: JSONObject?, onStopped: () -> Unit = {}) {
+        if (!run.owner.close(onStopped)) return
+        run.clock.shutdownNow()
+        run.sessions.forEach { it.ws?.cancel() }
+        Thread({
+            var off = true
+            try { run.mic?.stop() } catch (_: Exception) { off = false }
+            try { synchronized(run.playbackLock) { run.speaker?.stop(); run.speaker = null } } catch (_: Exception) { off = false }
+            run.sessions.forEach { session ->
+                try { if (session.ws != null) session.detached.await() } catch (_: InterruptedException) { off = false }
+            }
+            synchronized(this) { if (current === run) current = null }
+            run.owner.detached(off, terminal)
+        }, "InterpreterDetach").apply { isDaemon = true; start() }
     }
 }

@@ -18,17 +18,20 @@
       <button class="icon-button" id="settings" aria-label="Staff setup" title="Staff setup"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 3-.7 2.6-2.5 1L3.5 6 2 8.6l1.9 1.9v3L2 15.4 3.5 18l2.3-.6 2.5 1L9 21h6l.7-2.6 2.5-1 2.3.6 1.5-2.6-1.9-1.9v-3L22 8.6 20.5 6l-2.3.6-2.5-1L15 3Z"/><circle cx="12" cy="12" r="3"/></svg></button>
       <button class="icon-button" id="exit" aria-label="Return to launcher" title="Return to launcher"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button>
     </header>
+    <section id="notices" class="service-notices" aria-label="Hotel service updates" aria-live="polite" hidden></section>
     <main class="glass-desk" id="desk">
       <div class="character-stage" id="stage" aria-label="Animated reception bell and receptionist mascot">
         <canvas id="scene" aria-hidden="true"></canvas>
-        <div class="scene-fallback" id="scene-fallback" hidden>Reception is ready</div>
+        <div class="scene-fallback" id="scene-fallback" hidden>3D scene unavailable. Reception controls still work.</div>
         <div class="stage-caption" id="stage-caption">A little help. A warmer welcome.</div>
       </div>
       <section class="content" id="content" aria-live="polite"></section>
     </main>
-    <footer class="footer" hidden><span id="privacy"></span><span id="hotel-label"></span><span id="hardware-hint"></span></footer>
+    <footer class="footer"><span id="privacy" role="status" aria-live="polite"></span><span id="hotel-label"></span><span id="hardware-hint"></span></footer>
   </div>
   <div class="toast" id="toast" role="status" hidden></div>
+  <script src="vendor/three.js" defer></script>
+  <script src="character.js" defer></script>
   <script src="scene.js" defer></script>
   <script src="greetings.js" defer></script>
   <script src="reception.js" defer></script>

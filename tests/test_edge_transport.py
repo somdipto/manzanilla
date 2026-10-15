@@ -15,10 +15,12 @@ def test_outbound_edge_over_tls(tmp_path):
     edge=None
     try:
         with httpx.Client(base_url=f'https://localhost:{port}',verify=ssl.create_default_context(cafile=str(cert)),trust_env=False,timeout=3) as client:
-            for _ in range(50):
+            deadline=time.time()+60
+            while time.time()<deadline:
                 try:
                     if client.get('/health').status_code==200: break
-                except httpx.HTTPError: time.sleep(.1)
+                except httpx.HTTPError: pass
+                time.sleep(.2)
             else: raise AssertionError('Cloud did not start')
             headers={'Authorization':'Bearer '+'x'*40}
             assert client.put('/api/hotels/a',headers=headers,json={'id':'a','name':'A','connector':'edge'}).status_code==200

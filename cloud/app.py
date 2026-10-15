@@ -9,6 +9,10 @@ from .db import Store
 from .models import Hotel, BookingLookup
 from .gateway import Gateway
 from .realtime import relay
+from .operations import Operations, Start, Action, Confirmation
+from .fish import FishSession, mint, end as end_fish, revoke_sessions
+from .models import Strict
+from typing import Literal
 
 store = Store(os.getenv('ORANGE_DB','data/orange.db'))
 app = FastAPI(title='Orange Night Reception', version='0.1.0')
@@ -56,8 +60,21 @@ def issue(hid: str, value: Credential):
 @app.delete('/api/credentials/{ident}', dependencies=[Depends(admin)])
 async def revoke(ident: str):
     store.run('DELETE FROM credentials WHERE id=?',(ident,))
+    store.run("UPDATE sessions SET status='revoked',ended=? WHERE device=? AND status='active'",(time.time(),ident))
+    closing = []
+    for hid, connection in list(edge_connections.items()):
+        if connection['credential']['id'] == ident:
+            edge_connections.pop(hid,None)
+            for pending in list(edge_pending.values()):
+                if pending[0] is connection and not pending[1].done():
+                    pending[1].set_result({'status':'unavailable'})
+            closing.append(connection['ws'])
     ws = device_connections.get(ident)
-    if ws: await ws.close(code=4401)
+    if ws: closing.append(ws)
+    async def close(ws):
+        try: await ws.close(code=4401)
+        except (RuntimeError,WebSocketDisconnect): pass
+    await asyncio.gather(revoke_sessions(store,ident),*(close(ws) for ws in closing))
     return {'status':'revoked'}
 
 @app.get('/api/hotels/{hid}/overview')
@@ -118,9 +135,44 @@ def heartbeat(value: Heartbeat, authorization: str = Header(default='')):
     store.run('UPDATE credentials SET seen=?,version=?,config_version=? WHERE id=?',(time.time(),value.app_version,value.config_version,dev['id']))
     return {'hotel':store.hotel(dev['hotel']),'device_id':dev['id'],'protocol':1}
 
+class VoiceSession(Strict):
+    mode: Literal['translation','reception']
+    language: str = Field(max_length=35,pattern=r'^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$')
+    staff_language: str = Field(max_length=35,pattern=r'^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$')
+    session_id: str = Field(pattern=r'^[A-Za-z0-9_-]{1,100}$')
+    generation: int = Field(default=0, ge=0)
+
+@app.post('/api/device/operations/start')
+def operations_start(value: Start, authorization: str = Header(default='')):
+    return Operations(store,edge_execute).start(device_auth(authorization),value)
+
+@app.post('/api/device/operations/{sid}/action')
+async def operations_action(sid: str, value: Action, authorization: str = Header(default='')):
+    return await Operations(store,edge_execute).action(device_auth(authorization),sid,value)
+
+@app.post('/api/device/operations/{sid}/confirm')
+async def operations_confirm(sid: str, value: Confirmation, authorization: str = Header(default='')):
+    return await Operations(store,edge_execute).confirm(device_auth(authorization),sid,value)
+
+@app.post('/api/device/operations/{sid}/end')
+def operations_end(sid: str, authorization: str = Header(default='')):
+    return Operations(store,edge_execute).end(device_auth(authorization),sid)
+
+@app.post('/api/device/fish-session')
+async def fish_session(value: FishSession, authorization: str = Header(default='')):
+    return await mint(store,device_auth(authorization),value)
+
+@app.post('/api/device/fish-session/{session_id}/end')
+async def fish_session_end(session_id: str, authorization: str = Header(default='')):
+    return await end_fish(store,device_auth(authorization),session_id)
+
 @app.post('/api/device/session')
-def session(authorization: str = Header(default='')):
+def session(value: VoiceSession, authorization: str = Header(default='')):
     dev=device_auth(authorization)
+    if value.mode == 'translation' and value.language.casefold() == value.staff_language.casefold():
+        raise HTTPException(422,'Choose two different interpreter languages')
+    if store.rows('SELECT id FROM sessions WHERE id=?',(value.session_id,)):
+        raise HTTPException(409,'Session identifier already used')
     now=time.time()
     for key in list(tickets):
         if tickets[key]['expires']<now: del tickets[key]
@@ -128,19 +180,28 @@ def session(authorization: str = Header(default='')):
     for key in list(tickets):
         if tickets[key]['device']['id']==dev['id']: del tickets[key]
     token=secrets.token_urlsafe(32)
-    tickets[token]={'device':dev,'expires':now+30}
+    tickets[token]={'device':dev,'expires':now+30,'metadata':value.model_dump()}
     return {'ticket':token,'expires_in':30,'protocol':1}
 
 async def edge_execute(hid, capability, args):
-    ws=edge_connections.get(hid)
-    if not ws: return {'status':'unavailable'}
+    connection=edge_connections.get(hid)
+    if not connection: return {'status':'unavailable'}
+    ws=connection['ws']; cred=connection['credential']
+    if store.auth(bearer(ws.headers.get('authorization')),'edge') != cred:
+        if edge_connections.get(hid) is connection: edge_connections.pop(hid,None)
+        try: await ws.close(code=4401)
+        except (RuntimeError,WebSocketDisconnect): pass
+        return {'status':'unavailable'}
     ident=str(uuid.uuid4())
     future=asyncio.get_running_loop().create_future()
-    edge_pending[ident]=(hid,future)
+    edge_pending[ident]=(connection,future)
     try:
         await ws.send_json({'type':'execute','id':ident,'capability':capability,'args':args})
-        return await asyncio.wait_for(future,10)
-    except (TimeoutError,RuntimeError): return {'status':'unavailable'}
+        result=await asyncio.wait_for(future,10)
+        if store.auth(bearer(ws.headers.get('authorization')),'edge') != cred:
+            return {'status':'unavailable'}
+        return result
+    except (TimeoutError,RuntimeError,WebSocketDisconnect): return {'status':'unavailable'}
     finally: edge_pending.pop(ident,None)
 
 @app.post('/api/hotels/{hid}/edge-check', dependencies=[Depends(admin)])
@@ -155,19 +216,24 @@ async def edge(ws: WebSocket):
     if not cred or cred['hotel'] in edge_connections:
         await ws.close(code=4401); return
     await ws.accept()
-    hid=cred['hotel']; edge_connections[hid]=ws
+    if store.auth(bearer(ws.headers.get('authorization')),'edge') != cred or cred['hotel'] in edge_connections:
+        await ws.close(code=4401); return
+    hid=cred['hotel']; connection={'credential':cred,'ws':ws}; edge_connections[hid]=connection
     try:
         while True:
             msg=await asyncio.wait_for(ws.receive_json(),75)
+            if store.auth(bearer(ws.headers.get('authorization')),'edge') != cred: break
             store.run('UPDATE credentials SET seen=? WHERE id=?',(time.time(),cred['id']))
-            if not store.auth(bearer(ws.headers.get('authorization')),'edge'): break
             if msg.get('type')=='heartbeat': await ws.send_json({'type':'pong'})
             elif msg.get('type')=='result':
                 pending=edge_pending.get(msg.get('id'))
-                if pending and pending[0]==hid and not pending[1].done(): pending[1].set_result(msg.get('result',{'status':'failed'}))
-    except (WebSocketDisconnect,TimeoutError,ValueError): pass
+                if pending and pending[0] is connection and not pending[1].done(): pending[1].set_result(msg.get('result',{'status':'failed'}))
+    except (WebSocketDisconnect,TimeoutError,ValueError,RuntimeError): pass
     finally:
-        if edge_connections.get(hid) is ws: edge_connections.pop(hid,None)
+        if edge_connections.get(hid) is connection: edge_connections.pop(hid,None)
+        for pending in list(edge_pending.values()):
+            if pending[0] is connection and not pending[1].done():
+                pending[1].set_result({'status':'unavailable'})
 
 @app.websocket('/ws/device')
 async def voice(ws: WebSocket):
@@ -178,12 +244,19 @@ async def voice(ws: WebSocket):
     valid=store.rows('SELECT id FROM credentials WHERE id=? AND role=\'device\'',(dev['id'],))
     if not valid or dev['id'] in active_devices: await ws.close(code=4409); return
     active_devices.add(dev['id']); await ws.accept(); device_connections[dev['id']]=ws
-    sid=str(uuid.uuid4()); hid=dev['hotel']; pending={}
-    store.run('INSERT INTO sessions VALUES(?,?,?,?,?,?,?)',(sid,hid,dev['id'],time.time(),None,'active',None))
+    metadata=entry['metadata']; sid=metadata['session_id']; hid=dev['hotel']; pending={}
+    scope={k:metadata[k] for k in ('session_id','generation')}
+    claimed=store.run('INSERT OR IGNORE INTO sessions VALUES(?,?,?,?,?,?,?)',
+                      (sid,hid,dev['id'],time.time(),None,'active',metadata['language']))
+    if not claimed.rowcount:
+        active_devices.discard(dev['id']); device_connections.pop(dev['id'],None)
+        await ws.close(code=4409); return
+    def authorized():
+        return bool(store.rows("SELECT s.id FROM sessions s JOIN credentials c ON c.id=s.device WHERE s.id=? AND s.status='active' AND c.role='device' AND c.hotel=s.hotel",(sid,)))
     async def device_request(kind, payload, timeout):
         ident=str(uuid.uuid4()); future=asyncio.get_running_loop().create_future(); pending[ident]=future
         try:
-            await ws.send_json({'type':kind,'id':ident,**payload})
+            await ws.send_json({'type':kind,'id':ident,**payload,**scope})
             return await asyncio.wait_for(future,timeout)
         except TimeoutError: return {}
         finally: pending.pop(ident,None)
@@ -194,11 +267,11 @@ async def voice(ws: WebSocket):
         result=await device_request('handoff',{'kind':kind,'number':number,'backup':backup},15)
         status=result.get('status')
         return {'status':status if status in {'dialer_opened','failed'} else 'unavailable','number':number}
-    gateway=Gateway(store,hid,sid,edge_execute,confirm,handoff)
+    gateway=Gateway(store,hid,sid,edge_execute,confirm,handoff,authorized)
     try:
-        await relay(ws,store.hotel(hid),gateway,pending)
+        await relay(ws,store.hotel(hid),gateway,pending,metadata)
     except Exception:
-        try: await ws.send_json({'type':'error','message':'Connection lost. Please retry or use the operator button.'})
+        try: await ws.send_json({'type':'error','message':'Connection lost. Please retry or use the operator button.',**scope})
         except Exception: pass
     finally:
         store.run('UPDATE sessions SET ended=?,status=? WHERE id=?',(time.time(),'ended',sid))

@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+fun javaString(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 android {
     namespace = "com.agentdeck.hotel"
     compileSdk = 34
@@ -16,18 +17,20 @@ android {
             return file.readLines().firstOrNull { it.substringBefore("#").trim().startsWith("$name=") }
                 ?.substringAfter("=")?.trim().orEmpty()
         }
-        fun javaString(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
         applicationId = "dev.orange.hotel"
         minSdk = 26
         targetSdk = 34
-        // Published 17.0.3 used code 20; every subsequent CI run must exceed it.
-        versionCode = 20 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1)
+        // Increment explicitly for every published APK; never derive identity from a CI run.
+        versionCode = rootProject.file("VERSION_CODE").readText().trim().toInt().also {
+            require(it > 34) { "Release candidates must supersede published code 34" }
+        }
         buildConfigField("String", "BACKEND_URL", javaString(System.getenv("ORANGE_BACKEND_URL") ?: ""))
         buildConfigField("String", "DEVICE_TOKEN", javaString(System.getenv("ORANGE_DEVICE_TOKEN") ?: ""))
         buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://api.github.com/repos/somdipto/manzanilla/releases/latest"))
-        buildConfigField("String", "FISH_API_KEY", javaString(injected("FISH_API_KEY")))
         buildConfigField("String", "FISH_AGENT_ID", javaString(injected("FISH_AGENT_ID")))
         buildConfigField("String", "FISH_VOICE_ID", javaString(injected("FISH_VOICE_ID")))
+        // Provider credentials are never embedded in ordinary builds, even if present in the environment.
+        buildConfigField("String", "FISH_API_KEY", javaString(""))
         manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl")) "true" else "false"
         versionName = rootProject.file("VERSION").readText().trim()
     }
@@ -46,6 +49,10 @@ android {
     }
     buildTypes {
         release {
+            val keyedPilot = System.getenv("ORANGE_KEYED_PILOT") == "true"
+            val fishKey = if (keyedPilot) System.getenv("FISH_API_KEY").orEmpty() else ""
+            require(!keyedPilot || fishKey.isNotBlank()) { "A keyed pilot release requires FISH_API_KEY" }
+            buildConfigField("String", "FISH_API_KEY", javaString(fishKey))
             isMinifyEnabled = false
             if (!System.getenv("ORANGE_KEYSTORE").isNullOrBlank()) signingConfig = signingConfigs.getByName("pilot")
         }
@@ -57,6 +64,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.livekit:livekit-android:2.29.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("com.android.tools.build:apksig:8.2.2")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

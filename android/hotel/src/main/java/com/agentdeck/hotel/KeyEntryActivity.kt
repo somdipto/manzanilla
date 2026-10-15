@@ -1,86 +1,267 @@
 package com.agentdeck.hotel
 
 import android.app.Activity
+import android.app.AlertDialog
+import android.app.KeyguardManager
 import android.content.Intent
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.text.InputType
+import android.text.method.PasswordTransformationMethod
+import android.view.ActionMode
 import android.view.Gravity
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
+import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
-/**
- * The staff key surface. Opened by a notification from the reception gear, because the
- * WebView owns no credentials of its own. The key is never shown here and never logged.
- */
+/** Staff setup trusts only Android's enrolled device credential, never an Intent or shared PIN. */
 class KeyEntryActivity : Activity() {
-    private val store by lazy { SecretStore(this, "fish") }
-    private lateinit var field: EditText
+    private val keyguard by lazy { getSystemService(KeyguardManager::class.java) }
+    private var authenticated = false
+    private var authenticationInFlight = false
+    private var authenticationAccepted = false
+    private var foreground = false
+    private val fields = ArrayList<EditText>()
+    private var dialog: AlertDialog? = null
+    private val background = Color.rgb(235, 232, 225)
+    private val ink = Color.rgb(36, 36, 38)
 
     override fun onCreate(state: Bundle?) {
-        super.onCreate(state)
-        val dark = getSharedPreferences("deck", MODE_PRIVATE).getString("reception_appearance", "light") == "dark"
-        val bg = if (dark) Color.rgb(16, 16, 18) else Color.rgb(235, 232, 225)
-        val ink = if (dark) Color.rgb(244, 243, 239) else Color.rgb(36, 36, 38)
-        val muted = if (dark) Color.rgb(154, 153, 148) else Color.rgb(107, 105, 100)
-        window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-        val status = TextView(this).apply {
-            text = if (store.has()) "A Fish Audio key is already saved on this tablet. Saving a new one replaces it." else "No Fish Audio key is saved. Live duplex is unavailable until one is."
-            textSize = 15f
-            setTextColor(muted)
-            gravity = Gravity.CENTER
+        // Do not restore a prior configuration view hierarchy or typed credentials.
+        super.onCreate(null)
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        lockedView("Authenticate with this tablet's screen-lock credential to configure device keys.")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        foreground = true
+        if (authenticationAccepted && keyguard.isDeviceSecure && !keyguard.isKeyguardLocked) {
+            authenticationAccepted = false
+            authenticated = true
+            showConfiguration()
+        } else if (!authenticationInFlight) {
+            requestAuthentication()
         }
-        field = EditText(this).apply {
-            hint = "Fish Audio key"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-            setTextColor(ink)
-            setHintTextColor(muted)
-            textSize = 17f
-            setSingleLine()
+    }
+
+    override fun onPause() {
+        foreground = false
+        lock()
+        super.onPause()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        lock()
+        if (foreground && !authenticationInFlight) requestAuthentication()
+    }
+
+    @Deprecated("Uses Android device credential confirmation for API 26 compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != AUTH_REQUEST || !authenticationInFlight) return
+        authenticationInFlight = false
+        authenticationAccepted = resultCode == RESULT_OK && keyguard.isDeviceSecure
+        if (!authenticationAccepted) finish()
+    }
+
+    private fun lock() {
+        authenticated = false
+        authenticationAccepted = false
+        dialog?.dismiss()
+        dialog = null
+        fields.forEach { it.setText("") }
+        fields.clear()
+        lockedView("Staff setup is locked. Device credential confirmation is required.")
+    }
+
+    @Suppress("DEPRECATION")
+    private fun requestAuthentication() {
+        authenticated = false
+        if (!keyguard.isDeviceSecure) {
+            lockedView("Staff setup is unavailable: no device screen-lock credential is enrolled. A tablet administrator must set a PIN, password or pattern through the tablet's managed Android Security settings, then return and authenticate. Guest setup cannot enroll or reset a credential.")
+            return
         }
-        val save = Button(this).apply {
-            text = "Save"
-            setOnClickListener { commit() }
+        val confirmation = keyguard.createConfirmDeviceCredentialIntent("Staff setup", "Confirm this tablet's screen-lock credential to manage device provider keys.")
+        if (confirmation == null) {
+            lockedView("Android could not open device credential confirmation. Unlock the tablet and retry Staff setup.", retry = true)
+            return
         }
-        val cancel = Button(this).apply {
-            text = "Cancel"
-            setOnClickListener { finish() }
+        authenticationInFlight = true
+        try {
+            startActivityForResult(confirmation, AUTH_REQUEST)
+        } catch (_: Exception) {
+            authenticationInFlight = false
+            lockedView("Device credential confirmation is unavailable. Ask the tablet administrator to check Android Security settings.", retry = true)
         }
-        val column = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setBackgroundColor(bg)
-            setPadding(40, 32, 40, 32)
-            addView(TextView(this@KeyEntryActivity).apply {
-                text = "Staff setup"
-                textSize = 24f
-                setTextColor(ink)
-                gravity = Gravity.CENTER
-            })
-            addView(status)
-            addView(field, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 24 })
-            addView(save, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 24 })
-            addView(cancel, LinearLayout.LayoutParams(-1, -2).apply { topMargin = 12 })
-        }
+    }
+
+    private fun authorized(): Boolean {
+        if (foreground && authenticated && keyguard.isDeviceSecure && !keyguard.isKeyguardLocked) return true
+        lock()
+        if (foreground && !authenticationInFlight) requestAuthentication()
+        return false
+    }
+
+    private fun lockedView(message: String, retry: Boolean = false) {
+        val column = column()
+        column.addView(label("Staff setup", 24f))
+        column.addView(label(message))
+        if (retry) column.addView(button("Authenticate again") { requestAuthentication() })
+        column.addView(button("Close") { finish() })
         setContentView(column)
     }
 
-    private fun commit() {
-        val value = field.text.toString().trim()
-        if (value.length < 20 || value.any { it.isWhitespace() }) {
-            Toast.makeText(this, "That is not a Fish Audio key. It must be at least 20 characters with no spaces.", Toast.LENGTH_LONG).show()
-            return
-        }
-        if (store.save(value)) {
-            field.setText("")
-            setResult(RESULT_OK, Intent().putExtra("saved", true))
-            finish()
-        } else {
-            Toast.makeText(this, "The key could not be saved on this tablet.", Toast.LENGTH_LONG).show()
-        }
+    private fun showConfiguration() {
+        if (!authorized()) return
+        val column = column()
+        column.addView(label("Staff setup", 24f))
+        column.addView(label("Device BYOK credentials. Existing keys are never displayed. Pilot builds ship a shared Fish interpreter key inside the app; a key entered here replaces it on this device."))
+        addProvider(column, "Fish Audio", "fish")
+        addProvider(column, "Gemini", "gem")
+        column.addView(button("Done") { finish() })
+        setContentView(ScrollView(this).apply {
+            isSaveEnabled = false
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            addView(column)
+        })
     }
+
+    private fun addProvider(column: LinearLayout, provider: String, prefsName: String) {
+        // Called only after credential confirmation; no storage read happens on a locked screen.
+        if (!authorized()) return
+        val store = SecretStore(this, prefsName)
+        val status = label("")
+        fun refresh() {
+            if (!authorized()) return
+            status.text = when (store.status()) {
+                SecretStore.Status.READY -> "$provider: a key is securely saved. Entering a new key replaces it."
+                SecretStore.Status.ABSENT -> "$provider: no device key is saved."
+                SecretStore.Status.ERROR -> "$provider: ${store.errorMessage}"
+            }
+        }
+        column.addView(label(provider, 20f))
+        column.addView(status)
+        val field = object : EditText(this) {
+            override fun onTextContextMenuItem(id: Int): Boolean {
+                if (id == android.R.id.copy || id == android.R.id.cut || id == android.R.id.shareText) return true
+                return super.onTextContextMenuItem(id)
+            }
+            override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(info)
+                info.text = null
+                info.isPassword = true
+                info.contentDescription = "New $provider key, masked"
+                info.removeAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_COPY)
+                info.removeAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_CUT)
+            }
+            override fun sendAccessibilityEventUnchecked(event: AccessibilityEvent) {
+                event.text.clear()
+                event.text.add("Masked key field")
+                event.beforeText = null
+                event.contentDescription = "New $provider key, masked"
+                event.isPassword = true
+                super.sendAccessibilityEventUnchecked(event)
+            }
+        }.apply {
+            hint = "New $provider key (not shown)"
+            contentDescription = "New $provider key, masked"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            transformationMethod = object : PasswordTransformationMethod() {
+                // Android's default password transform can briefly reveal the last typed glyph.
+                override fun getTransformation(source: CharSequence, view: View): CharSequence = object : CharSequence {
+                    override val length: Int get() = source.length
+                    override fun get(index: Int): Char = '\u2022'
+                    override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = "\u2022".repeat(endIndex - startIndex)
+                    override fun toString(): String = "\u2022".repeat(length)
+                }
+            }
+            imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN or EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
+            isSaveEnabled = false
+            setSaveFromParentEnabled(false)
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            if (Build.VERSION.SDK_INT >= 30) importantForContentCapture = View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS
+            filterTouchesWhenObscured = true
+            setSingleLine()
+            setTextColor(ink)
+            customSelectionActionModeCallback = object : ActionMode.Callback {
+                override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean = false
+                override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
+                override fun onActionItemClicked(mode: ActionMode, item: MenuItem): Boolean = true
+                override fun onDestroyActionMode(mode: ActionMode) {}
+            }
+        }
+        fields.add(field)
+        column.addView(field)
+        column.addView(button("Save $provider key") {
+            if (!authorized()) return@button
+            val value = field.text.toString().trim()
+            if (value.isEmpty() || value.any { it.isWhitespace() }) {
+                Toast.makeText(this, "Paste a provider key without spaces.", Toast.LENGTH_LONG).show()
+            } else if (store.save(value)) {
+                field.setText("")
+                refresh()
+                Toast.makeText(this, "$provider key securely saved.", Toast.LENGTH_SHORT).show()
+            } else {
+                status.text = "$provider: ${store.errorMessage}"
+            }
+        })
+        column.addView(button("Remove $provider key") {
+            if (!authorized()) return@button
+            dialog = AlertDialog.Builder(this)
+                .setTitle("Remove saved $provider key?")
+                .setMessage("This only removes this tablet's credential. Keep the provider's original key if you need it again.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Remove") { _, _ ->
+                    if (authorized()) {
+                        store.clear()
+                        field.setText("")
+                        if (store.status == SecretStore.Status.ERROR) status.text = "$provider: ${store.errorMessage}"
+                        else refresh()
+                    }
+                }.create().also {
+                    it.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    it.show()
+                    it.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+        })
+        refresh()
+    }
+
+    private fun column() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER
+        setBackgroundColor(this@KeyEntryActivity.background)
+        setPadding(40, 24, 40, 24)
+        isSaveEnabled = false
+        importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+    }
+
+    private fun label(value: String, size: Float = 15f) = TextView(this).apply {
+        text = value
+        textSize = size
+        setTextColor(ink)
+        setPadding(0, 8, 0, 8)
+        isSaveEnabled = false
+    }
+
+    private fun button(value: String, action: () -> Unit) = Button(this).apply {
+        text = value
+        filterTouchesWhenObscured = true
+        setOnClickListener { action() }
+    }
+
+    companion object { private const val AUTH_REQUEST = 31 }
 }

@@ -7,6 +7,8 @@ from cloud.gateway import Gateway
 from edge.executor import Executor
 import cloud.app as server
 
+VOICE = {'mode':'reception','language':'es','staff_language':'es','session_id':'test-voice','generation':3}
+
 @pytest.fixture
 def platform(tmp_path, monkeypatch):
     db=Store(str(tmp_path/'test.db'))
@@ -84,13 +86,13 @@ def test_tenant_isolation_and_revocation(platform):
     assert client.get('/api/hotels/a/overview',headers=hdr).status_code==200
     assert client.get('/api/hotels/b/overview',headers=hdr).status_code==403
     assert client.get('/api/hotels',headers=hdr).status_code==401
-    assert client.post('/api/device/session',headers=hdr).status_code==401
+    assert client.post('/api/device/session',headers=hdr,json=VOICE).status_code==401
     dh={'Authorization':'Bearer '+dev['token']}
     hb=client.post('/api/device/heartbeat',headers=dh,json={'app_version':'0.1','config_version':0})
     assert hb.json()['hotel']['id']=='a'
     assert client.post('/api/device/heartbeat',headers=dh,json={'app_version':'0.1','config_version':0,'protocol':99}).status_code==426
     client.delete('/api/credentials/'+dev['id'],headers={'Authorization':'Bearer '+'x'*40})
-    assert client.post('/api/device/session',headers=dh).status_code==401
+    assert client.post('/api/device/session',headers=dh,json=VOICE).status_code==401
 
 def test_resolution_scope_and_summary(platform):
     db,client=platform; ident=db.item('b','s','note',{'summary':'private'})
@@ -101,13 +103,13 @@ def test_resolution_scope_and_summary(platform):
 
 def test_ticket_single_use_and_real_gateway_path(platform,monkeypatch):
     db,client=platform; dev=db.issue('a','device')
-    async def fake_relay(ws,hotel,gateway,pending):
+    async def fake_relay(ws,hotel,gateway,pending,metadata):
         await ws.send_json({'type':'ready'})
         msg=await ws.receive_json()
         result=await gateway.execute('connect_operator',msg,'real-call')
         await ws.send_json(result)
     monkeypatch.setattr(server,'relay',fake_relay)
-    ticket=client.post('/api/device/session',headers={'Authorization':'Bearer '+dev['token']}).json()['ticket']
+    ticket=client.post('/api/device/session',headers={'Authorization':'Bearer '+dev['token']},json=VOICE).json()['ticket']
     with client.websocket_connect('/ws/device',headers={'X-Orange-Ticket':ticket}) as ws:
         assert ws.receive_json()['type']=='ready'
         ws.send_json({'reason':'human now'})
@@ -117,9 +119,9 @@ def test_ticket_single_use_and_real_gateway_path(platform,monkeypatch):
     assert db.rows('SELECT * FROM sessions')[0]['status']=='ended'
     assert db.rows('SELECT * FROM items')[0]['kind']=='escalation'
 
-def test_missing_openai_key_reports_failure(platform,monkeypatch):
-    db,client=platform;dev=db.issue('a','device');monkeypatch.delenv('OPENAI_API_KEY',raising=False)
-    ticket=client.post('/api/device/session',headers={'Authorization':'Bearer '+dev['token']}).json()['ticket']
+def test_missing_gemini_key_reports_failure(platform,monkeypatch):
+    db,client=platform;dev=db.issue('a','device');monkeypatch.delenv('GEMINI_API_KEY',raising=False)
+    ticket=client.post('/api/device/session',headers={'Authorization':'Bearer '+dev['token']},json=VOICE).json()['ticket']
     with client.websocket_connect('/ws/device',headers={'X-Orange-Ticket':ticket}) as ws:
         assert ws.receive_json()['type']=='error'
 

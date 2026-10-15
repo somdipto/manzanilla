@@ -16,7 +16,7 @@ import java.util.ArrayDeque
 
 /** Local UI only. The WebView has no microphone, credential, file or network access. */
 @SuppressLint("SetJavaScriptEnabled")
-class ReceptionView(context: Context, private val action: (JSONObject) -> Unit) : FrameLayout(context) {
+class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, private val unavailable: () -> Unit) : FrameLayout(context) {
     private val browser = WebView(context)
     private val waiting = ArrayDeque<JSONObject>()
     private var ready = false
@@ -49,7 +49,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit) 
             @JavascriptInterface fun postMessage(raw: String) {
                 if (raw.length > 8192) return
                 val message = try { JSONObject(raw) } catch (_: Exception) { return }
-                if (message.optString("action") !in setOf("info", "start", "stop", "appearance", "night", "bell", "settings", "checkin", "operator", "taxi", "question", "message", "confirm", "silence", "activity", "exit", "apply_update")) return
+                if (message.optString("action") !in setOf("info", "start", "stop", "appearance", "night", "bell", "settings", "languages", "checkin", "operator", "taxi", "question", "message", "confirm", "silence", "activity", "exit", "apply_update")) return
                 post { if (!disposed && shown) action(message) }
             }
         }, "ManzaniaNative")
@@ -62,7 +62,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit) 
                 val uri = request?.url
                 val path = uri?.path?.removePrefix("/") ?: ""
                 val permitted = uri?.scheme == "https" && uri.host == host && uri.query == null &&
-                    request?.method == "GET" && path in setOf("index.html", "reception.js", "reception.css", "scene.js", "greetings.js")
+                    request?.method == "GET" && path in setOf("index.html", "reception.js", "reception.css", "scene.js", "character.js", "vendor/three.js", "greetings.js")
                 if (permitted) {
                     val mime = when { path.endsWith(".js") -> "application/javascript"; path.endsWith(".css") -> "text/css"; else -> "text/html" }
                     try {
@@ -81,11 +81,11 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit) 
                 if (!shown) browser.onPause()
             }
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-                if (request?.isForMainFrame == true) showFallback()
+                if (request?.isForMainFrame == true) { showFallback(); unavailable() }
             }
             override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
                 ready = false
-                post { showFallback(); action(JSONObject().put("action", "stop")) }
+                post { showFallback(); unavailable() }
                 return true
             }
         }

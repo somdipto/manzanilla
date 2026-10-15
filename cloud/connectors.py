@@ -13,7 +13,8 @@ class DemoConnector:
 
 class RestConnector:
     def __init__(self, hotel_id):
-        prefix = 'PMS_' + hotel_id.upper().replace('-', '_')
+        # Preserve case and punctuation: credentials must never alias another tenant.
+        prefix = 'PMS_' + hotel_id.encode('utf-8').hex().upper()
         self.base = os.getenv(prefix + '_URL', '')
         self.token = os.getenv(prefix + '_TOKEN', '')
         if not self.base.startswith('https://') or not self.token:

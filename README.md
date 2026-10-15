@@ -2,7 +2,7 @@
 
 **Faster execution hardware for the hospitality industry.**
 
-Manzanilla Reception is a landscape Android app with a reception bell, light/dark themes and hands-free live translation. Reception and guest languages have independent 52-language selectors. A prerecorded guest-language greeting plays before the microphone opens. Staff can configure a Fish Audio key through the gear; keys are encrypted on the device, not included in public APKs. Previously saved Gemini keys remain supported.
+Manzanilla Reception is a landscape Android app with a reception bell, light/dark themes and hands-free live translation. Reception and guest languages have independent 52-language selectors. A prerecorded guest-language greeting plays before the microphone opens. Ordinary APKs contain no provider account key; staff can save an encrypted device key after Android credential authentication, or use a configured managed backend. An explicitly opted-in keyed pilot embeds a Fish key for immediate testing and is extractable, not production-safe. Previously saved Gemini keys remain supported.
 
 
 <p align="center">
@@ -27,7 +27,7 @@ Open Manzanilla while connected to the internet. The app checks the GitHub relea
 
 For a manual update, open the latest APK link above and install it over the existing app. If Android requests permission, allow Manzanilla or your browser to install unknown apps.
 
-The existing publishing workflow builds signed releases on `main` with run-number tags. For semantic releases such as 17.0.4, verify the APK's package, higher version code and matching signing certificate before retagging the release to match `android/VERSION`. Bump that file for each release. Version codes increase with the CI run number above the previously published code 20.
+Publication uses the semantic version in `android/VERSION` and the explicit increasing integer in `android/VERSION_CODE`. Every candidate must preserve package `dev.orange.hotel` and the existing signing certificate, supersede the last published version code, and pass artifact identity/digest checks. Verification builds are key-free; only an explicitly requested keyed-pilot release embeds `FISH_API_KEY` (see `docs/ENVIRONMENT.md`). Failed download/validation attempts are cleared so retry can discover a replacement release; an active download remains pinned to its immutable identity.
 
 <p align="center">
   <img src="docs/screenshots/auto-update-prompt.png" alt="Update prompt" width="520">
@@ -55,9 +55,9 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 
 ## Status
 
-17.0.4 includes the monochrome reception theme, independent 52-language selectors, guest-language greeting audio, compact original/translation captions, a Gemini latency display and update-download/install improvements. Hotel shortcuts are not connected to a PMS or phone service; confirmed messages are saved only on this tablet.
+17.0.5 is a testing pilot: multilingual Scribe + Gemini/Fish interpretation, account-scoped native agent caching, managed session admission/ownership/revocation, exact-hotel PMS credential isolation, cancellation-safe write claims, and failed-update recovery. Its explicitly authorized keyed APK works without manual provider-key entry; the embedded account key is extractable. Hotel assistance still requires a configured backend and real hotel integrations; this release does not invent PMS or telephone connectivity.
 
-Verification: `:hotel:testDebugUnitTest` and `:hotel:assembleRelease` pass locally. An isolated landscape browser fixture exercised language selection, the greeting-bearing start request, host-driven microphone indicators, stop, the update offer and its install action. This is UI/contract proof, not a real microphone or Android installation test. Live Fish/Gemini speech, echo, latency and the complete Android update installation remain unverified on hardware.
+Verification: 84 backend tests and 31 Android JVM tests pass locally; Android lint, debug and signed release assembly pass. Short live synthetic calls produced spoken translations in both directions for English–Spanish and Catalan–Spanish, preserving room 204. This is not a 52-language quality benchmark. Physical microphone/speaker echo, natural barge-in, production latency targets and real hotel service delivery remain unverified. Exact upgrade/device and provider evidence is recorded in [artifacts/VERIFICATION.md](artifacts/VERIFICATION.md).
 
 ## Build it yourself
 

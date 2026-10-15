@@ -1,5 +1,9 @@
 name: Verify Orange
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
 jobs:
   cloud:
     runs-on: ubuntu-latest
@@ -16,8 +20,7 @@ jobs:
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: '17'}
       - uses: android-actions/setup-android@v3
-      - run: sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
-      - run: bash gradlew :hotel:assembleDebug --no-daemon
+      - run: bash gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug --no-daemon
         working-directory: android
       - uses: actions/upload-artifact@v4
         with:
