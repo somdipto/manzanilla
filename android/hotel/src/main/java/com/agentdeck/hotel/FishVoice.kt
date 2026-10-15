@@ -41,6 +41,14 @@ class FishVoice(
     private val generation = AtomicInteger(0)
     private val meta = ctx.getSharedPreferences("fishmeta", Context.MODE_PRIVATE)
     @Volatile private var running = false
+    @Volatile private var guestLang = "en"
+    @Volatile private var staffLang = "es"
+    @Volatile private var expect = "guest"
+    private val micGate = Any()
+    @Volatile private var greetDone = false
+    private var pendingMic: (() -> Unit)? = null
+    private var heard = ""
+    private var heardSide = "guest"
     private var job: Job? = null
     private var room: Room? = null
 
@@ -68,7 +76,13 @@ class FishVoice(
             return
         }
         val gen = generation.incrementAndGet()
+        guestLang = guest
+        staffLang = staff
+        expect = "guest"
+        heard = ""
+        synchronized(micGate) { greetDone = false; pendingMic = null }
         running = true
+        speaker()
         push(ev("connecting"))
         job = scope.launch(Dispatchers.IO) {
             try {
@@ -85,16 +99,39 @@ class FishVoice(
         }
     }
 
+    fun setExpected(side: String) { expect = if (side == "staff") "staff" else "guest" }
+
+    fun greetingDone() {
+        if (!running) return
+        synchronized(micGate) { greetDone = true }
+        tryOpenMic()
+    }
+
     fun stop() {
-        if (!running && room == null && job == null) return
         generation.incrementAndGet()
         running = false
+        synchronized(micGate) { greetDone = false; pendingMic = null }
         val old = job
         val live = room
         job = null
         room = null
         old?.cancel()
         scope.launch(Dispatchers.IO) { hangup(live) }
+    }
+
+    private fun tryOpenMic() {
+        val open = synchronized(micGate) {
+            if (!greetDone) return
+            val ready = pendingMic ?: return
+            pendingMic = null
+            ready
+        }
+        open()
+    }
+
+    private fun armMic(open: () -> Unit) {
+        synchronized(micGate) { pendingMic = open }
+        tryOpenMic()
     }
 
     fun release() {
@@ -132,10 +169,29 @@ class FishVoice(
         live.registerTextStreamHandler("lk.transcription") { reader, fromIdentity ->
             scope.launch(Dispatchers.IO) {
                 if (gen != generation.get()) return@launch
-                val text = reader.readAll().joinToString("")
+                val text = reader.readAll().joinToString("").trim()
+                if (text.isEmpty()) return@launch
                 val attrs = reader.info.attributes
-                val side = if (fromIdentity.value == live.localParticipant.identity?.value) "guest" else "staff"
-                caption(side, text, attrs["lk.transcription_final"] == "true")
+                val detected = attrs.entries.firstOrNull { it.key.contains("lang", ignoreCase = true) }?.value
+                val mine = fromIdentity.value == live.localParticipant.identity?.value
+                val closed = attrs["lk.transcription_final"] == "true"
+                synchronized(this@FishVoice) {
+                    if (mine && !closed) {
+                        val side = PairSide.side(text, guestLang, staffLang, expect, detected)
+                        push(ev("listening").put("side", side).put("partial", true).put("original", text).put("text", ""))
+                    } else if (mine) {
+                        if (heard.isNotBlank()) commit(heardSide, heard, "")
+                        heardSide = PairSide.side(text, guestLang, staffLang, expect, detected)
+                        heard = text
+                        push(ev("listening").put("side", heardSide).put("partial", true).put("original", text).put("text", ""))
+                    } else {
+                        val side = if (heard.isBlank()) "staff" else heardSide
+                        commit(side, heard, text)
+                        heard = ""
+                        expect = PairSide.other(side)
+                        push(JSONObject().put("type", "turn").put("side", expect))
+                    }
+                }
             }
         }
         live.connect(session.url, session.token)
@@ -144,8 +200,13 @@ class FishVoice(
             return
         }
         speaker()
-        live.localParticipant.setMicrophoneEnabled(true)
-        push(ev("listening"))
+        armMic {
+            scope.launch {
+                if (gen != generation.get()) return@launch
+                live.localParticipant.setMicrophoneEnabled(true)
+                push(ev("listening"))
+            }
+        }
         scope.launch {
             delay(FishPlan.CLIENT_CAP_MS)
             if (gen == generation.get() && running) {
@@ -162,18 +223,21 @@ class FishVoice(
         am.isSpeakerphoneOn = true
     }
 
-    private fun caption(side: String, text: String, final: Boolean) {
-        val spoken = text.trim()
-        if (spoken.isEmpty()) return
-        val event = ev(if (side == "staff") "speaking" else "listening").put("side", side).put("text", spoken)
-        if (final) event.put("original", "") else event.put("partial", true).put("original", spoken)
-        push(event)
+    private fun commit(side: String, original: String, translation: String) {
+        val target = if (side == "guest") staffLang else guestLang
+        val source = if (side == "guest") guestLang else staffLang
+        push(ev(if (side == "staff") "speaking" else "listening")
+            .put("side", side)
+            .put("original", original)
+            .put("text", translation)
+            .put("from", source)
+            .put("to", target))
     }
 
     private fun onAgent(gen: Int, data: ByteArray) {
         val event = try { JSONObject(String(data, Charsets.UTF_8)) } catch (_: Throwable) { return }
         when (event.optString("type")) {
-            "error" -> fail(gen, "The voice provider failed (${event.optString("code", "error")}). End the call and try again.")
+            "error" -> Log.w("FV", "agent ${event.optString("code")}")
             "session.ended" -> {
                 if (gen != generation.get()) return
                 push(ev("ended").put("text", "Call ended (${event.optString("reason", "ended")})."))

@@ -20,8 +20,8 @@ android {
         applicationId = "dev.orange.hotel"
         minSdk = 26
         targetSdk = 34
-        // Installed 10.0.2 is versionCode 12. Keep CI monotonic, never below that.
-        versionCode = maxOf(System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 13, 13)
+        // Published 17.0.3 used code 20; every subsequent CI run must exceed it.
+        versionCode = 20 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1)
         buildConfigField("String", "BACKEND_URL", javaString(System.getenv("ORANGE_BACKEND_URL") ?: ""))
         buildConfigField("String", "DEVICE_TOKEN", javaString(System.getenv("ORANGE_DEVICE_TOKEN") ?: ""))
         buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://api.github.com/repos/somdipto/manzanilla/releases/latest"))
@@ -31,6 +31,7 @@ android {
         manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl")) "true" else "false"
         versionName = rootProject.file("VERSION").readText().trim()
     }
+    androidResources { noCompress += "wav" }
     buildFeatures { buildConfig = true }
     signingConfigs {
         create("pilot") {

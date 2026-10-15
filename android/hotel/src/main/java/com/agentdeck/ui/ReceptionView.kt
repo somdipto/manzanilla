@@ -25,7 +25,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit) 
     private val host = "manzania-reception.invalid"
 
     init {
-        setBackgroundColor(Color.rgb(237, 241, 237))
+        setBackgroundColor(if (context.getSharedPreferences("deck", Context.MODE_PRIVATE).getString("reception_appearance", "light") == "dark") Color.rgb(16, 16, 18) else Color.rgb(235, 232, 225))
         visibility = View.GONE
         addView(browser, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         browser.setBackgroundColor(Color.TRANSPARENT)
@@ -49,7 +49,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit) 
             @JavascriptInterface fun postMessage(raw: String) {
                 if (raw.length > 8192) return
                 val message = try { JSONObject(raw) } catch (_: Exception) { return }
-                if (message.optString("action") !in setOf("start", "stop", "info", "exit", "speak", "set_key", "save_key", "clear_key", "turn", "silence", "bell", "night", "activity", "confirm", "message", "operator", "checkin", "taxi", "question")) return
+                if (message.optString("action") !in setOf("info", "start", "stop", "appearance", "night", "bell", "settings", "checkin", "operator", "taxi", "question", "message", "confirm", "silence", "activity", "exit", "apply_update")) return
                 post { if (!disposed && shown) action(message) }
             }
         }, "ManzaniaNative")
@@ -62,7 +62,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit) 
                 val uri = request?.url
                 val path = uri?.path?.removePrefix("/") ?: ""
                 val permitted = uri?.scheme == "https" && uri.host == host && uri.query == null &&
-                    request?.method == "GET" && path in setOf("index.html", "reception.js", "reception.css", "scene.js")
+                    request?.method == "GET" && path in setOf("index.html", "reception.js", "reception.css", "scene.js", "greetings.js")
                 if (permitted) {
                     val mime = when { path.endsWith(".js") -> "application/javascript"; path.endsWith(".css") -> "text/css"; else -> "text/html" }
                     try {
@@ -125,7 +125,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit) 
             addView(TextView(context).apply {
                 text = "Reception could not load.\nReturn to the launcher and open Reception again."
                 textSize = 20f
-                setTextColor(Color.rgb(31, 49, 44))
+                setTextColor(Color.rgb(36, 36, 38))
                 gravity = Gravity.CENTER
             })
             addView(Button(context).apply { text = "Back to launcher"; setOnClickListener { action(JSONObject().put("action", "exit")) } })

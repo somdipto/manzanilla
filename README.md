@@ -2,11 +2,8 @@
 
 **Faster execution hardware for the hospitality industry.**
 
-Manzanilla Reception is a landscape Android app with a reception bell and a hands-free live-translation screen. Choose the guest and hotel languages from the top language pill. Add your Gemini API key in Settings; it is encrypted on the device and is not included in the APK.
+Manzanilla Reception is a landscape Android app with a reception bell, light/dark themes and hands-free live translation. Reception and guest languages have independent 52-language selectors. A prerecorded guest-language greeting plays before the microphone opens. Staff can configure a Fish Audio key through the gear; keys are encrypted on the device, not included in public APKs. Previously saved Gemini keys remain supported.
 
-<p align="center">
-  <img src="docs/screens/design-u-emulator.png" alt="Manzanilla translation screen, scripted UI replay" width="720">
-</p>
 
 <p align="center">
   <a href="https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Manzanilla%20Reception-2ea44f?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="56"></a>
@@ -18,21 +15,25 @@ Manzanilla Reception is a landscape Android app with a reception bell and a hand
 
 1. On the Android device, open this link and download the APK: **[Manzanilla-Reception.apk (latest)](https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk)**
 2. Open the downloaded file. If Android asks, allow "Install unknown apps" for the browser or file manager you used, then tap Install.
-3. Open **Manzanilla**. It starts straight on reception, without staff enrollment. Add your Gemini API key in Settings before trying translation.
+3. Open **Manzanilla**. It starts straight on reception, without staff enrollment. Use the staff-setup gear to configure Fish Audio if this device has no saved voice key.
 
 <p align="center"><img src="docs/screens/1-bell.png" alt="Reception bell" width="520"></p>
 
 All releases: https://github.com/somdipto/manzanilla/releases
 
-## Updates install themselves
+## Update an existing installation
 
-Every push to `main` builds a new signed release automatically. The app checks for a newer release when it opens (at most every six hours), downloads it, and asks Android to install it.
+Open Manzanilla while connected to the internet. The app checks the GitHub release feed on resume and downloads newer APKs in the background. Tap the update offer, then approve Android's install prompt. Do not uninstall: an in-place update keeps app data and saved keys. The update-check interval depends on the installed version; 17.0.4 checks at most once every ten minutes.
+
+For a manual update, open the latest APK link above and install it over the existing app. If Android requests permission, allow Manzanilla or your browser to install unknown apps.
+
+The existing publishing workflow builds signed releases on `main` with run-number tags. For semantic releases such as 17.0.4, verify the APK's package, higher version code and matching signing certificate before retagging the release to match `android/VERSION`. Bump that file for each release. Version codes increase with the CI run number above the previously published code 20.
 
 <p align="center">
   <img src="docs/screenshots/auto-update-prompt.png" alt="Update prompt" width="520">
 </p>
 
-Android shows one "Update" confirmation for apps that were installed from a file. A device set up as device owner (kiosk) installs updates with no tap at all.
+Android may require an "Update" confirmation for an app installed from a file; this is not a silent remote installation.
 
 ## Screens
 
@@ -54,7 +55,9 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 
 ## Status
 
-Beta (10.0.1): design U, Hotel assistance and Night reception were built, installed and checked on an Android emulator, see the [screen recording](docs/videos/10.0.2-emulator-walkthrough.mp4). Live translation needs your own Gemini API key in Settings. The conversation shown in the translation screenshot comes from a debug-only scripted replay that is not in release builds. Real-key speech, microphone, speaker, echo and reconnect behavior are not yet verified. Hotel assistance is not connected yet.
+17.0.4 includes the monochrome reception theme, independent 52-language selectors, guest-language greeting audio, compact original/translation captions, a Gemini latency display and update-download/install improvements. Hotel shortcuts are not connected to a PMS or phone service; confirmed messages are saved only on this tablet.
+
+Verification: `:hotel:testDebugUnitTest` and `:hotel:assembleRelease` pass locally. An isolated landscape browser fixture exercised language selection, the greeting-bearing start request, host-driven microphone indicators, stop, the update offer and its install action. This is UI/contract proof, not a real microphone or Android installation test. Live Fish/Gemini speech, echo, latency and the complete Android update installation remain unverified on hardware.
 
 ## Build it yourself
 
