@@ -70,7 +70,7 @@
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const t = () => copy[state.language] || copy.en;
   const langName = (language) => translationLanguages[language]?.native || languages[language]?.native || language;
-  const languagePicker = (side, label) => `<section class="language-side" data-keypad="${languageSide === side}"><label for="${side}">${label}</label><select id="${side}" data-language-side="${side}" aria-describedby="${side}-hint" ${state.audio !== 'off' ? 'disabled' : ''}>${Object.entries(translationLanguages).map(([id,item],i) => `<option value="${id}" lang="${id}" dir="${languageDir(id)}" ${state[side] === id ? 'selected' : ''}>${esc(item.native)} · ${esc(item.name)}${i < 10 ? ' (' + (i === 9 ? 0 : i + 1) + ')' : ''}</option>`).join('')}</select><small id="${side}-hint">${side === 'language' ? 'The language you speak' : 'The language reception speaks'}</small></section>`;
+  const languagePicker = (side, label) => `<section class="language-side" data-keypad="${languageSide === side}"><label for="${side}">${label}</label><select id="${side}" data-language-side="${side}" lang="${state[side]}" dir="${languageDir(state[side])}" aria-describedby="${side}-hint" ${state.audio !== 'off' ? 'disabled' : ''}>${Object.entries(translationLanguages).map(([id,item]) => `<option value="${id}" lang="${id}" dir="${languageDir(id)}" ${state[side] === id ? 'selected' : ''}>${esc(item.native)}</option>`).join('')}</select><small id="${side}-hint">${side === 'language' ? 'The language you speak' : 'The language reception speaks'}</small></section>`;
   const send = (action, detail = {}) => {
     if (!native) return;
     const scope = state.sessionId && !['start','info','languages','appearance','night','settings','apply_update'].includes(action)
@@ -81,9 +81,18 @@
   const fine = (text) => `<p class="fine">${esc(text)}</p>`;
 
   const languageDir = language => !language ? 'auto' : /^(ar|he|fa|ur)(-|$)/.test(language) ? 'rtl' : 'ltr';
-  const captionLabel = entry => entry.side === 'assistant' ? state.mode === 'translation' ? 'Translation · unlinked' : 'Manzanilla' : entry.side === 'guest' ? 'Guest' : 'Receptionist';
+  const captionLabel = entry => entry.kind === 'app_greeting' ? 'Reception · Welcome' : entry.side === 'assistant' ? state.mode === 'translation' ? 'Translation · unlinked' : 'Manzanilla · unlinked' : entry.side === 'guest' ? 'Guest' : 'Receptionist';
   const captionLanguage = language => language ? langName(language) : 'Language not identified';
-  const caption = entry => `<article class="caption caption-${entry.side === 'guest' ? 'guest' : 'reception'}"><span class="caption-side">${captionLabel(entry)}</span>${entry.original ? `<div><span class="caption-language">${esc(captionLanguage(entry.from))} · Original speech</span><p class="caption-original" lang="${esc(entry.from || 'und')}" dir="${languageDir(entry.from)}">${esc(entry.original)}</p></div>` : ''}${entry.text ? `<div${entry.original ? ' class="caption-translation"' : ''}><span class="caption-language">${esc(captionLanguage(entry.to))} · ${state.mode === 'translation' ? 'Translation' : 'Response'}</span><p class="caption-text" lang="${esc(entry.to || 'und')}" dir="${languageDir(entry.to)}">${esc(entry.text)}</p></div>` : ''}</article>`;
+  const caption = entry => {
+    const welcome = entry.kind === 'app_greeting';
+    const parts = [];
+    if (entry.original) parts.push({ language: entry.from, text: entry.original, field: 'original', label: 'Original speech' });
+    if (entry.text) parts.push({ language: entry.to, text: entry.text, field: 'text', label: state.mode === 'translation' ? 'Translation' : 'Response' });
+    // Reorder only an explicitly identified language pair, never unrelated feeds.
+    const paired = parts.length === 2 && state.language !== state.staff_language && ((entry.from === state.language && entry.to === state.staff_language) || (entry.from === state.staff_language && entry.to === state.language));
+    if (paired && parts[0].language === state.staff_language) parts.reverse();
+    return `<article id="${esc(entry.id)}" class="caption caption-${entry.side === 'guest' ? 'guest' : 'reception'}" data-source="${welcome ? 'app' : 'provider'}"${welcome ? ' data-kind="app_greeting"' : ''}><span class="caption-side">${captionLabel(entry)}</span>${parts.map((part,index) => `<div class="caption-part${index ? ' caption-divider' : ''}" data-field="${part.field}"><span class="caption-language">${esc(captionLanguage(part.language))}${welcome ? '' : ` · ${part.label}`}</span><p class="caption-${part.field === 'original' ? 'original' : 'text'}" lang="${esc(part.language || 'und')}" dir="${languageDir(part.language)}">${esc(part.text)}</p></div>`).join('')}</article>`;
+  };
   const conversation = () => state.utterances.size ? [...state.utterances.values()].map(caption).join('') : `<div class="empty-transcript">${esc(state.mode === 'translation' ? t().begin : t().welcome)}</div>`;
   const operationDraft = () => /^(operation|voice):/.test(state.draft?.draft_id || '');
   const phaseLabel = () => ({ connecting: t().connect, greeting: 'Welcome', thinking: 'Translating', speaking: t().speaking, listening: 'Live conversation', ending: 'Stopping conversation', stopped: 'Conversation stopped' })[state.phase] || t().reception;
@@ -458,6 +467,16 @@
       if (!finishNavigation()) render();
       return;
     }
+    if (type === 'app_greeting') {
+      if (event.state !== 'started' || !state.active || state.closed || state.terminated || event.language !== state.language || event.staff_language !== state.staff_language) return;
+      const key = `${state.sessionId}:app:greeting`;
+      const guestWelcome = greet(event.language);
+      const staffWelcome = greet(event.staff_language);
+      if (state.utterances.has(key) || !guestWelcome || !staffWelcome) return;
+      state.utterances.set(key, { id: key, kind: 'app_greeting', side: 'app', from: event.language, to: event.staff_language, original: guestWelcome, text: staffWelcome });
+      render();
+      return;
+    }
     if (state.terminated) return;
     const terminal = type === 'reception_event' && ['stopped','timeout','error'].includes(event.phase);
     if (state.closed && !terminal) return;
@@ -482,7 +501,7 @@
       const key = `${state.sessionId}:${event.side}:${event.utterance_id}`;
       let entry = state.utterances.get(key);
       if (!entry) {
-        entry = { side: event.side, from: '', to: '', original: '', text: '', final: { original: false, text: false } };
+        entry = { id: key, side: event.side, from: '', to: '', original: '', text: '', final: { original: false, text: false } };
         state.utterances.set(key, entry);
       }
       if (entry.final[event.field] && (!event.final || event.operation === 'append')) return;

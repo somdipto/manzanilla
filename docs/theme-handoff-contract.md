@@ -127,6 +127,13 @@ This section specifies target behavior, not the current implementation.
   Fish segment IDs identify speaker revisions, not translation pairs; Gemini Live
   supplies no documented original/output association. Those feeds remain explicitly
   unlinked. Never infer a pair from arrival order or claim live pairing is solved.
+- Starting translation plays the bundled guest-language welcome locally before
+  provider connection and microphone capture. Its session/generation-scoped
+  `app_greeting` event is emitted when playback starts. It produces one app-owned
+  reception-side bubble per session: guest language above receptionist language,
+  separated by a rule. Provider captions cannot overwrite this welcome.
+  Cancellation releases the player and must not continue into voice capture.
+  Unlike provider captions, this known welcome has an explicit bilingual pair.
 - Normalize provider input/output deltas, replacements and final records once at
   the native boundary. Define the concrete schema there before editing callers,
   then migrate both providers, host, bridge allowlist and UI in the same cutover.

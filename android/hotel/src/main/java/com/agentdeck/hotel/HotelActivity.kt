@@ -235,7 +235,18 @@ class HotelActivity : Activity() {
                 if (token == greetToken && current(lease)) stopSession("error", "The welcome audio could not play. Ask staff to check the speaker before starting.")
                 true
             }
-            player.setOnPreparedListener { if (token == greetToken && current(lease) && foreground) it.start() }
+            player.setOnPreparedListener {
+                if (token != greetToken || !current(lease) || !foreground || it !== greetPlayer) return@setOnPreparedListener
+                try {
+                    it.start()
+                    if (it.isPlaying && token == greetToken && current(lease) && foreground && it === greetPlayer) {
+                        push(lease, JSONObject().put("type", "app_greeting").put("state", "started")
+                            .put("language", lease.request.guest).put("staff_language", lease.request.staff))
+                    }
+                } catch (_: Exception) {
+                    if (token == greetToken && current(lease)) stopSession("error", "The welcome audio could not play. Ask staff to check the speaker before starting.")
+                }
+            }
             player.prepareAsync()
         } catch (_: Exception) {
             stopSession("error", "The welcome audio is unavailable. Ask staff to check this installation.")

@@ -1,5 +1,19 @@
 # UI update verification — 2026-10-16
 
+## 17.0.7 scope and exercised checks
+
+- Compact native language selects retain all 52 choices; closed controls display only the selected endonym, without duplicate English names or keypad numbers. Browser measurements at 640×360, 740×360, 844×390 and 390×844 showed 48-pixel controls, every endonym fitting, and no horizontal overflow.
+- Welcome playback remains the existing bundled local WAV path, before provider connection or microphone capture. Native `MediaPlayer.onPrepared` now emits a session/generation-owned `app_greeting` event after playback starts. The UI adds one app-owned reception-side bubble, guest language above receptionist language, with a divider. Text uses the existing recorded-greeting map rather than new generated wording.
+- Browser bridge smoke exercised all 52 guest-language welcome pairs, including Spanish with English as the receptionist language. Both texts matched the bundled greeting map. Duplicate/stale events were ignored; restart kept history and added exactly one welcome for the new session. Explicitly paired ordinary captions displayed guest language first for both speakers.
+- Conversation bubbles and dock use neutral charcoal/gray or warm-gray surfaces. Measured caption-text/label contrast was at least 6.51:1 in dark mode and 5.14:1 in light mode. The approved home gradient and logo remain unchanged.
+- Local integrated command `:hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug :hotel:assembleRelease --no-daemon` passed with **BUILD SUCCESSFUL** and 31 JVM tests, zero failures. Existing SDK XML/deprecation warnings remain.
+- APK asset inspection opened all 52 greeting WAVs: durations 1.626–3.679 seconds, no empty/invalid audio files.
+- Disposable API-34 landscape AVD `reception1707`, serial `emulator-5584`, 960×540, muted audio and no microphone input. An initial Android System UI ANR dialog occurred during fixture startup; closing System UI recovered the fixture. This is not a clean device-startup or acoustic acceptance claim.
+- A disposable instrumentation APK invoked the real native greeting path in a same-certificate, credential-free debug APK. English, Japanese and Arabic playback completed and released the player; the WebView received each native event and displayed the correct bilingual welcome. Immediate cancellation did not invoke the continuation. No provider connection or microphone was opened. Browser fixtures do not substitute for this native playback check; muted `MediaPlayer` progress does not prove speaker output.
+- Final signed local APK restored with `adb install -r`: package `dev.orange.hotel`, 17.0.7/code 37, `firstInstallTime=2026-10-16 15:05:16`. Cold launch returned **Status: ok**, `TotalTime: 4089` ms. Actual system Back returned from language selection to reception home. `release_identity.py` accepted its package, signing certificate, version and code against the published 17.0.6 APK.
+- Actual Android captures: [compact language selection](../docs/screens/17.0.7-languages.png) from the signed release; [app-owned bilingual welcome](../docs/screens/17.0.7-welcome-fixture.png) from the credential-free native fixture. The welcome capture uses real bundled audio and the real native event, not generated/provider speech.
+- No paid API calls or physical microphone/speaker benchmarks ran. Current Fish/Gemini live captions remain explicitly unlinked; the known app-owned greeting pair does not solve upstream original/translation correlation.
+
 ## 17.0.6 scope and exercised checks
 
 - Applied the user-approved original logo/open-canvas gradient design to packaged reception assets, all guest pages and native staff controls. Removed the obsolete Three.js/character scene.
