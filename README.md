@@ -61,7 +61,7 @@ Linked captions render guest-left/receptionist-right, with original speech above
 
 Verification: 31 Android JVM tests, Android lint, debug and signed release assembly passed locally. Isolated browser checks covered readable selectors at small landscape sizes, all 52 welcome language pairs, neutral-bubble contrast, stale events and greeting history across restart. A disposable native Android fixture exercised actual bundled welcome playback in English, Japanese and Arabic, player release, and immediate cancellation without opening a microphone or provider connection. All 52 bundled WAV files were validated. No additional paid calls ran. The explicitly authorized pilot still embeds an extractable Fish key. Muted emulator playback is not physical speaker or live full-duplex proof; detailed evidence and prior benchmarks are in [artifacts/VERIFICATION.md](artifacts/VERIFICATION.md).
 
-Conversation screenshots from the actual Android WebView use **injected synthetic captions, not live speech**: [dual bubbles](docs/screens/17.0.6-conversation-fixture.png), [stopped state](docs/screens/17.0.6-stopped-fixture.png).
+Actual Android captures: [compact language selection](docs/screens/17.0.7-languages.png) and [app-owned bilingual welcome](docs/screens/17.0.7-welcome-fixture.png). The welcome fixture exercises bundled audio and its native playback event, not a live provider session. Earlier ordinary-conversation captures use **injected synthetic captions, not live speech**: [dual bubbles](docs/screens/17.0.6-conversation-fixture.png), [stopped state](docs/screens/17.0.6-stopped-fixture.png).
 
 ## Build it yourself
 
