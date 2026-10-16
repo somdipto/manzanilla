@@ -11,6 +11,8 @@ Isolated verification captures, not real hotel or guest requests:
 | Live-audio eligibility gate | [17.0.10-audio-gate.png](17.0.10-audio-gate.png), no provider connection |
 | Typed staff message | [17.0.10-message-form-fixture.png](17.0.10-message-form-fixture.png), real backend field contract through an emulated native bridge |
 | Confirmed inbox receipt | [17.0.10-message-receipt-fixture.png](17.0.10-message-receipt-fixture.png), real isolated backend receipt, not staff acknowledgement |
+| Published stock update offer | [17.0.10-update-offer.png](17.0.10-update-offer.png), actual 17.0.8 updater after public download/verification |
+| Published app after system update | [17.0.10-installed.png](17.0.10-installed.png), actual 17.0.10/code 40 with retained bright appearance |
 
 [Secret-free staff-led fixture video](../videos/17.0.10-staff-led-fixture.webm). The browser bridge is emulated; this does not establish native audio, physical echo handling or hotel acceptance.
 

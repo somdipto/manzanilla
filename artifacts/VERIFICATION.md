@@ -25,6 +25,18 @@
 - [Native home](../docs/screens/17.0.10-native-fixture.png), [browser home](../docs/screens/17.0.10-home.png), [audio gate](../docs/screens/17.0.10-audio-gate.png), [typed form](../docs/screens/17.0.10-message-form-fixture.png), [confirmed receipt](../docs/screens/17.0.10-message-receipt-fixture.png).
 - [Secret-free end-to-end staff-led fixture video](../docs/videos/17.0.10-staff-led-fixture.webm), approximately nine seconds with deliberate readable pauses, and [isolated receipt records](17.0.10-isolated-receipts.json). These are explicitly synthetic verification requests, not real hotel service or interviews. The video demonstrates UI/HTTP behavior, not live audio timing.
 
+## Published artifact and real in-place upgrade
+
+- Released application source: `277635aa484184af34c8b1fcd988be808864ae69`, version 17.0.10/code 40, on `omp/remediation-r01-r17`. Main was not changed; no master-issue update was posted.
+- [Signed candidate run 38970267934](https://github.com/somdipto/manzanilla/actions/runs/38970267934) passed backend, native, supporting-service and signing/installed-release-continuity jobs. Independently downloaded its exact signed artifact and reproduced its updater manifest against the public 17.0.8 APK; package and signer continuity passed.
+- Redacted in-memory DEX inspection confirmed the earlier embedded account credential was absent from the candidate, and the account/device credential build fields were gone. No credential value was printed or persisted by the check.
+- Published [17.0.10](https://github.com/somdipto/manzanilla/releases/tag/v17.0.10) from that exact verified artifact. The unauthenticated latest-release API, public updater manifest and public APK asset digest agreed: SHA-256 `7bf22178de51b4f9adb0793a5bd2bd261e0a588bb746931fad0c27e528d6f335`.
+- **PASS — published stock 17.0.8 → published 17.0.10 through the stock app's own updater.** Actual public discovery/download/digest and signer verification produced [the downloaded offer](../docs/screens/17.0.10-update-offer.png). Enabled the system's per-source installation permission, returned to the offer and approved the actual system Update dialog. This upgrade did **not** use `adb install`.
+- PackageManager reported 17.0.10/code 40 with the original `firstInstallTime=2026-10-17 03:05:08` retained. The selected bright appearance remained; [the upgraded app](../docs/screens/17.0.10-installed.png) displayed “Up to date · 17.0.10”. This proves the isolated fixture, not an upgrade of the owner's unconnected device.
+- Installer-driver correction: its dialog reflow moved the button, so the first coordinate tap missed. Selecting the current accessibility bounds completed the update. An immediate launch raced installer cleanup and returned to the launcher; reopening after completion produced Status: ok and the observed app surface. The isolated crash buffer was empty.
+- Temporary backend, browser, instrumentation sources and credential-bearing fixture files were cleaned up after verification. No mutations or verification ran against the owner's live app/data. The exposed account credential still requires owner-controlled revocation; removing it from this release does not revoke old copies.
+
+
 ## Remaining live/pilot gates
 
 No provider audio calls or paid benchmarks ran. Free-only model/account/region/quota/billing/privacy qualification, physical microphone/speaker/echo/overlap validation, audible latency, real hotel configuration approval, actual staff acknowledgement/handoff/taxi handling and supervised interviews remain unverified. The omitted Phase 1 brief sections and exact three gate definitions remain required. This remediation release is not a declaration that Phase 1 passed.
