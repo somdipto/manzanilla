@@ -73,7 +73,7 @@
   const languagePicker = (side, label) => `<section class="language-side" data-keypad="${languageSide === side}"><label for="${side}">${label}</label><select id="${side}" data-language-side="${side}" lang="${state[side]}" dir="${languageDir(state[side])}" aria-describedby="${side}-hint" ${state.audio !== 'off' ? 'disabled' : ''}>${Object.entries(translationLanguages).map(([id,item]) => `<option value="${id}" lang="${id}" dir="${languageDir(id)}" ${state[side] === id ? 'selected' : ''}>${esc(item.native)}</option>`).join('')}</select><small id="${side}-hint">${side === 'language' ? 'The language you speak' : 'The language reception speaks'}</small></section>`;
   const send = (action, detail = {}) => {
     if (!native) return;
-    const scope = state.sessionId && !['start','info','languages','appearance','night','settings','apply_update'].includes(action)
+    const scope = state.sessionId && !['start','info','languages','appearance','night','settings','apply_update','check_updates'].includes(action)
       ? { session_id: state.sessionId, ...(state.generation === null ? {} : { generation: state.generation }) } : {};
     window.ManzaniaNative.postMessage(JSON.stringify({ action, ...scope, ...detail }));
   };
@@ -124,6 +124,7 @@
     nightToggle.ariaPressed = String(state.night);
     nightToggle.hidden = state.page !== 'idle';
     document.getElementById('settings').hidden = !native || !['idle','error'].includes(state.page);
+    document.getElementById('check-updates').hidden = !native || state.page !== 'idle';
     content.dataset.page = state.page;
     document.getElementById('mode-title').textContent = 'Reception';
     document.getElementById('connection-text').textContent = state.connected ? 'Voice configured' : 'Voice setup needed';
@@ -355,6 +356,7 @@
   });
   document.getElementById('night-toggle').addEventListener('click', toggleNight);
   document.getElementById('settings').addEventListener('click',()=>send('settings'));
+  document.getElementById('check-updates').addEventListener('click',()=>send('check_updates'));
 
   function hardware(key) {
     activity();
@@ -381,9 +383,10 @@
       bar.type = 'button';
       bar.className = 'update-offer';
       bar.addEventListener('click', () => {
-        if (bar.dataset.phase === 'progress' || bar.dataset.phase === 'installing') return;
-        bar.dataset.phase = 'installing';
-        send('apply_update');
+        if (['checking','progress','installing'].includes(bar.dataset.phase)) return;
+        const action = bar.dataset.phase === 'current' ? 'check_updates' : 'apply_update';
+        bar.dataset.phase = action === 'check_updates' ? 'checking' : 'installing';
+        send(action);
       });
       document.body.appendChild(bar);
     }
@@ -391,7 +394,7 @@
     bar.dataset.phase = phase;
     if (phase === 'installed') { bar.hidden = true; return; }
     bar.hidden = false;
-    if (phase === 'progress' || phase === 'installing') {
+    if (['checking','progress','installing'].includes(phase)) {
       bar.disabled = true;
       const pct = Number(percent);
       const known = Number.isFinite(pct) && pct >= 0;
@@ -399,7 +402,8 @@
       return;
     }
     bar.disabled = false;
-    if (phase === 'confirm') bar.textContent = text || 'Tap to open the installer. The file is already downloaded.';
+    if (phase === 'current') bar.textContent = text || 'Up to date. Tap to check again.';
+    else if (phase === 'confirm') bar.textContent = text || 'Tap to open the installer. The file is already downloaded.';
     else if (phase === 'failed') bar.textContent = text || 'Update did not finish. Tap to try the installer again.';
     else bar.textContent = text || ('Update ' + version + ' is downloaded. Tap to install.');
   }

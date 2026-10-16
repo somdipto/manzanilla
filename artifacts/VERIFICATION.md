@@ -1,5 +1,15 @@
 # UI update verification — 2026-10-16
 
+## 17.0.8 updater repair — reproduced failures and checks
+
+- Confirmed both failure paths against the actual 17.0.6 `Updater` in an isolated API-34 landscape fixture. A same-certificate instrumentation harness set the updater's recent-check timestamp and invoked `check()`: **FAIL — opening the app after a recent check silently skips release discovery for ten minutes**. With only that timestamp changed to zero, a deterministic offline HTTP interceptor reached the real request path: **FAIL — release discovery failure is logged but never shown to the user**.
+- Removed the persisted discovery cooldown from app entry/manual checks; retained single-flight admission. Metadata success/failure now completes that admission on the UI thread and emits checking/current/retryable-failure status. A home-screen **Check updates** action and foreground ten-minute rechecks make the path reachable without reinstalling or restarting.
+- Both original native regression scenarios passed against a patched release-mode fixture: **PASS — recent-check app entry retries discovery; offline failure reaches the user; requests=1**. This exercises the real Android updater rather than a duplicated policy function. There is no existing JVM seam for the Android `Context`/main-looper path; the temporary native harness supplies the regression proof.
+- Browser smoke exercised the real check button, checking/busy state, visible retry, current-version recheck and install-offer actions. Home/language layouts fit 640×360, 740×360, 844×390 and 390×844. A first layout check caught the new footer button squeezing the 640×360 language page; keeping the manual control on home restored that page without reducing touch targets.
+- Local integrated Android tests/lint/debug/signed-release build passed: **BUILD SUCCESSFUL**. Backend suite: **84 passed**, one existing Starlette/AnyIO deprecation warning. Existing Android SDK XML, nullable-receiver and deprecated-window-API warnings remain.
+- To test a real newer-release handoff without publishing a test release, a throwaway Gradle `finalizeDsl` override built the repaired updater with baseline identity 17.0.6/code 36. Production version files remain 17.0.8/code 38. The patched fixture discovered, downloaded and verified the actual public 17.0.7/code 37 APK and displayed **Update 17.0.7 is downloaded. Tap to install.**
+- Removed the unused source-text bridge allowlist script; actual browser action checks and native updater runs replace that implementation-only check. No provider calls or paid voice benchmarks ran.
+
 ## 17.0.7 scope and exercised checks
 
 - Compact native language selects retain all 52 choices; closed controls display only the selected endonym, without duplicate English names or keypad numbers. Browser measurements at 640×360, 740×360, 844×390 and 390×844 showed 48-pixel controls, every endonym fitting, and no horizontal overflow.

@@ -37,6 +37,13 @@ class HotelActivity : Activity() {
     private val store by lazy { SecretStore(this) }
     private val fishStore by lazy { SecretStore(this, "fish") }
     private val updater by lazy { Updater(this) { status -> runOnUiThread { onUpdate(status) } } }
+    private val updatePoll = object : Runnable {
+        override fun run() {
+            if (!foreground || destroyed) return
+            updater.check()
+            ui.postDelayed(this, 10 * 60_000L)
+        }
+    }
     private val localProvider = lazy { GeminiVoice(this, { event -> runOnUiThread { forward(event) } }, store) }
     private val local by localProvider
     private val fishProvider = lazy { FishVoice(this, { event -> runOnUiThread { forward(event) } }) { fishStore.load().orEmpty() } }
@@ -308,6 +315,8 @@ class HotelActivity : Activity() {
     private fun onUpdate(status: String) {
         val page = reception ?: return
         when {
+            status.startsWith("checking:") -> page.push(JSONObject().put("type", "update_status").put("phase", "checking").put("text", "Checking for updates…"))
+            status.startsWith("current:") -> page.push(JSONObject().put("type", "update_status").put("phase", "current").put("text", "Up to date · ${BuildConfig.VERSION_NAME}"))
             status.startsWith("offer:") -> page.push(JSONObject().put("type", "update").put("phase", "ready").put("version", status.removePrefix("offer:")))
             status.startsWith("progress:") -> {
                 val value = status.removePrefix("progress:")
@@ -381,6 +390,7 @@ class HotelActivity : Activity() {
             "activity" -> lastActivity = SystemClock.elapsedRealtime()
             "silence" -> if (greetPlayer != null && owner.current != null) stopSession() else stopGreeting()
             "exit" -> stopSession(done = { finish() })
+            "check_updates" -> updater.check()
             "apply_update" -> if (owner.current == null) updater.installOffered() else notice("End the conversation before installing the update.")
         }
     }
@@ -418,6 +428,8 @@ class HotelActivity : Activity() {
         reception?.setShown(true)
         pushState()
         updater.check()
+        ui.removeCallbacks(updatePoll)
+        ui.postDelayed(updatePoll, 10 * 60_000L)
     }
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, permissions, results)
@@ -430,6 +442,7 @@ class HotelActivity : Activity() {
     }
     override fun onPause() {
         foreground = false
+        ui.removeCallbacks(updatePoll)
         stopSession()
         reception?.setShown(false)
         super.onPause()
@@ -438,6 +451,7 @@ class HotelActivity : Activity() {
         destroyed = true
         if (Build.VERSION.SDK_INT >= 33) backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
         ui.removeCallbacks(watchdog)
+        ui.removeCallbacks(updatePoll)
         stopSession(done = {
             if (fishProvider.isInitialized()) fish.release()
             if (cloudProvider.isInitialized()) cloud.release()

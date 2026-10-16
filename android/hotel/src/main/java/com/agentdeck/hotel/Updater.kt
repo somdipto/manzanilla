@@ -98,7 +98,7 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
     private fun discardObsoleteCache() {
         val id = prefs().getLong("downloadId", -1L)
         if (id >= 0) downloads().remove(id)
-        prefs().edit().remove("request").remove("pendingVersion").remove("pendingUrl").remove("downloadId").commit()
+        prefs().edit().remove("request").remove("pendingVersion").remove("pendingUrl").remove("downloadId").remove("last").commit()
         listOfNotNull(app.filesDir, app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)).forEach { dir ->
             dir.listFiles()?.filter { it.name.startsWith("update-") && (it.name.endsWith(".apk") || it.name.endsWith(".part")) }
                 ?.forEach { it.delete() }
@@ -128,20 +128,28 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
             }
             return@onUi
         }
-        val now = System.currentTimeMillis()
-        if (now - prefs().getLong("last", 0L) < 10 * 60_000L || !checking.compareAndSet(false, true)) return@onUi
-        prefs().edit().putLong("last", now).apply()
+        if (!checking.compareAndSet(false, true)) return@onUi
+        onStatus("checking:")
         val refreshGeneration = ownership.generation
         Thread {
             try {
                 val request = releaseRequest()
                 ui.post {
-                    if (request != null && ownership.generation == refreshGeneration && ownership.active == null && eligible(request)) {
+                    checking.set(false)
+                    if (ownership.generation != refreshGeneration || ownership.active != null) return@post
+                    if (request != null && eligible(request)) {
                         ownership.begin(request)?.let { persist(it); resume(it) }
+                    } else onStatus("current:")
+                }
+            } catch (e: Exception) {
+                Log.w("UPD", "Release metadata unavailable", e)
+                ui.post {
+                    checking.set(false)
+                    if (ownership.generation == refreshGeneration && ownership.active == null) {
+                        onStatus("failed:Could not check for updates. Check your connection and tap to retry.")
                     }
                 }
-            } catch (e: Exception) { Log.w("UPD", "Release metadata unavailable", e) }
-            finally { checking.set(false) }
+            }
         }.start()
     }
 

@@ -140,7 +140,7 @@ This section specifies target behavior, not the current implementation.
   Shortcut/system notices are not fabricated guest speech.
 - Keep existing actions `info`, `start`, `stop`, `appearance`, `night`, `bell`,
   `settings`, `checkin`, `operator`, `taxi`, `question`, `message`, `confirm`,
-  `silence`, `activity`, `exit`, `apply_update`. Native staff setup owns key entry;
+  `silence`, `activity`, `exit`, `apply_update`, `check_updates`. Native staff setup owns key entry;
   a dead WebView `save_fish_key` route is not part of this contract.
 - `stop` acknowledges completion only after recording/playback are stopped and
   the transport is detached. Terminal states clear native and UI ownership.
@@ -152,6 +152,11 @@ This section specifies target behavior, not the current implementation.
 - `reception_info` initializes hotel defaults without overwriting an active
   selection. Appearance/night restore from host preferences. Keep update
   offer/progress/confirmation events separate from voice-session state.
+- Release discovery runs on every app resume and every ten minutes while the
+  app remains foregrounded. A home-screen `check_updates` action retries
+  immediately. Checking/current/failure feedback is visible and independent of
+  a voice session; metadata/network failure must not silently suppress retries.
+  Android permission and installation confirmation remain OS-owned steps.
 - Meaningful activity feeds a native inactivity watchdog. Provider notifications
   and animation frames are not guest activity. A call-duration cap and a
   cumulative monetary budget are separate controls.
