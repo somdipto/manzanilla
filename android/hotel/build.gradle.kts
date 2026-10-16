@@ -24,13 +24,8 @@ android {
         versionCode = rootProject.file("VERSION_CODE").readText().trim().toInt().also {
             require(it > 34) { "Release candidates must supersede published code 34" }
         }
-        buildConfigField("String", "BACKEND_URL", javaString(System.getenv("ORANGE_BACKEND_URL") ?: ""))
-        buildConfigField("String", "DEVICE_TOKEN", javaString(System.getenv("ORANGE_DEVICE_TOKEN") ?: ""))
         buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://api.github.com/repos/somdipto/manzanilla/releases/latest"))
-        buildConfigField("String", "FISH_AGENT_ID", javaString(injected("FISH_AGENT_ID")))
         buildConfigField("String", "FISH_VOICE_ID", javaString(injected("FISH_VOICE_ID")))
-        // Provider credentials are never embedded in ordinary builds, even if present in the environment.
-        buildConfigField("String", "FISH_API_KEY", javaString(""))
         manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl")) "true" else "false"
         versionName = rootProject.file("VERSION").readText().trim()
     }
@@ -49,10 +44,6 @@ android {
     }
     buildTypes {
         release {
-            val keyedPilot = System.getenv("ORANGE_KEYED_PILOT") == "true"
-            val fishKey = if (keyedPilot) System.getenv("FISH_API_KEY").orEmpty() else ""
-            require(!keyedPilot || fishKey.isNotBlank()) { "A keyed pilot release requires FISH_API_KEY" }
-            buildConfigField("String", "FISH_API_KEY", javaString(fishKey))
             isMinifyEnabled = false
             if (!System.getenv("ORANGE_KEYSTORE").isNullOrBlank()) signingConfig = signingConfigs.getByName("pilot")
         }

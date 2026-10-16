@@ -22,6 +22,14 @@ edge_pending = {}
 active_devices = set()
 device_connections = {}
 
+# No current provider route has verified compliant free-only qualification.
+# This is not an environment opt-in; staff-led HTTP operations remain available.
+LIVE_AUDIO_ENABLED = False
+LIVE_AUDIO_BLOCK_REASON = 'Live audio is disabled: no verified compliant free-only provider route. Use staff-led reception actions or ask hotel staff; no paid fallback was started.'
+
+def require_live_audio():
+    if not LIVE_AUDIO_ENABLED: raise HTTPException(503,LIVE_AUDIO_BLOCK_REASON)
+
 def bearer(value): return value[7:] if value and value.startswith('Bearer ') else ''
 def admin(authorization: str = Header(default='')):
     secret = os.getenv('ORANGE_ADMIN_TOKEN','')
@@ -160,7 +168,9 @@ def operations_end(sid: str, authorization: str = Header(default='')):
 
 @app.post('/api/device/fish-session')
 async def fish_session(value: FishSession, authorization: str = Header(default='')):
-    return await mint(store,device_auth(authorization),value)
+    dev = device_auth(authorization)
+    require_live_audio()
+    return await mint(store,dev,value)
 
 @app.post('/api/device/fish-session/{session_id}/end')
 async def fish_session_end(session_id: str, authorization: str = Header(default='')):
@@ -169,6 +179,7 @@ async def fish_session_end(session_id: str, authorization: str = Header(default=
 @app.post('/api/device/session')
 def session(value: VoiceSession, authorization: str = Header(default='')):
     dev=device_auth(authorization)
+    require_live_audio()
     if value.mode == 'translation' and value.language.casefold() == value.staff_language.casefold():
         raise HTTPException(422,'Choose two different interpreter languages')
     if store.rows('SELECT id FROM sessions WHERE id=?',(value.session_id,)):
@@ -239,6 +250,9 @@ async def edge(ws: WebSocket):
 async def voice(ws: WebSocket):
     # Ticket delivered in header, never query parameters/access logs.
     entry=tickets.pop(ws.headers.get('x-orange-ticket',''),None)
+    if not LIVE_AUDIO_ENABLED:
+        await ws.close(code=4403,reason='Live audio disabled; use staff-led reception actions')
+        return
     if not entry or entry['expires']<time.time(): await ws.close(code=4401); return
     dev=entry['device']
     valid=store.rows('SELECT id FROM credentials WHERE id=? AND role=\'device\'',(dev['id'],))

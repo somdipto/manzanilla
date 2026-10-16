@@ -1,19 +1,7 @@
 name: Build verified signed APK
 on:
-  workflow_dispatch:
-    inputs:
-      keyed_pilot:
-        description: Embed the Fish credential in this signed pilot APK only
-        type: boolean
-        required: false
-        default: false
-  workflow_call:
-    inputs:
-      keyed_pilot:
-        description: Embed the Fish credential in this signed pilot APK only
-        type: boolean
-        required: false
-        default: false
+  workflow_dispatch: {}
+  workflow_call: {}
 permissions:
   contents: read
 jobs:
@@ -48,18 +36,11 @@ jobs:
           ORANGE_STORE_PASSWORD: ${{ secrets.ORANGE_STORE_PASSWORD }}
           ORANGE_KEY_ALIAS: ${{ secrets.ORANGE_KEY_ALIAS }}
           ORANGE_KEY_PASSWORD: ${{ secrets.ORANGE_KEY_PASSWORD }}
-          ORANGE_KEYED_PILOT: ${{ inputs.keyed_pilot }}
-          FISH_API_KEY: ${{ inputs.keyed_pilot && secrets.FISH_API_KEY || '' }}
-          FISH_VOICE_ID: ${{ secrets.FISH_VOICE_ID }}
         working-directory: android
         shell: bash
         run: |
           set -euo pipefail
           test -n "$ORANGE_KEYSTORE_BASE64"
-          if [[ "$ORANGE_KEYED_PILOT" == true && -z "$FISH_API_KEY" ]]; then
-            echo "::error::The keyed pilot requires the FISH_API_KEY repository secret."
-            exit 1
-          fi
           export ORANGE_KEYSTORE="$RUNNER_TEMP/orange-pilot.jks"
           printf '%s' "$ORANGE_KEYSTORE_BASE64" | base64 --decode > "$ORANGE_KEYSTORE"
           trap 'rm -f "$ORANGE_KEYSTORE"' EXIT

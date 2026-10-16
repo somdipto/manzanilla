@@ -38,25 +38,13 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.math.sqrt
 
-/** Interpreter transport only. In managed mode a trusted backend mints session tickets; a pilot build may carry a compiled key. */
+/** Interpreter transport only. Credentials are staff-saved; managed sessions use the trusted hotel service. */
 class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit, private val key: () -> String) {
     private val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
     private val meta = ctx.getSharedPreferences("fishmeta", Context.MODE_PRIVATE)
     private val cleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private inner class Run(val owner: VoiceSession) {
-        val t0 = SystemClock.elapsedRealtime()
-        var prevAt = t0
-        var prevTag = "start"
-        var lastSpeechAt = 0L
-        var outputFirstAt = 0L
-        var captionFirstAt = 0L
-        var thoughtAt = 0L
-        fun mark(tag: String) {
-            val at = SystemClock.elapsedRealtime()
-            Log.i("LatencyTrace", "+%dms %s (+%dms since %s)".format(at - t0, tag, at - prevAt, prevTag))
-            prevAt = at
-            prevTag = tag
-        }
+        val timing = AudioTurnTiming(SystemClock::elapsedRealtime) { Log.i("AudioTiming", "source=interpreter-sdk $it") }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val calls = ConcurrentHashMap.newKeySet<Call>()
         var room: Room? = null
@@ -76,6 +64,7 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
         val run = Run(VoiceSession(sessionId, epoch, guest, staff, mode, push))
         current = run
         run.owner.emit(JSONObject().put("type", "audio_state").put("state", "off"))
+        if (!AudioPolicy.allowStart { terminate(run, "error", it) }) return
         if (mode != "translation") { terminate(run, "error", "Assistance requires the configured hotel service; an interpreter cannot provide it."); return }
         if (!DeskLanguages.has(guest) || !DeskLanguages.has(staff) || guest == staff) {
             terminate(run, "error", "Choose two different languages for translation."); return
@@ -83,32 +72,26 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
         if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             terminate(run, "error", "Microphone permission is needed for translation."); return
         }
-        val backend = BuildConfig.BACKEND_URL.trim().trimEnd('/')
-        val managed = backend.isNotBlank()
-        if (managed && (!backend.startsWith("https://") || BuildConfig.DEVICE_TOKEN.isBlank())) {
-            terminate(run, "error", "The trusted translation service needs staff configuration."); return
-        }
-        // A staff-entered key wins over the pilot key compiled into the APK.
-        val apiKey = if (managed) "" else key().trim().ifBlank { BuildConfig.FISH_API_KEY.trim() }
+        val connection = HotelConnection(ctx).load()
+        val managed = connection != null
+        val apiKey = if (managed) "" else key().trim()
         if (!managed && apiKey.isBlank()) {
             terminate(run, "error", "Ask staff to configure or recover the translation credential in Settings."); return
         }
         run.owner.phase("connecting")
-        run.mark("start")
         run.scope.launch(Dispatchers.IO) {
             try {
-                val session = if (managed) managedSession(run, backend, guest, staff) else {
+                val session = if (connection != null) managedSession(run, connection.base, connection.token, guest, staff) else {
                     val agent = ensureAgent(run, apiKey, BuildConfig.FISH_VOICE_ID.ifBlank { FishPlan.DEFAULT_VOICE })
                     createSession(run, apiKey, agent, guest, staff)
                 }
-                run.mark("session")
                 withContext(Dispatchers.Main) { connect(run, session) }
             } catch (_: CancellationException) { }
             catch (_: Throwable) { terminate(run, "error", "Translation could not connect. Check the internet connection or ask staff to check service access.") }
         }
     }
 
-    fun greetingDone() { current?.let { run -> run.mark("greeting_done"); run.owner.greeted { capture(run) } } }
+    fun greetingDone() { current?.let { run -> run.owner.greeted { capture(run) } } }
     fun stop(onStopped: () -> Unit = {}) { val run = current; if (run == null) onStopped() else detach(run, null, onStopped) }
     fun release() = stop()
 
@@ -122,18 +105,12 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
                 when (event) {
                     is RoomEvent.DataReceived -> if (event.topic == "agent-event") onAgent(run, event.data)
                     is RoomEvent.ParticipantAttributesChanged -> when (event.changedAttributes["lk.agent.state"]) {
-                        "speaking" -> {
-                            val now = SystemClock.elapsedRealtime()
-                            when {
-                                run.thoughtAt != 0L -> run.mark("speaking_after_thinking=%.0fms".format((now - run.thoughtAt).toDouble()))
-                                run.lastSpeechAt != 0L -> run.mark("speaking_after_speech=%.0fms".format((now - run.lastSpeechAt).toDouble()))
-                                else -> run.mark("speaking")
-                            }
-                            run.owner.phase("speaking")
+                        "speaking" -> run.owner.phase("speaking")
+                        "thinking" -> run.owner.phase("thinking")
+                        "listening", "idle" -> {
+                            run.timing.outputComplete(sdkState = true)
+                            if (run.recording) run.owner.phase("listening")
                         }
-                        "thinking" -> { run.thoughtAt = SystemClock.elapsedRealtime(); run.mark("thinking"); run.owner.phase("thinking") }
-                        "listening", "idle" -> { if (run.recording) { run.mark("listening"); run.owner.phase("listening") } }
-                        "initializing" -> run.mark("initializing")
                     }
                     is RoomEvent.TrackSubscribed -> (event.track as? RemoteAudioTrack)?.let { track -> attachOutput(run, track) }
                     is RoomEvent.Reconnecting -> run.owner.phase("connecting", "Audio connection interrupted; reconnecting.")
@@ -150,16 +127,12 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
             val mine = fromIdentity.value == live.localParticipant.identity?.value
             val stream = run.captions.begin(fromIdentity.value, attrs["lk.segment_id"].orEmpty(), reader.info.id,
                 mine, attrs["lk.transcription_final"] == "true") ?: return@registerTextStreamHandler
+            if (mine && stream.final) run.timing.providerInputFinal()
             run.scope.launch(Dispatchers.IO) {
                 if (!run.owner.active()) return@launch
                 try {
                     val text = StringBuilder()
                     reader.flow.collect { chunk ->
-                        if (run.captionFirstAt == 0L) {
-                            synchronized(run) {
-                                if (run.captionFirstAt == 0L) { run.captionFirstAt = SystemClock.elapsedRealtime(); run.mark("first_caption") }
-                            }
-                        }
                         text.append(chunk)
                         run.captions.replace(stream, text.toString(), false)?.let { run.owner.emit(it) }
                     }
@@ -169,7 +142,6 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
             }
         }
         live.connect(session.url, session.token)
-        run.mark("room")
         if (!run.owner.active()) return
         run.owner.ready { capture(run) }
         run.scope.launch {
@@ -178,10 +150,7 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
                 run.owner.emit(JSONObject().put("type", "energy").put("level", if (now - run.outputAt <= 120) run.outputLevel else 0f))
                 if (run.recording) {
                     val level = live.localParticipant.audioLevel
-                    if (level > 0.03f) {
-                        if (now - run.lastSpeechAt > 2000) run.mark("user_speech")
-                        run.lastSpeechAt = now
-                    }
+                    run.timing.inputLevel(level, 0.03f, now)
                     run.owner.emit(JSONObject().put("type", "mic_level").put("level", level))
                 }
                 delay(50)
@@ -209,10 +178,11 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
                 val live = run.room ?: return@launch
                 if (!run.owner.active()) return@launch
                 check(live.localParticipant.setMicrophoneEnabled(true))
-                run.mark("mic_open")
                 run.owner.use {
                     run.recording = true
                     run.owner.emit(JSONObject().put("type", "audio_state").put("state", "recording"))
+                    run.owner.emit(JSONObject().put("type", "notice").put("status", "unverified")
+                        .put("text", "Audio echo-control capability is not reported by this SDK path; echo performance has not been physically verified."))
                     run.owner.phase("listening")
                 }
             } catch (_: CancellationException) { }
@@ -236,12 +206,7 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
                 }
                 run.outputLevel = if (offset == 0) 0f else (sqrt(sum / (offset / 2)) / 32768.0).toFloat().coerceIn(0f, 1f)
                 run.outputAt = SystemClock.elapsedRealtime()
-                if (run.outputFirstAt == 0L) {
-                    synchronized(run) {
-                        if (run.outputFirstAt == 0L) run.outputFirstAt = run.outputAt
-                    }
-                    run.mark("first_audio_out")
-                }
+                run.timing.sdkDecodedReceived()
             }
         }
         run.owner.use { track.addSink(sink); run.sinks.add(track to sink) }
@@ -266,6 +231,7 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
 
     private fun detach(run: Run, terminal: JSONObject?, onStopped: () -> Unit = {}) {
         if (!run.owner.close(onStopped)) return
+        run.timing.interrupted()
         run.calls.forEach { it.cancel() }
         cleanup.launch {
             var off = true
@@ -300,11 +266,11 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
         }
     }
 
-    private fun managedSession(run: Run, base: String, guest: String, staff: String): Session {
+    private fun managedSession(run: Run, base: String, token: String, guest: String, staff: String): Session {
         val body = JSONObject().put("guest_language", guest).put("staff_language", staff).put("mode", "translation")
-        val request = Request.Builder().url("$base/api/device/fish-session").header("Authorization", "Bearer ${BuildConfig.DEVICE_TOKEN}")
+        val request = Request.Builder().url("$base/api/device/fish-session").header("Authorization", "Bearer $token")
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
-        return parseSession(run, execute(run, request), "$base/api/device/fish-session", BuildConfig.DEVICE_TOKEN)
+        return parseSession(run, execute(run, request), "$base/api/device/fish-session", token)
     }
     private fun ensureAgent(run: Run, apiKey: String, voiceId: String): String {
         val staff = run.owner.staff

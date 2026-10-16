@@ -16,8 +16,15 @@ class HotelMic(
     private val failed: () -> Unit,
     private val started: () -> Unit = {},
     private val level: (Float) -> Unit = {},
-    private val sampleRate: Int = 24000
+    private val sampleRate: Int = 24000,
+    private val echoControl: (EchoControl) -> Unit = {}
 ) {
+    enum class EchoControl(val description: String) {
+        UNAVAILABLE("The device does not report an echo-cancellation effect."),
+        REPORTED_ENABLED("The device reports echo cancellation enabled."),
+        NOT_ENABLED("The device did not enable echo cancellation."),
+        SETUP_FAILED("Echo-cancellation setup could not be confirmed.")
+    }
     private val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val lock = Any()
     @Volatile private var running = false
@@ -43,9 +50,17 @@ class HotelMic(
                     AudioFormat.ENCODING_PCM_16BIT, maxOf(minimum * 2, sampleRate / 5))
                 recorder = rec
                 check(rec.state == AudioRecord.STATE_INITIALIZED)
-                if (AcousticEchoCanceler.isAvailable()) {
-                    aec = try { AcousticEchoCanceler.create(rec.audioSessionId)?.also { it.enabled = true } } catch (_: Exception) { null }
-                }
+                // Android's effect flag is a capability report, not acoustic validation.
+                // https://developer.android.com/reference/android/media/audiofx/AcousticEchoCanceler
+                val echo = try {
+                    if (!AcousticEchoCanceler.isAvailable()) EchoControl.UNAVAILABLE
+                    else {
+                        aec = AcousticEchoCanceler.create(rec.audioSessionId)
+                        aec?.enabled = true
+                        if (aec?.enabled == true) EchoControl.REPORTED_ENABLED else EchoControl.NOT_ENABLED
+                    }
+                } catch (_: Exception) { EchoControl.SETUP_FAILED }
+                echoControl(echo)
                 // The owner may have been stopped during construction. Never start a cancelled recorder.
                 synchronized(lock) {
                     if (running) {

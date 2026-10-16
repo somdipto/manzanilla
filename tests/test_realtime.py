@@ -48,6 +48,7 @@ class GeminiUpstream:
 def relay_fixture(tmp_path,monkeypatch):
     db=Store(str(tmp_path/'db')); db.save_hotel(Hotel(id='a',name='A').model_dump())
     monkeypatch.setattr(server,'store',db)
+    monkeypatch.setattr(server,'LIVE_AUDIO_ENABLED',True)  # Mocked transport, never a live qualification.
     monkeypatch.setenv('GEMINI_API_KEY','TEST-NOT-A-REAL-KEY')
     server.tickets.clear(); server.active_devices.clear(); server.device_connections.clear()
     upstream=GeminiUpstream()

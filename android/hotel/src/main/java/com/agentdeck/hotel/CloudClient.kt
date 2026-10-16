@@ -33,6 +33,10 @@ class CloudClient(private val base: String, private val token: String,
 
     fun start(mode: String, language: String, staffLanguage: String, sessionId: String, generation: Int) = synchronized(lock) {
         if (started || stopped) return@synchronized
+        if (!AudioPolicy.allowStart {
+            stopped = true
+            event(JSONObject().put("type", "error").put("message", it))
+        }) return@synchronized
         started = true
         val body = JSONObject().put("mode", mode).put("language", language).put("staff_language", staffLanguage)
             .put("session_id", sessionId).put("generation", generation)

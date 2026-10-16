@@ -29,14 +29,14 @@
     pt: { ...copy.en, welcome:'Como posso ajudar?',ready:'Tudo pronto.',start:'Começar',listen:'Estou a ouvir',speaking:'A responder',connect:'A ligar',end:'Terminar',draft:'Guardar a mensagem?',save:'Guardar',cancel:'Cancelar',message:'Deixar mensagem',operator:'Contactar a receção' }
   });
   const confirmationCopy = {
-    en: { prepared:'Your message is ready.',notSent:'Not saved or sent.',continue:'Continue',saving:'Saving…',sampleMessage:'Please leave fresh towels in the morning.' },
-    es: { prepared:'Tu mensaje está listo.',notSent:'No se ha guardado ni enviado.',continue:'Continuar',saving:'Guardando…',sampleMessage:'Por favor, dejen toallas limpias por la mañana.' },
-    ja: { prepared:'メッセージの準備ができました',notSent:'保存・送信はされていません。',continue:'続ける',saving:'保存中…',sampleMessage:'朝に新しいタオルを用意してください。' },
-    zh: { prepared:'留言已准备好',notSent:'尚未保存或发送。',continue:'继续',saving:'正在保存…',sampleMessage:'请在早上提供干净的毛巾。' },
-    fr: { prepared:'Votre message est prêt.',notSent:'Il n’a été ni enregistré ni envoyé.',continue:'Continuer',saving:'Enregistrement…',sampleMessage:'Merci de déposer des serviettes propres le matin.' },
-    de: { prepared:'Ihre Nachricht ist bereit.',notSent:'Nicht gespeichert oder gesendet.',continue:'Weiter',saving:'Wird gespeichert…',sampleMessage:'Bitte legen Sie morgen früh frische Handtücher bereit.' },
-    it: { prepared:'Il messaggio è pronto.',notSent:'Non è stato salvato né inviato.',continue:'Continua',saving:'Salvataggio…',sampleMessage:'Per favore, lasciate degli asciugamani puliti al mattino.' },
-    pt: { prepared:'A sua mensagem está pronta.',notSent:'Não foi guardada nem enviada.',continue:'Continuar',saving:'A guardar…',sampleMessage:'Por favor, deixem toalhas limpas de manhã.' }
+    en: { prepared:'Review your message.',notSent:'Not sent.',continue:'Continue',saving:'Saving…' },
+    es: { prepared:'Revisa tu mensaje.',notSent:'No enviado.',continue:'Continuar',saving:'Guardando…' },
+    ja: { prepared:'メッセージを確認',notSent:'未送信',continue:'続ける',saving:'保存中…' },
+    zh: { prepared:'确认留言',notSent:'未发送',continue:'继续',saving:'保存中…' },
+    fr: { prepared:'Vérifiez votre message.',notSent:'Non envoyé.',continue:'Continuer',saving:'Enregistrement…' },
+    de: { prepared:'Nachricht prüfen.',notSent:'Nicht gesendet.',continue:'Weiter',saving:'Speichern…' },
+    it: { prepared:'Controlla il messaggio.',notSent:'Non inviato.',continue:'Continua',saving:'Salvataggio…' },
+    pt: { prepared:'Reveja a mensagem.',notSent:'Não enviado.',continue:'Continuar',saving:'A guardar…' }
   };
   Object.entries(confirmationCopy).forEach(([language,words]) => Object.assign(copy[language],words));
   const conciergeCopy = {
@@ -52,7 +52,7 @@
   const shortcuts = ['checkin', 'operator', 'taxi', 'question'];
   const concierge = () => conciergeCopy[state.language] || conciergeCopy.en;
   const greet = (language) => (window.MANZANILLA_GREET && window.MANZANILLA_GREET[language]) || '';
-  const state = { page: 'idle', mode: 'translation', night: false, language: 'en', staff_language: 'es', demo: !native, connected: false, audio: 'off', active: false, phase: '', sessionId: '', generation: null, closed: true, terminated: true, error: '', metrics: '', utterances: new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: '', pendingPage: '', micLevel: 0 };
+  const state = { page: 'idle', mode: 'translation', night: false, language: 'en', staff_language: 'es', demo: !native, connected: false, audioAvailable: false, audioGate: 'Live audio awaits verified free-only eligibility. Use hotel assistance.', audio: 'off', active: false, phase: '', sessionId: '', generation: null, closed: true, terminated: true, error: '', metrics: '', utterances: new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: '', pendingPage: '', micLevel: 0 };
   let queuedShortcut = '';
   const selected = { language: false, staff_language: false };
   let defaultReceived = false;
@@ -94,14 +94,14 @@
     if (paired && parts[0].language === state.staff_language) parts.reverse();
     return `<article id="${esc(entry.id)}" class="caption caption-${entry.side === 'guest' ? 'guest' : 'reception'}" data-source="${welcome ? 'app' : 'provider'}"${welcome ? ' data-kind="app_greeting"' : ''}><span class="caption-side">${captionLabel(entry)}</span>${parts.map((part,index) => `<div class="caption-part${index ? ' caption-divider' : ''}" data-field="${part.field}"><span class="caption-language">${esc(captionLanguage(part.language))}${welcome || !part.label ? '' : ` · ${part.label}`}</span><p class="caption-${part.field === 'original' ? 'original' : 'text'}" lang="${esc(part.language || 'und')}" dir="${languageDir(part.language)}">${esc(part.text)}</p></div>`).join('')}</article>`;
   };
-  const conversation = () => state.utterances.size ? [...state.utterances.values()].map(caption).join('') : `<div class="empty-transcript">${esc(state.mode === 'translation' ? t().begin : t().welcome)}</div>`;
-  const operationDraft = () => /^(operation|voice):/.test(state.draft?.draft_id || '');
-  const phaseLabel = () => ({ connecting: t().connect, greeting: 'Welcome', thinking: 'Translating', speaking: t().speaking, listening: 'Live', ending: 'Stopping', stopped: 'Stopped' })[state.phase] || t().reception;
+  const conversation = () => state.utterances.size ? [...state.utterances.values()].map(caption).join('') : `<div class="empty-transcript">${esc(state.mode === 'translation' ? t().begin : 'Choose a service or type a message. The microphone stays off.')}</div>`;
+  const phaseLabel = () => ({ connecting: t().connect, ready: 'Staff-led support', greeting: 'Welcome', thinking: 'Translating', speaking: t().speaking, listening: 'Live', ending: 'Stopping', stopped: 'Stopped' })[state.phase] || t().reception;
   const sessionAudioText = () => ({ off:'Mic off', recording:'Mic on', stopping:'Releasing mic', unknown:'Mic state unknown · ask staff' })[state.audio];
   const sessionDock = () => {
     const stopped = state.closed || state.terminated;
     const restart = state.terminated && !state.active && state.audio === 'off';
-    return `<div class="session-actions" data-stopped="${stopped}"><div class="session-control"><div class="session-icon" role="meter" aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(state.micLevel * 100)}" style="--level:${state.micLevel}">${icons.mic}</div><div class="session-control-copy"><strong>${esc(stopped ? state.phase === 'ending' ? 'Stopping…' : 'Stopped' : phaseLabel())}</strong><span>${esc(sessionAudioText())}</span></div></div>${state.mode === 'reception' && !stopped ? action('message', esc(t().message), 'secondary', ['connecting','greeting'].includes(state.phase)) : ''}${action(restart ? 'restart' : 'stop', restart ? 'Restart' : stopped ? 'Releasing…' : 'Stop', 'stop', stopped && !restart)}</div>`;
+    const indicator = state.mode === 'reception' ? `<div class="session-icon" role="img" aria-label="Staff-led support">${icons.bell}</div>` : `<div class="session-icon" role="meter" aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(state.micLevel * 100)}" style="--level:${state.micLevel}">${icons.mic}</div>`;
+    return `<div class="session-actions" data-stopped="${stopped}"><div class="session-control">${indicator}<div class="session-control-copy"><strong>${esc(stopped ? state.phase === 'ending' ? 'Stopping…' : 'Stopped' : phaseLabel())}</strong><span>${esc(sessionAudioText())}</span></div></div>${state.mode === 'reception' && !stopped ? action('message', 'Message staff', 'secondary', ['connecting','greeting'].includes(state.phase)) : ''}${action(restart ? 'restart' : 'stop', restart ? 'Restart' : stopped ? 'Releasing…' : 'Stop', 'stop', stopped && !restart)}</div>`;
   };
   function renderNotices() {
     const target = document.getElementById('notices');
@@ -128,19 +128,19 @@
     document.getElementById('check-updates').hidden = !native || state.page !== 'idle';
     content.dataset.page = state.page;
     document.getElementById('mode-title').textContent = 'Reception';
-    document.getElementById('connection-text').textContent = state.connected ? 'Voice configured' : 'Voice setup needed';
+    document.getElementById('connection-text').textContent = state.connected ? 'Hotel connected' : 'Hotel setup needed';
     document.getElementById('hotel-label').textContent = state.hotel || 'Hotel reception';
     document.getElementById('privacy').innerHTML = `<span class="mic-dot${state.audio === 'recording' ? ' mic-live' : ''}"></span>${esc(sessionAudioText())}`;
     document.getElementById('hardware-hint').textContent = state.active ? 'Green or red to stop' : state.page === 'translation_languages' ? 'Digits: first ten · Green: start · Red: back' : 'Green: translation';
     const homeAction = (name, icon, label, note = '') => `<button class="home-action${name === 'translation' ? ' home-action-main' : ''}" data-action="${name}">${name === 'translation' ? '<span class="orb">' + icons.arrow + '</span>' : icon}<span>${label}</span>${note ? '<small>' + note + '</small>' : ''}</button>`;
     const html = {
-      idle: () => `<div class="welcome"><h1>Welcome.</h1><p>Speak. We’ll translate.</p></div><nav class="home-actions" aria-label="Reception services">${homeAction('translation',icons.translate,'Real-Time Translation','Talk to each other')}${homeAction('reception',icons.bell,'Hotel assistance')}${homeAction('request:checkin',icons.bed,'Check in')}${homeAction('request:taxi',icons.car,'Get a taxi')}${homeAction('request:message',icons.message,'Leave a message')}</nav><div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="Switch to ${appearance === 'dark' ? 'brighter' : 'dimmed'} appearance" title="Appearance · keypad 1">${themeIcon()}</button></div>`,
-      languages: () => `<div class="status-line"><div><h2 class="language-heading">Hotel assistance</h2><p class="keypad-hint">Choose your language to speak with Manzanilla.</p></div><button class="back" data-action="back">${icons.back}Back</button></div><div class="language-list">${Object.entries(languages).map(([id,item],i) => action('language:' + id, `<span class="key">${i < 10 ? i === 9 ? 0 : i + 1 : ''}</span><strong lang="${id}" dir="${languageDir(id)}">${esc(item.native)}</strong>`, 'choice language', state.audio !== 'off')).join('')}</div>${state.audio !== 'off' ? fine('Audio release must be confirmed before starting again.') : ''}`,
-      translation_languages: () => `<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">Speak naturally. We’ll translate both ways.</p></div><button class="back" data-action="back">${icons.back}Back</button></div><div class="language-pair">${languagePicker('language','Guest')}${languagePicker('staff_language','Receptionist')}</div><p id="setup-feedback" class="setup-feedback${sameLanguage() ? ' error' : ''}" role="status">${sameLanguage() ? 'Choose two different languages.' : state.audio !== 'off' ? 'Audio release must be confirmed before starting again.' : 'The microphone stays off until you start.'}</p>${action('start','Start translation','primary setup-start',sameLanguage() || state.audio !== 'off')}`,
+      idle: () => `<div class="welcome"><h1>Welcome.</h1><p>Guest and staff support.</p></div><nav class="home-actions" aria-label="Reception services">${homeAction('translation',icons.translate,'Live translation',state.audioAvailable ? 'Talk to each other' : 'Audio not yet eligible')}${homeAction('reception',icons.bell,'Hotel assistance')}${homeAction('request:checkin',icons.bed,'Arrival guide')}${homeAction('request:taxi',icons.car,'Taxi request')}${homeAction('request:message',icons.message,'Message staff')}</nav><div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="Switch to ${appearance === 'dark' ? 'brighter' : 'dimmed'} appearance" title="Appearance · keypad 1">${themeIcon()}</button></div>`,
+      languages: () => `<div class="status-line"><div><h2 class="language-heading">Hotel assistance</h2><p class="keypad-hint">Choose a language. Microphone off.</p></div><button class="back" data-action="back">${icons.back}Back</button></div><div class="language-list">${Object.entries(languages).map(([id,item],i) => action('language:' + id, `<span class="key">${i < 10 ? i === 9 ? 0 : i + 1 : ''}</span><strong lang="${id}" dir="${languageDir(id)}">${esc(item.native)}</strong>`, 'choice language', state.audio !== 'off')).join('')}</div>${state.audio !== 'off' ? fine('Wait for microphone release.') : ''}`,
+      translation_languages: () => `<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">Guest ↔ Receptionist</p></div><button class="back" data-action="back">${icons.back}Back</button></div><div class="language-pair">${languagePicker('language','Guest')}${languagePicker('staff_language','Receptionist')}</div><p id="setup-feedback" class="setup-feedback${sameLanguage() ? ' error' : ''}" role="status">${esc(!state.audioAvailable ? state.audioGate : sameLanguage() ? 'Choose two different languages.' : state.audio !== 'off' ? 'Wait for microphone release.' : 'Microphone off until Start.')}</p>${action('start',state.audioAvailable ? 'Start translation' : 'Audio unavailable','primary setup-start',!state.audioAvailable || sameLanguage() || state.audio !== 'off')}${!state.audioAvailable ? action('reception','Hotel assistance','secondary') : ''}`,
       active: () => `<div class="status-line session-top"><div><h2>${state.mode === 'translation' ? 'Translation' : 'Hotel assistance'}</h2><p>${esc(state.mode === 'translation' ? langName(state.language) + ' ↔ ' + langName(state.staff_language) : phaseLabel())}</p></div><button class="back" data-action="back">${icons.back}Back</button></div>${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}<div class="session-scroll">${state.mode === 'reception' && !state.closed ? `<div class="shortcut-list">${shortcuts.map((id,i) => action(id, `<span class="key">${i + 1}</span><strong>${esc(concierge()[i])}</strong>`, 'choice shortcut', ['connecting','greeting'].includes(state.phase))).join('')}</div>` : ''}<div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">${conversation()}</div>${state.metrics ? `<p class="metrics">${esc(state.metrics)}</p>` : ''}</div>${sessionDock()}`,
-      operation_form: () => `<div class="status-line"><h2>${esc(concierge()[shortcuts.indexOf(state.operation?.action)] || 'Hotel request')}</h2><button class="back" data-action="back">${icons.back}Back</button></div><form id="operation-form" class="operation-form">${(state.operation?.fields || []).map((field,index) => `<label for="operation-field-${index}">${esc(field.label)}${field.required ? ' *' : ''}<input id="operation-field-${index}" name="${esc(field.name)}" value="${esc(state.operation.values[field.name] || '')}" ${field.required ? 'required' : ''} autocomplete="off" dir="auto"></label>`).join('')}<div class="button-row"><button type="submit" class="primary">Review request</button>${action('cancel-operation',esc(t().cancel),'secondary')}</div></form>${action('stop',esc(t().end),'stop')}`,
-      confirming: () => `<div class="status-line"><h2>${esc(operationDraft() ? 'Confirm hotel request?' : t().draft)}</h2><button class="back" data-action="back">${icons.back}Back</button></div><div class="draft">${state.draft?.guest_name || state.draft?.room_reference ? `<div class="draft-meta">${esc([state.draft?.guest_name,state.draft?.room_reference].filter(Boolean).join(' · '))}</div>` : ''}${esc(state.draft?.message || '')}</div>${operationDraft() ? fine('Only confirm if these request details are correct.') : fine('Saved only on this tablet after you confirm. Not sent to staff.')}<div class="button-row">${action('confirm',esc(state.confirmed ? 'Submitting…' : operationDraft() ? 'Confirm request' : t().save),'primary',state.confirmed)}${action('cancel-draft',esc(t().cancel),'secondary',state.confirmed)}</div>`,
-      saved: () => `<h2>${esc(state.outcome ? 'Hotel request update' : t().saved)}</h2><p class="lead" dir="auto">${esc(state.outcome ? state.outcome.text : t().local)}</p>${state.outcome?.receipt ? `<div class="receipt" dir="auto">${esc(state.outcome.receipt)}</div>` : ''}<div class="button-row">${action('continue',esc(t().continue))}${action('stop',esc(t().end),'secondary')}</div>`,
+      operation_form: () => `<div class="status-line"><h2>${esc(state.operation?.action === 'message' ? 'Message staff' : concierge()[shortcuts.indexOf(state.operation?.action)] || 'Hotel request')}</h2><button class="back" data-action="back">${icons.back}Back</button></div><form id="operation-form" class="operation-form">${(state.operation?.fields || []).map((field,index) => `<label for="operation-field-${index}">${esc(field.label)}${field.required ? ' *' : ''}${field.name === 'original_request' ? `<textarea id="operation-field-${index}" name="${esc(field.name)}" maxlength="4000" ${field.required ? 'required' : ''} autocomplete="off" dir="auto">${esc(state.operation.values[field.name] || '')}</textarea>` : `<input id="operation-field-${index}" name="${esc(field.name)}" value="${esc(state.operation.values[field.name] || '')}" ${field.required ? 'required' : ''} autocomplete="off" dir="auto">`}</label>`).join('')}<div class="button-row"><button type="submit" class="primary">Review</button>${action('cancel-operation',esc(t().cancel),'secondary')}</div></form>${action('stop','End','stop')}`,
+      confirming: () => `<div class="status-line"><h2>Confirm request?</h2><button class="back" data-action="back">${icons.back}Back</button></div><div class="draft">${esc(state.draft?.message || '')}</div>${fine('Confirm only if the details are correct.')}<div class="button-row">${action('confirm',state.confirmed ? 'Sending…' : 'Confirm','primary',state.confirmed)}${action('cancel-draft',esc(t().cancel),'secondary',state.confirmed)}</div>`,
+      saved: () => `<h2>Request receipt</h2><section class="request-receipt"><p class="lead" dir="auto">${esc(state.outcome?.text || 'No receipt returned. Ask staff to check.')}</p>${state.outcome?.receipt ? `<div class="receipt" dir="auto">${esc(state.outcome.receipt)}</div>` : ''}</section><div class="button-row">${action('continue',esc(t().continue))}${action('stop','End','secondary')}</div>`,
       error: () => `<div class="status-line"><h2>Conversation unavailable</h2><button class="back" data-action="back">${icons.back}Back</button></div><div class="notice error">${esc(state.error || 'Please ask reception for help.')}</div>${fine(state.audio === 'off' ? 'Microphone off. Staff can check this device’s setup.' : 'Audio release is not confirmed. Ask reception for help before restarting.')}<div class="button-row">${action('retry','Try again','primary',state.audio !== 'off')}${action('home','Back to home','secondary')}</div>`
     };
     const focusedElement = document.activeElement;
@@ -155,7 +155,7 @@
     if (focusedAction) [...content.querySelectorAll('[data-action]')].find(button => button.dataset.action === focusedAction)?.focus({ preventScroll:true });
     if (focusedSelect) content.querySelector(`[data-language-side="${focusedSelect}"]`)?.focus({ preventScroll:true });
     if (focusedInput) {
-      const input = [...content.querySelectorAll('#operation-form input')].find(element => element.name === focusedInput.name);
+      const input = [...content.querySelectorAll('#operation-form input,#operation-form textarea')].find(element => element.name === focusedInput.name);
       input?.focus({ preventScroll:true });
       if (input && focusedInput.start !== null) input.setSelectionRange(focusedInput.start,focusedInput.end);
     }
@@ -203,6 +203,7 @@
   function start(restart = false) {
     if (state.active || state.phase === 'ending' || state.audio !== 'off') return;
     if (sameLanguage()) { toast('Choose a different guest language for translation.'); return; }
+    if (state.mode === 'translation' && !state.audioAvailable) { toast(state.audioGate); return; }
     if (!native) { state.error = 'Voice conversations require the reception tablet. No microphone has been opened.'; page('error'); return; }
     silence();
     if (!restart) clearGuest();
@@ -302,11 +303,7 @@
       case 'home': if (state.active || state.audio !== 'off') stop('idle'); else { clearGuest(); page('idle'); } break;
       case 'retry': if(state.mode === 'reception') start(); else page('translation_languages'); break;
       case 'checkin': case 'operator': case 'taxi': case 'question': chooseShortcut(name); break;
-      case 'message':
-        if (!state.active || state.closed || state.page !== 'active') return;
-        if (state.demo) addNotice('Message review and on-tablet saving require the reception tablet.', 'unavailable');
-        else send('message');
-        break;
+      case 'message': chooseShortcut('message'); break;
       case 'cancel-operation': state.operation = null; page('active'); break;
       case 'confirm':
       case 'cancel-draft':
@@ -450,6 +447,8 @@
     if (type === 'connection') { state.connected = event.connected === true; render(); return; }
     if (type === 'reception_info') {
       state.hotel = String(event.hotel_name || '');
+      state.audioAvailable = event.audio_available === true;
+      if (typeof event.audio_gate === 'string' && event.audio_gate) state.audioGate = event.audio_gate;
       if (!defaultReceived && !preferencesRestored && !selected.staff_language && Object.hasOwn(languages, event.staff_language)) state.staff_language = event.staff_language;
       defaultReceived = true;
       render(); return;
@@ -523,7 +522,7 @@
       return;
     }
     if (type === 'operation_form') {
-      if (!shortcuts.includes(event.action) || !Array.isArray(event.fields) || state.draft) return;
+      if (![...shortcuts,'message'].includes(event.action) || !Array.isArray(event.fields) || state.draft) return;
       const fields = event.fields.filter(field => field && typeof field.name === 'string' && field.name && typeof field.label === 'string');
       if (!fields.length) { addNotice('This request did not provide usable fields. Please ask reception for help.', 'unavailable'); return; }
       state.operation = { action: event.action, fields, values: Object.fromEntries(fields.map(field => [field.name, ''])) };
@@ -531,10 +530,10 @@
     }
     if (type === 'operation_result') {
       const text = String(event.text || '');
-      addNotice(text, event.status);
       if (['confirmation_required','needs_confirmation','fields_required'].includes(event.status)) return;
-      if (state.draft && !state.confirmed) return;
-      state.outcome = { text: text || 'No service receipt was returned. Ask reception to check the request.', receipt: typeof event.receipt === 'string' ? event.receipt : event.receipt ? JSON.stringify(event.receipt) : '' };
+      if (state.draft && !state.confirmed) { addNotice(text, event.status); return; }
+      const receipt = event.result?.item_id || event.result?.request_id || event.result?.escalation_id;
+      state.outcome = { text: text || 'No receipt returned. Ask staff to check.', receipt: typeof receipt === 'string' ? `Receipt: ${receipt}` : '' };
       state.draft = null;
       state.confirmed = false;
       state.operation = null;
@@ -566,14 +565,7 @@
       state.operation = null;
       page('confirming'); return;
     }
-    if (phase === 'saved') {
-      if (event.saved !== true || !state.draft || operationDraft() || !state.confirmed) return;
-      state.draft = null;
-      state.confirmed = false;
-      state.outcome = null;
-      page('saved'); return;
-    }
-    if (!['connecting','greeting','listening','thinking','speaking'].includes(phase)) return;
+    if (!['connecting','ready','greeting','listening','thinking','speaking'].includes(phase)) return;
     state.phase = phase;
     // Captions and provider phases must not displace a guest's review or typed form.
     if (state.page === 'confirming' && state.draft?.draft_id.startsWith('voice:') && state.confirmed && phase === 'listening') {
@@ -581,7 +573,7 @@
     }
     if (['confirming','saved','operation_form'].includes(state.page)) return;
     page('active');
-    if (phase === 'listening' && queuedShortcut) {
+    if (['ready','listening'].includes(phase) && queuedShortcut) {
       const request = queuedShortcut;
       queuedShortcut = '';
       if (request === 'message') perform('message');

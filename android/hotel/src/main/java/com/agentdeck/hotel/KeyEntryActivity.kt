@@ -42,7 +42,7 @@ class KeyEntryActivity : Activity() {
         // Do not restore a prior configuration view hierarchy or typed credentials.
         super.onCreate(null)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        lockedView("Authenticate with this tablet's screen-lock credential to configure device keys.")
+        lockedView("Use this device's screen lock to open staff setup.")
     }
 
     override fun onResume() {
@@ -95,7 +95,7 @@ class KeyEntryActivity : Activity() {
             lockedView("Staff setup is unavailable: no device screen-lock credential is enrolled. A tablet administrator must set a PIN, password or pattern through the tablet's managed Android Security settings, then return and authenticate. Guest setup cannot enroll or reset a credential.")
             return
         }
-        val confirmation = keyguard.createConfirmDeviceCredentialIntent("Staff setup", "Confirm this tablet's screen-lock credential to manage device provider keys.")
+        val confirmation = keyguard.createConfirmDeviceCredentialIntent("Staff setup", "Confirm the device screen lock to manage the hotel connection.")
         if (confirmation == null) {
             lockedView("Android could not open device credential confirmation. Unlock the tablet and retry Staff setup.", retry = true)
             return
@@ -129,9 +129,24 @@ class KeyEntryActivity : Activity() {
         if (!authorized()) return
         val column = column()
         column.addView(label("Staff setup", 24f))
-        column.addView(label("Device BYOK credentials. Existing keys are never displayed. Pilot builds ship a shared Fish interpreter key inside the app; a key entered here replaces it on this device."))
-        addProvider(column, "Fish Audio", "fish")
-        addProvider(column, "Gemini", "gem")
+        column.addView(label("Hotel support works with the microphone off. Live audio awaits verified free-only eligibility. Existing voice keys remain encrypted and inactive."))
+        column.addView(label("Hotel service", 20f))
+        val connectionUrl = EditText(this).apply {
+            hint = "HTTPS hotel service URL"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine()
+            isSaveEnabled = false
+            setSaveFromParentEnabled(false)
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            setTextColor(ink)
+            setHintTextColor(Color.rgb(157, 178, 194))
+            setText(HotelConnection(this@KeyEntryActivity).load()?.base.orEmpty())
+        }
+        fields.add(connectionUrl)
+        column.addView(connectionUrl)
+        addProvider(column, "Hotel connection", "hotel_connection", connectionUrl)
+        addProvider(column, "Voice credential A (inactive)", "fish")
+        addProvider(column, "Voice credential B (inactive)", "gem")
         column.addView(button("Done") { finish() })
         setContentView(ScrollView(this).apply {
             isSaveEnabled = false
@@ -140,10 +155,11 @@ class KeyEntryActivity : Activity() {
         })
     }
 
-    private fun addProvider(column: LinearLayout, provider: String, prefsName: String) {
+    private fun addProvider(column: LinearLayout, provider: String, prefsName: String, connectionUrl: EditText? = null) {
         // Called only after credential confirmation; no storage read happens on a locked screen.
         if (!authorized()) return
         val store = SecretStore(this, prefsName)
+        val connection = if (connectionUrl != null) HotelConnection(this) else null
         val status = label("")
         fun refresh() {
             if (!authorized()) return
@@ -213,12 +229,12 @@ class KeyEntryActivity : Activity() {
             val value = field.text.toString().trim()
             if (value.isEmpty() || value.any { it.isWhitespace() }) {
                 Toast.makeText(this, "Paste a provider key without spaces.", Toast.LENGTH_LONG).show()
-            } else if (store.save(value)) {
+            } else if (if (connection != null) connection.save(connectionUrl!!.text.toString(), value) else store.save(value)) {
                 field.setText("")
                 refresh()
                 Toast.makeText(this, "$provider key securely saved.", Toast.LENGTH_SHORT).show()
             } else {
-                status.text = "$provider: ${store.errorMessage}"
+                status.text = "$provider: ${connection?.errorMessage ?: store.errorMessage}"
             }
         })
         column.addView(button("Remove $provider key") {

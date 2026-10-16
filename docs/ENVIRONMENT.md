@@ -1,21 +1,42 @@
-# Environment
+# Environment and credentials
 
-Python 3.12+, Java 17, SDK 34, build tools 34.0.0, Gradle 8.5 wrapper, Kotlin 1.9.22 and AGP 8.2.2. Runtime Python dependencies are pinned in requirements.txt. CI actions use version tags; organization supply-chain policy may replace them with reviewed commit hashes.
+The backend requires Python 3.12+ and the dependencies pinned in `requirements.txt`. Native builds require JDK 17, SDK 34 and the checked-in build wrapper.
 
-`.env.example` documents the runtime credentials. Python does not automatically load `.env`; use the shell or service manager. Use a random `ORANGE_ADMIN_TOKEN` of 32+ characters and never put it in the APK: issue a distinct device credential through the dashboard. `ORANGE_DB` is the persistent SQLite path. `GEMINI_API_KEY` and `GEMINI_LIVE_MODEL` configure the backend Gemini relay; Fish managed sessions use the backend Fish key. Missing configuration reports voice unavailable without simulating a conversation.
+## Backend
 
-Per-hotel REST credentials use `PMS_<UPPERCASE_UTF8_HEX_OF_EXACT_HOTEL_ID>_URL` and `_TOKEN`: `hotel-1` → `PMS_686F74656C2D31_URL` / `PMS_686F74656C2D31_TOKEN`. Case and punctuation remain distinct; migrate old underscore-normalized names because there is no ambiguous legacy fallback. The URL must use HTTPS and is never provided by a guest/model. See `shared/protocol.md`. Secrets are not hotel configuration fields.
+- `ORANGE_DB`: private persistent database path. Never point verification at the deployed database.
+- `ORANGE_ADMIN_TOKEN`: random administrator credential of at least 32 characters. Keep it server-side; never enter it in the reception app.
+- Issue separate hotel-scoped device and staff credentials through the authenticated dashboard. Tokens are shown only on issuance; the database stores their hashes.
+- Serve the actual deployment over HTTPS. Do not bypass certificate checks or put credentials in URLs.
+- Configure real hotel name, timezone, approved languages, knowledge, arrival instructions and human contacts. The admin form starts empty. A successful JSON save is not staff approval of its content.
+- `demo` is not an accepted connector. Existing stale demo settings cannot produce synthetic reservations. Arrival guidance uses approved hotel instructions without reservation lookup; it does not complete check-in.
 
-Edge: ORANGE_EDGE_URL must be WSS, ORANGE_EDGE_TOKEN must have Edge role, ORANGE_RESERVATION_FILE must point to an owner-controlled JSON export. Never use the demo file for a live hotel. Restrict the file to the service account and keep it fresh.
+Application-level inbox payloads are not encrypted by the database layer. Configure storage access, disk/backup encryption, retention, deletion and consent before real guest use. Do not collect identity documents, access codes or payment information.
 
-Signing: ORANGE_KEYSTORE, ORANGE_STORE_PASSWORD, ORANGE_KEY_ALIAS, ORANGE_KEY_PASSWORD. Set these only for release build. Missing key produces an unsigned release, never a production-ready signed APK. GitHub release workflow additionally uses ORANGE_KEYSTORE_BASE64.
+## Device
 
-Ordinary debug and release APKs never embed a Fish account key, even when `FISH_API_KEY` is present. Managed deployments keep it on the backend and issue short-lived LiveKit session tickets. The explicitly authorized keyed-pilot exception requires `ORANGE_KEYED_PILOT=true` plus `FISH_API_KEY` in the release-build environment and the existing signing variables. It does not read the key from Gradle properties or `local.properties`. The resulting APK exposes the account key to extraction: distribute only for this pilot, rotate before production, and do not treat backend admission limits as protection for this direct-provider path. A staff-entered key takes precedence over the compiled pilot key.
+Authenticated staff setup accepts the actual HTTPS hotel service URL and a device credential. They are stored as one encrypted bundle through `HotelConnection` / `SecretStore`, using authenticated encryption and a device-keystore key. Replacing the bundle cannot accidentally pair a new token with an old URL. The URL cannot contain login information, query parameters or a fragment.
 
-CI verification stays key-free. `gh workflow run release.yml --ref <ref> -f keyed_pilot=true` builds the exceptional signed artifact; `gh workflow run publish.yml --ref <ref> -f keyed_pilot=true` also publishes after identity gates. Tag-triggered publication defaults key-free. Voice IDs and backend device credentials are configured separately.
+No account key, backend URL/device-token pair or administrator credential is compiled into the APK. Legacy saved voice credentials remain encrypted but inactive. Old local-only notes are not automatically uploaded or erased; they must not be interpreted as staff delivery.
 
-Managed Fish admission reserves the full 600-second conversation maximum atomically, once per outstanding device lease. `FISH_HOTEL_DAILY_SECONDS` defaults to 1800 and `FISH_ACCOUNT_DAILY_SECONDS` to 3600, charged to the UTC admission day with no refund after early termination or failure. These are duration reservations, not dollar limits. Unknown provider creation outcomes block new admission until revocation/operator reconciliation; they never reopen on a guessed expiry. Known sessions are ended through the authenticated owner-only end endpoint and during credential revocation. A failed provider termination retains the blocking lease.
+## Live audio gate
 
-Fish agents use Gemini 3.8 Flash and multilingual ElevenLabs Scribe realtime, not standalone Fish ASR. Every session supplies its staff-language override and bidirectional prompt. The 52-language menu is configuration coverage, not proof of speech quality for all pairs. Two-way synthetic speech was observed for English–Spanish and Catalan–Spanish; hardware echo, natural barge-in and production latency remain separate acceptance gates.
+All current native start paths and public backend voice admission endpoints deny live audio because no complete free-only route is qualified. This is not an environment opt-in and cannot be bypassed by entering a key. Staff-led operational endpoints remain available. Existing session-end/revocation handling is retained so known sessions can still be cleaned up.
 
-Transport: public HTTPS/WSS terminated by Caddy or a managed proxy. Only loopback port 8080 is published on the host. No cleartext hotel-client exception, certificate bypass or guest-supplied upstream URL. Docker receives .env via --env-file. One worker only. Configure OS disk encryption, access controls, encrypted backups, retention and provider data settings before real guest use.
+Do not enable a provider before verifying account/model availability, actual region, quotas, billing linkage and privacy terms. A free synthesis model, credit balance, disabled recording flag or passing mocked test does not qualify the complete live service. Do not add paid fallbacks or automatic provider switching. Internal provider component tests intercept all network requests explicitly.
+
+Managed agent cache identity includes the complete published configuration and credential scope. A changed prompt/model/recognizer/voice/turn setting gets a new identity, without mutating an agent already serving another session.
+
+Timing logs contain endpoint names, sequences and monotonic timestamps, not guest text or credentials. Input activity estimates, provider-final receipt, decoded output receipt and sampled playback-head progress are distinct. None is an acoustic p50/p95 measurement or a reliable input/translation association by itself.
+
+## Signing and publication
+
+Signing uses `ORANGE_KEYSTORE`, `ORANGE_STORE_PASSWORD`, `ORANGE_KEY_ALIAS` and `ORANGE_KEY_PASSWORD`; CI also reads `ORANGE_KEYSTORE_BASE64`. These remain CI-only. The account-key embedding option has been removed from the build and publication workflows.
+
+`android/VERSION` and `android/VERSION_CODE` advance explicitly. Publication must preserve `dev.orange.hotel` and the existing signer, supersede the previous public APK and reproduce `release-metadata.json` from the exact artifact. Ordinary file-installed apps still require system confirmation to update.
+
+The credential embedded in earlier pilot APKs must be rotated/revoked by its account owner. Removing embedding in this version does not revoke previously exposed copies. Never print or attach that credential while investigating.
+
+## Optional read-only integrations
+
+Reservation gateway credentials stay server-side under `PMS_<UPPERCASE_UTF8_HEX_OF_EXACT_HOTEL_ID>_URL` and `_TOKEN`. The fixed lookup route is read-only by contract; it is not used to complete check-in. Edge deployments use a hotel-scoped role, WSS and an owner-controlled export. No sample export may serve a real hotel.

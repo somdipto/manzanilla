@@ -2,7 +2,7 @@ import hashlib, json, secrets, time
 from typing import Literal
 from fastapi import HTTPException
 from pydantic import Field, StrictBool
-from .models import Strict, BookingLookup, Taxi, Search, Operator
+from .models import Strict, Empty, Taxi, Search, Operator, Message
 from .gateway import Gateway, phone_number
 
 class Start(Strict):
@@ -12,7 +12,7 @@ class Start(Strict):
     mode: Literal['reception']
 
 class Action(Strict):
-    action: Literal['checkin','taxi','question','operator']
+    action: Literal['checkin','taxi','question','operator','message']
     call_id: str = Field(min_length=1,max_length=100)
     arguments: dict = Field(default_factory=dict)
 
@@ -21,10 +21,11 @@ class Confirmation(Strict):
     accepted: StrictBool
 
 FIELDS = {
-    'checkin':[('reference','Reservation reference'),('surname','Surname')],
+    'checkin':[],
     'taxi':[('destination','Destination'),('pickup_time','Pickup time'),('guest_name','Guest name'),('room_number','Room number')],
+    'message':[('original_request','Exact message to send to staff')],
     'question':[('query','Your hotel question')], 'operator':[]}
-MODELS = {'checkin':BookingLookup,'taxi':Taxi,'question':Search,'operator':Operator}
+MODELS = {'checkin':Empty,'taxi':Taxi,'question':Search,'operator':Operator,'message':Message}
 
 
 def receipt(result):
@@ -37,6 +38,7 @@ def receipt(result):
     else:
         text = result.get('reason') or {
             'queued':'Request saved in the staff inbox. No taxi booking or call is confirmed.',
+            'saved':'Message saved in the staff inbox. No staff acknowledgement or PMS delivery is confirmed.',
             'dialer_required':'Open the phone dialer to call. No answer or connection is confirmed.',
             'unavailable':'This service is unavailable. Please ask the operator or hotel staff.',
             'not_found':'Reservation not found with those details. Please ask the operator.',
@@ -122,7 +124,7 @@ class Operations:
             identity = self.store.rows('SELECT * FROM operation_call_ids WHERE session=? AND call_id=?',(sid,value.call_id))[0]
             if identity['action'] != value.action or identity['fingerprint'] != fingerprint:
                 raise HTTPException(409,'Idempotency conflict')
-            confirmation = secrets.token_urlsafe(24) if value.action == 'taxi' else None
+            confirmation = secrets.token_urlsafe(24) if value.action in {'taxi','message'} else None
             state = 'confirmation' if confirmation else 'executing'
             claimed = self.store.run('INSERT OR IGNORE INTO operation_actions(session,call_id,action,arguments,fingerprint,confirmation_id,state) VALUES(?,?,?,?,?,?,?)',
                                      (sid,value.call_id,value.action,serialized,fingerprint,confirmation,state))
@@ -138,6 +140,11 @@ class Operations:
         if row['result']: return json.loads(row['result'])
         if row['state'] == 'confirmation':
             args = json.loads(row['arguments'])
+            if row['action'] == 'message':
+                return {'status':'confirmation_required','confirmation_id':row['confirmation_id'],
+                        'summary':'Message to staff:\n' + args['original_request'] +
+                                  '\nGuest: ' + args['guest_name'] + '\nRoom: ' + args['room_number'],
+                        'text':'Confirm this exact message before it is saved in the staff inbox. Staff acknowledgement and PMS delivery are not confirmed.'}
             return {'status':'confirmation_required','confirmation_id':row['confirmation_id'],
                     'summary':'Taxi request: ' + args['destination'] + '; pickup ' + args['pickup_time'] +
                               '; guest ' + args['guest_name'] + '; room ' + args['room_number'],
@@ -166,9 +173,22 @@ class Operations:
         # Hashed suffix IDs prevent a caller selecting another action's internal call IDs.
         prefix = hashlib.sha256(call_id.encode()).hexdigest()
         if action == 'checkin':
-            result = await gateway.execute('lookup_booking',args,prefix+':lookup')
-            if result['status'] == 'ok':
-                result = await gateway.execute('get_checkin_instructions',{'booking_id':result['booking_id']},prefix+':guidance')
+            if not self.authorized(dev,sid):
+                result = {'status':'denied','reason':'Session ended or device revoked'}
+            else:
+                instructions = self.store.hotel(dev['hotel'])['checkin_instructions']
+                configured = bool(instructions.strip())
+                result = {'status':'ok' if configured else 'unavailable',
+                          'instructions':instructions if configured else '',
+                          'guidance_only':True,'checkin_completed':False}
+        elif action == 'message':
+            # The reviewed original is authoritative; this bounded excerpt is only
+            # an inbox label, never a translation or independent account.
+            label = 'Guest message excerpt (see exact original): '
+            note = {**args,'summary':label + args['original_request'][:1000-len(label)]}
+            result = await gateway.execute('leave_reception_note',note,prefix)
+            if result['status'] == 'saved':
+                result = {**result,'destination':'staff inbox','staff_acknowledged':False}
         else:
             tool = {'taxi':'call_taxi','question':'search_hotel_knowledge','operator':'connect_operator'}[action]
             result = await gateway.execute(tool,args,prefix)

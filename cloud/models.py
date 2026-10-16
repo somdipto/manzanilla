@@ -18,7 +18,7 @@ class Hotel(Strict):
     checkin_instructions: str = ''
     services: dict[str, str] = {}
     knowledge: dict[str, str] = {}
-    connector: Literal['unconfigured', 'demo', 'rest', 'edge'] = 'unconfigured'
+    connector: Literal['unconfigured', 'rest', 'edge'] = 'unconfigured'
     config_version: int = Field(default=1, ge=1)
 
 class Note(Strict):
@@ -27,6 +27,11 @@ class Note(Strict):
     guest_name: str = Field(default='', max_length=100)
     room_number: str = Field(default='', max_length=20)
     urgency: Literal['normal', 'urgent'] = 'normal'
+
+class Message(Strict):
+    original_request: str = Field(min_length=1, max_length=4000)
+    guest_name: str = Field(default='', max_length=100)
+    room_number: str = Field(default='', max_length=20)
 
 class BookingLookup(Strict):
     reference: str = Field(min_length=3, max_length=100)

@@ -10,12 +10,12 @@ import cloud.app as server
 VOICE = {'mode':'reception','language':'es','staff_language':'es','session_id':'test-voice','generation':3}
 
 @pytest.fixture
-def platform(tmp_path, monkeypatch):
+def platform(tmp_path, monkeypatch, reservation_connector):
     db=Store(str(tmp_path/'test.db'))
     monkeypatch.setattr(server,'store',db)
     monkeypatch.setenv('ORANGE_ADMIN_TOKEN','x'*40)
     server.tickets.clear(); server.active_devices.clear(); server.edge_connections.clear()
-    for hid in ['a','b']: db.save_hotel(Hotel(id=hid,name='Hotel '+hid,connector='demo',knowledge={'breakfast':'7–10 AM'},checkin_instructions='Present ID to reception').model_dump())
+    for hid in ['a','b']: db.save_hotel(Hotel(id=hid,name='Hotel '+hid,connector='rest',knowledge={'breakfast':'7–10 AM'},checkin_instructions='Present ID to reception').model_dump())
     return db,TestClient(server.app)
 
 async def unavailable(*args): return {'status':'unavailable'}
@@ -46,10 +46,10 @@ def test_confirmation_cannot_be_supplied_by_model(platform):
 
 def test_booking_verification_and_guidance(platform):
     db,_=platform; g=gateway(db)
-    assert run(g.execute('get_guest',{'booking_id':'demo-204'},'1'))['status']=='denied'
-    assert run(g.execute('lookup_booking',{'reference':'DEMO-204','surname':'wrong'},'2'))['status']=='not_found'
-    found=run(g.execute('lookup_booking',{'reference':'DEMO-204','surname':'Smith'},'3'))
-    assert found['demo'] is True
+    assert run(g.execute('get_guest',{'booking_id':'fixture-204'},'1'))['status']=='denied'
+    assert run(g.execute('lookup_booking',{'reference':'FIXTURE-204','surname':'wrong'},'2'))['status']=='not_found'
+    found=run(g.execute('lookup_booking',{'reference':'FIXTURE-204','surname':'Smith'},'3'))
+    assert found['status']=='ok'
     result=run(g.execute('get_checkin_instructions',{'booking_id':found['booking_id']},'4'))
     assert result['guidance_only'] and result['checkin_completed'] is False
     assert run(gateway(db,'another').execute('get_guest',{'booking_id':found['booking_id']},'5'))['status']=='denied'
@@ -103,6 +103,7 @@ def test_resolution_scope_and_summary(platform):
 
 def test_ticket_single_use_and_real_gateway_path(platform,monkeypatch):
     db,client=platform; dev=db.issue('a','device')
+    monkeypatch.setattr(server,'LIVE_AUDIO_ENABLED',True)  # Offline fake relay only.
     async def fake_relay(ws,hotel,gateway,pending,metadata):
         await ws.send_json({'type':'ready'})
         msg=await ws.receive_json()
@@ -121,6 +122,7 @@ def test_ticket_single_use_and_real_gateway_path(platform,monkeypatch):
 
 def test_missing_gemini_key_reports_failure(platform,monkeypatch):
     db,client=platform;dev=db.issue('a','device');monkeypatch.delenv('GEMINI_API_KEY',raising=False)
+    monkeypatch.setattr(server,'LIVE_AUDIO_ENABLED',True)  # Missing-key component failure only.
     ticket=client.post('/api/device/session',headers={'Authorization':'Bearer '+dev['token']},json=VOICE).json()['ticket']
     with client.websocket_connect('/ws/device',headers={'X-Orange-Ticket':ticket}) as ws:
         assert ws.receive_json()['type']=='error'
@@ -139,3 +141,18 @@ def test_staff_setup_authorization_scoped(platform):
     assert client.post('/api/device/staff-check',headers=header,json={'staff_token':staff['token']}).status_code==200
     assert client.post('/api/device/staff-check',headers=header,json={'staff_token':other['token']}).status_code==403
     assert client.post('/api/device/staff-check',headers=header,json={'staff_token':dev['token']}).status_code==403
+
+
+def test_demo_configuration_is_rejected_and_stale_records_fail_unavailable(platform):
+    db,client=platform
+    actual=db.hotel('a')
+    response=client.put('/api/hotels/a',headers={'Authorization':'Bearer '+'x'*40},
+                        json={**actual,'connector':'demo'})
+    assert response.status_code==422 and db.hotel('a')==actual
+    # Simulate a persisted configuration from before the runtime cutover.
+    db.save_hotel({**actual,'connector':'demo'})
+    g=gateway(db)
+    result=run(g.execute('lookup_booking',{'reference':'DEMO-204','surname':'Smith'},'old-demo'))
+    assert result['status']=='unavailable'
+    assert run(g.execute('get_guest',{'booking_id':'demo-204'},'guest'))['status']=='denied'
+    assert not db.rows('SELECT * FROM items')

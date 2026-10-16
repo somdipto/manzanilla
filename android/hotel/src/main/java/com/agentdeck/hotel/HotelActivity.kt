@@ -30,7 +30,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 class HotelActivity : Activity() {
     private var reception: ReceptionView? = null
     private val deck by lazy { getSharedPreferences("deck", MODE_PRIVATE) }
-    private val messages by lazy { GuestMessages(this) }
     private val owner = SessionOwner()
     private val ui = Handler(Looper.getMainLooper())
     private val ringing = AtomicBoolean(false)
@@ -48,14 +47,10 @@ class HotelActivity : Activity() {
     private val local by localProvider
     private val fishProvider = lazy { FishVoice(this, { event -> runOnUiThread { forward(event) } }) { fishStore.load().orEmpty() } }
     private val fish by fishProvider
-    private val cloudProvider = lazy { CloudVoice(this, { event -> runOnUiThread { forward(event) } }, { event -> runOnUiThread { cloudTool(event) } }) }
-    private val cloud by cloudProvider
-    private val gatewayProvider = lazy { HotelGateway(BuildConfig.BACKEND_URL, BuildConfig.DEVICE_TOKEN,
-        { lease, event -> runOnUiThread { if (current(lease)) push(lease, event) } },
-        { lease, event -> runOnUiThread { if (current(lease)) dialOperation(lease, event) } }) }
-    private val gateway by gatewayProvider
+    private val hotelConnection by lazy { HotelConnection(this) }
+    private var gateway: HotelGateway? = null
     private val afterRelease = ArrayList<() -> Unit>()
-    private enum class Engine { FISH, GEMINI, CLOUD }
+    private enum class Engine { FISH, GEMINI }
     private var engine: Engine? = null
     private var night = false
     private var foreground = false
@@ -63,7 +58,6 @@ class HotelActivity : Activity() {
     private var backCallback: OnBackInvokedCallback? = null
     private var pendingPermission: SessionOwner.Lease? = null
     private var audioState = "off"
-    private val guestUtterances = LinkedHashMap<String, String>()
     private var lastActivity = 0L
     private var greetPlayer: MediaPlayer? = null
     private var greetToken = 0
@@ -76,7 +70,7 @@ class HotelActivity : Activity() {
         }
     }
 
-    private fun backendConfigured() = BuildConfig.BACKEND_URL.startsWith("https://") && BuildConfig.DEVICE_TOKEN.isNotBlank()
+    private fun backendConfigured() = hotelConnection.load() != null
     private fun current(lease: SessionOwner.Lease) = owner.accepts(lease.request.id, lease.generation)
     private fun scoped(lease: SessionOwner.Lease, message: JSONObject) = message
         .put("session_id", lease.request.id).put("generation", lease.generation)
@@ -89,13 +83,12 @@ class HotelActivity : Activity() {
 
     private fun pushState() {
         val page = reception ?: return
-        val fishReady = fishStore.has() || BuildConfig.FISH_API_KEY.isNotBlank()
-        val geminiReady = store.has()
-        val ready = backendConfigured() || fishReady || geminiReady
+        val ready = backendConfigured()
         page.push(JSONObject().put("type", "appearance").put("value", deck.getString("reception_appearance", "dark")))
         page.push(JSONObject().put("type", "night_mode").put("enabled", night))
         page.push(JSONObject().put("type", "reception_info").put("hotel_name", "Hotel reception")
-            .put("sample_hotel", false).put("configured", ready).put("staff_language", "es"))
+            .put("sample_hotel", false).put("configured", ready)
+            .put("audio_available", AudioPolicy.LIVE_AUDIO_ENABLED).put("audio_gate", AudioPolicy.BLOCK_REASON).put("staff_language", "es"))
         val guest = deck.getString("reception_guest_language", null)
         val staff = deck.getString("reception_staff_language", null)
         if (guest != null && staff != null) page.push(JSONObject().put("type", "language_preferences")
@@ -132,26 +125,22 @@ class HotelActivity : Activity() {
                 }
             }
         }
-        if (type == "caption" && message.optString("field") == "original") {
-            val id = message.optString("utterance_id")
-            val text = message.optString("text")
-            val value = if (message.optString("operation") == "append") guestUtterances[id].orEmpty() + text else text
-            guestUtterances[id] = value
-            if (guestUtterances.size > 16) guestUtterances.remove(guestUtterances.keys.first())
-            if (value.isNotBlank()) lastActivity = SystemClock.elapsedRealtime()
-        }
+        if (type == "caption" && message.optString("field") == "original" && message.optString("text").isNotBlank())
+            lastActivity = SystemClock.elapsedRealtime()
         if (current(lease)) reception?.push(message)
     }
 
     private fun begin(request: SessionOwner.Request) {
         val lease = owner.acquire(request) ?: run { notice("Wait until the previous microphone release is confirmed before starting again."); return }
-        guestUtterances.clear()
-        messages.discard()
         lastActivity = SystemClock.elapsedRealtime()
         audioState = "off"
         phase(lease, "connecting")
         audio(lease, "off")
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        if (request.mode == "reception") {
+            connect(lease)
+        } else if (!AudioPolicy.LIVE_AUDIO_ENABLED) {
+            stopSession("error", AudioPolicy.BLOCK_REASON)
+        } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             pendingPermission = lease
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 5)
         } else connect(lease)
@@ -161,21 +150,26 @@ class HotelActivity : Activity() {
         if (!current(lease) || !foreground) return
         val request = lease.request
         if (request.mode == "reception") {
-            if (!backendConfigured()) {
-                stopSession("error", "Hotel assistance needs the hotel's secure backend. Ask staff to configure the hotel connection.")
-                return
-            }
-            engine = Engine.CLOUD
-            gateway.begin(lease)
-            cloud.start(request.guest, request.staff, request.id, lease.generation)
-        } else if (backendConfigured() || fishStore.has() || BuildConfig.FISH_API_KEY.isNotBlank()) {
+            gateway?.dispose()
+            val credentials = hotelConnection.load()
+            gateway = HotelGateway(credentials?.base.orEmpty(), credentials?.token.orEmpty(),
+                { currentLease, event -> runOnUiThread { if (current(currentLease)) push(currentLease, event) } },
+                { currentLease, event -> runOnUiThread { if (current(currentLease)) dialOperation(currentLease, event) } })
+                .also { it.begin(lease) }
+            audio(lease, "off")
+            phase(lease, "ready")
+            return
+        } else if (!AudioPolicy.LIVE_AUDIO_ENABLED) {
+            stopSession("error", AudioPolicy.BLOCK_REASON)
+            return
+        } else if (deck.getString("voice_route", "") == "hosted") {
             engine = Engine.FISH
             fish.start(request.guest, request.staff, request.mode, request.id, lease.generation)
-        } else if (store.has()) {
+        } else if (deck.getString("voice_route", "") == "direct") {
             engine = Engine.GEMINI
             local.start(request.guest, request.staff, request.mode, request.id, lease.generation)
         } else {
-            stopSession("error", "Voice is not configured. Authorized staff can connect the hotel or configure a device credential.")
+            stopSession("error", "Live audio has no approved route. Use hotel assistance or contact staff.")
             return
         }
         if (!current(lease)) return
@@ -183,7 +177,6 @@ class HotelActivity : Activity() {
             if (current(lease) && foreground) when (engine) {
                 Engine.FISH -> fish.greetingDone()
                 Engine.GEMINI -> local.greetingDone()
-                Engine.CLOUD -> cloud.greetingDone()
                 null -> Unit
             }
         }
@@ -195,9 +188,7 @@ class HotelActivity : Activity() {
         val lease = owner.beginClose()
         if (lease == null) { if (owner.current == null) finishReleaseActions(); return }
         stopGreeting()
-        messages.discard()
-        guestUtterances.clear()
-        if (gatewayProvider.isInitialized()) gateway.end()
+        gateway?.end()
         phase(lease, "ending")
         audio(lease, "stopping")
         val selected = engine
@@ -216,7 +207,6 @@ class HotelActivity : Activity() {
         when (selected) {
             Engine.FISH -> fish.stop(released)
             Engine.GEMINI -> local.stop(true, released)
-            Engine.CLOUD -> cloud.stop(released)
             null -> released()
         }
     }
@@ -283,23 +273,6 @@ class HotelActivity : Activity() {
         if (!destroyed && foreground) startActivity(Intent(this, KeyEntryActivity::class.java))
     })
 
-    private fun cloudTool(message: JSONObject) {
-        val lease = owner.current ?: return
-        if (!owner.accepts(message.optString("session_id"), message.optInt("generation", -1))) return
-        when (message.optString("type")) {
-            "confirm" -> phaseConfirmation(lease, "voice:${message.optString("id")}",
-                message.optString("tool").replace('_', ' ') + "\n" + message.optJSONObject("arguments").toString())
-            "handoff" -> {
-                val status = openDialer(message.optString("number"))
-                cloud.handoff(message.optString("id"), status)
-                push(lease, JSONObject().put("type", "operation_result").put("status", status)
-                    .put("text", if (status == "dialer_opened") "The phone dialer is open. A person has not yet answered." else "The phone dialer could not open. Ask reception to call the configured number."))
-            }
-        }
-    }
-
-    private fun phaseConfirmation(lease: SessionOwner.Lease, id: String, summary: String) =
-        push(lease, JSONObject().put("type", "reception_event").put("phase", "confirming").put("draft_id", id).put("message", summary))
     private fun openDialer(number: String): String {
         if (!number.matches(Regex("\\+[1-9][0-9]{6,14}"))) return "failed"
         return try { startActivity(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null))); "dialer_opened" }
@@ -308,7 +281,7 @@ class HotelActivity : Activity() {
     private fun dialOperation(lease: SessionOwner.Lease, response: JSONObject) {
         val number = response.optString("number", response.optJSONObject("result")?.optString("number").orEmpty())
         val status = openDialer(number)
-        push(lease, JSONObject().put("type", "operation_result").put("status", status)
+        push(lease, JSONObject(response.toString()).put("type", "operation_result").put("status", status)
             .put("text", if (status == "dialer_opened") "The phone dialer is open. No answered call or taxi booking is confirmed." else "This device could not open the dialer. Ask reception to call for you."))
     }
 
@@ -370,22 +343,16 @@ class HotelActivity : Activity() {
                 begin(SessionOwner.Request(id, mode, guest, staff, message.optString("greet")))
             }
             "stop" -> stopSession()
-            "message" -> owner.current?.takeIf { current(it) }?.let {
-                push(it, messages.draft(guestUtterances.values.joinToString("\n").takeLast(4000)))
+            "message" -> owner.current?.takeIf { current(it) && it.request.mode == "reception" }?.let {
+                gateway?.action(it, "message", message.optJSONObject("arguments") ?: JSONObject())
             }
             "confirm" -> owner.current?.takeIf { current(it) }?.let { lease ->
                 val id = message.optString("draft_id"); val approved = message.optBoolean("approved")
-                when {
-                    id.startsWith("operation:") -> gateway.confirm(lease, id, approved)
-                    id.startsWith("voice:") -> { cloud.confirmation(id.removePrefix("voice:"), approved); phase(lease, "listening") }
-                    !approved -> { messages.discard(); phase(lease, "listening") }
-                    messages.save(id) -> push(lease, JSONObject().put("type", "reception_event").put("phase", "saved").put("saved", true)
-                        .put("text", "Saved on this tablet only. The front desk has not been notified."))
-                    else -> push(lease, JSONObject().put("type", "notice").put("status", "save_failed").put("text", "The note could not be saved on this tablet. Review it and retry."))
-                }
+                if (id.startsWith("operation:")) gateway?.confirm(lease, id, approved)
+                else notice("This request is no longer available. Review a new request.")
             }
             "checkin", "operator", "taxi", "question" -> owner.current?.takeIf { current(it) && it.request.mode == "reception" }?.let {
-                gateway.action(it, message.optString("action"), message.optJSONObject("arguments") ?: JSONObject())
+                gateway?.action(it, message.optString("action"), message.optJSONObject("arguments") ?: JSONObject())
             }
             "activity" -> lastActivity = SystemClock.elapsedRealtime()
             "silence" -> if (greetPlayer != null && owner.current != null) stopSession() else stopGreeting()
@@ -454,8 +421,7 @@ class HotelActivity : Activity() {
         ui.removeCallbacks(updatePoll)
         stopSession(done = {
             if (fishProvider.isInitialized()) fish.release()
-            if (cloudProvider.isInitialized()) cloud.release()
-            if (gatewayProvider.isInitialized()) gateway.dispose()
+            gateway?.dispose()
         })
         reception?.dispose(); reception = null
         super.onDestroy()

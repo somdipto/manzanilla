@@ -82,7 +82,7 @@ class Gateway:
             if not self.authorized(): return {'status':'denied','reason':'Session ended or device revoked'}
             if not booking: return {'status':'not_found'}
             self.verified[booking['id']] = booking
-            return {'status':'ok','booking_id':booking['id'], 'demo':bool(booking.get('demo'))}
+            return {'status':'ok','booking_id':booking['id']}
         if name in {'get_guest','get_checkin_status','get_checkin_instructions'}:
             booking = self.verified.get(args['booking_id'])
             if not booking: return {'status':'denied','reason':'Verify reservation reference and surname first'}

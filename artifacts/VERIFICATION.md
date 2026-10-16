@@ -1,3 +1,36 @@
+# 17.0.10 — staff-led support and audio remediation
+
+## Implemented and contract-tested
+
+- Managed agent identity now hashes the complete published configuration and credential scope. A changed prompt/model/recognizer/voice/turn setting creates a distinct agent instead of silently reusing stale published settings. Matching configuration is reused without mutating another live agent.
+- Removed the runtime demo reservation connector and rejected new demo configuration. Isolated test reservations now require explicit test injection. Admin setup starts empty instead of supplying invented hotel instructions.
+- Microphone-off reception sessions expose hotel-approved arrival guidance, knowledge, taxi requests, typed messages and human-contact options. Arrival guidance does not require reservation identity or complete check-in. Missing configuration remains unavailable.
+- Typed messages retain the exact original, require device confirmation, respect session/tenant/idempotency fences and return durable staff-inbox receipts. A receipt does not mean staff acknowledgement, PMS delivery, an answered call or a taxi booking. The obsolete local-pad submission path is removed; prior local data is not uploaded or erased.
+- Hotel service URL and device token are entered through authenticated staff setup and encrypted/replaced as one bundle. Provider/device credentials and the keyed-pilot build option were removed from APK build configuration and CI publication inputs. Previously exposed credentials still require account-owner rotation/revocation.
+- Direct-interpreter playback now has explicit turn ownership: one session cannot flush another's output, takeover waits for generation completion and playback drain, interrupted chunks are fenced, and unsupported simultaneous output fails explicitly rather than mixing or silently dropping words. This is **not** a passed full-duplex acoustic acceptance claim.
+- Translation prompts preserve complete meaning, qualifiers, negation and exact entities rather than demanding one short sentence. UI copy is shorter; request receipts appear once on a readable surface. Existing local greeting assets remain, including “Hey, how are you doing?” in English.
+- Per-turn timing distinguishes activity-boundary estimates, provider-final receipt, raw PCM receipt, sampled playback-head progress and SDK decoded receipt. There is no fabricated input/output association or acoustic p50/p95. Current direct-interpreter input finality remains unavailable.
+- Native start paths and public backend voice admission fail closed: no current complete free-only audio route is qualified. Saved keys cannot bypass the gate. Staff-led HTTP operations remain available; no paid fallback or automatic provider switching is enabled.
+
+## Exercised verification
+
+- Backend: `.venv/bin/python -m pytest tests -q` — **110 passed**, one existing dependency deprecation warning.
+- Native integrated command: `:hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug :hotel:assembleRelease --no-daemon` — **BUILD SUCCESSFUL**, **42 JVM tests, zero failures/errors**. Local release assembly is unsigned; signed publication is a separate CI step. Existing SDK XML/deprecation warnings remain.
+- Real isolated backend launched with temporary database/home and no provider credentials. Actual browser form/confirm actions, through an emulated native bridge, produced real HTTP inbox receipts. No inbox item existed before confirmation; the exact typed original reached the staff inbox; missing arrival instructions returned unavailable; authenticated voice admission returned HTTP 503.
+- Actual native app installed in a newly created disposable fixture. A temporary same-signature instrumentation harness saved/reloaded the encrypted runtime connection, rejected a credential-bearing URL without damaging the prior bundle, and checked persisted ciphertext did not contain the token. It exercised the real WebView/native bridge and HotelGateway review/confirm/receipt path against the isolated HTTP service. **PASS: microphone permission stayed denied and state stayed off.**
+- Native transport fixture used an isolated debug-only loopback cleartext allowance and a temporary interceptor to reach the local service. Neither is production TLS/deployment acceptance; no transport bypass enters the released app.
+- The native harness invoked the existing app-owned English greeting: actual local player completion, release and the correct native greeting caption passed without opening a microphone/provider connection. Muted playback is not physical-speaker or live-speech proof.
+- Browser layouts exercised at 960×540, 640×360 and 390×844; receipt layouts had no horizontal overflow. An initial visual check caught receipt text washing out over the home gradient; a receipt-only surface fixed contrast without redesigning the approved home.
+- Fixture setup corrections: provisioned a temporary JDK because the prior temporary runtime no longer existed; dismissed the system's first-fullscreen onboarding overlay. Browser automation required page-world evaluation and an explicit stylesheet refresh; isolated-world callbacks were not treated as application failures.
+- [Native home](../docs/screens/17.0.10-native-fixture.png), [browser home](../docs/screens/17.0.10-home.png), [audio gate](../docs/screens/17.0.10-audio-gate.png), [typed form](../docs/screens/17.0.10-message-form-fixture.png), [confirmed receipt](../docs/screens/17.0.10-message-receipt-fixture.png).
+- [Secret-free end-to-end staff-led fixture video](../docs/videos/17.0.10-staff-led-fixture.webm), approximately nine seconds with deliberate readable pauses, and [isolated receipt records](17.0.10-isolated-receipts.json). These are explicitly synthetic verification requests, not real hotel service or interviews. The video demonstrates UI/HTTP behavior, not live audio timing.
+
+## Remaining live/pilot gates
+
+No provider audio calls or paid benchmarks ran. Free-only model/account/region/quota/billing/privacy qualification, physical microphone/speaker/echo/overlap validation, audible latency, real hotel configuration approval, actual staff acknowledgement/handoff/taxi handling and supervised interviews remain unverified. The omitted Phase 1 brief sections and exact three gate definitions remain required. This remediation release is not a declaration that Phase 1 passed.
+
+Historical verification follows; its keyed-pilot exception and earlier versions are not the current build policy.
+
 # UI update verification — 2026-10-16
 
 ## 17.0.8 updater repair — reproduced failures and checks

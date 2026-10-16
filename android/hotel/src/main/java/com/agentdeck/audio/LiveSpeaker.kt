@@ -14,6 +14,7 @@ class LiveSpeaker(private val failed: () -> Unit = {}) {
     @Volatile private var running = false
     private var closed = false
     private var queuedBytes = 0
+    private var submittedFrames = 0L
     private var worker: Thread? = null
     @Volatile private var track: AudioTrack? = null
     private val envelope = PcmEnvelope()
@@ -30,6 +31,7 @@ class LiveSpeaker(private val failed: () -> Unit = {}) {
         if (running || closed) return@synchronized
         queue.clear()
         queuedBytes = 0
+        submittedFrames = 0
         envelope.reset()
         val minimum = AudioTrack.getMinBufferSize(24000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         check(minimum > 0)
@@ -65,10 +67,14 @@ class LiveSpeaker(private val failed: () -> Unit = {}) {
 
     fun playedSamples(): Long = try { track?.playbackHeadPosition?.toLong()?.and(0xffffffffL) ?: 0L } catch (_: Exception) { 0L }
 
+    /** Includes queued and native-buffered frames; unlike playback head, this is not heard audio. */
+    fun submittedSamples(): Long = synchronized(lock) { submittedFrames }
+
     fun append(pcm: ByteArray): Boolean = synchronized(lock) {
         if (!running || pcm.isEmpty() || pcm.size % 2 != 0 || pcm.size > 48000 || queuedBytes + pcm.size > 48000) return@synchronized false
         if (!queue.offer(pcm)) return@synchronized false
         queuedBytes += pcm.size
+        submittedFrames += pcm.size / 2
         true
     }
 

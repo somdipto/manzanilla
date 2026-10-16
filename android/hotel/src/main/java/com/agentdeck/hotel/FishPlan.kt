@@ -9,7 +9,7 @@ import org.json.JSONObject
  * Language coverage and interruption quality require live acoustic verification, not picker counts.
  */
 object FishPlan {
-    const val CONFIG_REV = "6"
+    const val CONFIG_REV = "7"
     const val AGENT_NAME = "Manzanilla Interpreter"
     const val MAX_SECONDS = 600
     const val CLIENT_CAP_MS = 540_000L
@@ -28,7 +28,7 @@ object FishPlan {
             Do not repeat the original words. The guest was already greeted in the guest language. Never greet. Stay silent until you hear a person. Never ask how you can help. Never add commentary.
             Keep numbers, dates, times, prices, names, room numbers, and currencies exact.
             If you cannot tell which of the two languages was spoken, stay silent.
-            One short spoken sentence.
+            Translate the complete meaning faithfully. Do not shorten, summarize, or omit clauses, conditions, negations, or qualifiers; use as many sentences as needed.
         """.trimIndent()
     }
 

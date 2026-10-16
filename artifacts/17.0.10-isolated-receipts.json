@@ -1,0 +1,42 @@
+{
+  "scope": "Isolated verification only. Not real hotel requests or staff acknowledgement.",
+  "version": "17.0.10",
+  "provider_requests": 0,
+  "receipts": [
+    {
+      "id": "dcd89151-ffff-4d16-ac65-46c0fc5a6fee",
+      "kind": "note",
+      "status": "open",
+      "staff_acknowledged": false,
+      "pms_delivered": false
+    },
+    {
+      "id": "59bda4c0-c306-4e9f-9a7f-5d4e43f5ef75",
+      "kind": "note",
+      "status": "open",
+      "staff_acknowledged": false,
+      "pms_delivered": false
+    },
+    {
+      "id": "a4998c5e-35ee-40d8-8491-c7e0ee010dee",
+      "kind": "note",
+      "status": "open",
+      "staff_acknowledged": false,
+      "pms_delivered": false
+    },
+    {
+      "id": "e6d9d29a-3efe-40ad-ac9e-fe15c8851a02",
+      "kind": "note",
+      "status": "open",
+      "staff_acknowledged": false,
+      "pms_delivered": false
+    },
+    {
+      "id": "41081049-971d-4cc1-89b4-230e13a72dbc",
+      "kind": "note",
+      "status": "open",
+      "staff_acknowledged": false,
+      "pms_delivered": false
+    }
+  ]
+}

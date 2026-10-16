@@ -1,80 +1,60 @@
 # Manzanilla
 
-**Faster execution hardware for the hospitality industry.**
+Reception support for guests and hotel staff. Staff retain responsibility for guidance, requests and human handoff.
 
-Manzanilla Reception is a landscape Android app with an open-canvas reception home, navy appearance options and hands-free live translation. Reception and guest languages have independent 52-language selectors. A prerecorded guest-language greeting plays before the microphone opens. Ordinary APKs contain no provider account key; staff can save an encrypted device key after Android credential authentication, or use a configured managed backend. An explicitly opted-in keyed pilot embeds a Fish key for immediate testing and is extractable, not production-safe. Previously saved Gemini keys remain supported.
+## Current version: 17.0.10
 
+- Hotel assistance works with the microphone off: arrival guidance, hotel questions, taxi requests, confirmed staff messages and human-contact options.
+- Actual hotel configuration is required. Missing guidance or contacts remain unavailable; no sample reservation or invented policy powers the app.
+- Messages and taxi requests require review and confirmation. A saved inbox receipt is not staff acknowledgement, an answered call or a taxi booking.
+- **Live translation is gated pending verified free-only audio eligibility.** Existing language selectors, local greetings and voice code are retained, but credentials cannot bypass the gate. There is no paid fallback or automatic route switching.
+- The English startup greeting remains **“Hey, how are you doing?”** Local greeting playback is app-owned, not proof of a live provider conversation.
+- No provider account key or hotel device token is embedded in the APK. The hotel connection is entered through authenticated staff setup and encrypted on the device.
 
-<p align="center">
-  <a href="https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Manzanilla%20Reception-2ea44f?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="56"></a>
-  &nbsp;
-  <a href="https://github.com/somdipto/manzanilla/releases"><img src="https://img.shields.io/badge/All%20releases-GitHub-24292e?style=for-the-badge&logo=github" alt="All releases" height="56"></a>
-</p>
+This release fixes stale managed-agent configuration identities, prevents conflicting translation output from being mixed, removes the translation-shortening instruction and adds endpoint-labelled timing. These are source/contract improvements, **not a measured physical-device latency or full-duplex acceptance claim**.
 
-## Install
+## Install or update
 
-1. On the Android device, open this link and download the APK: **[Manzanilla-Reception.apk (latest)](https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk)**
-2. Open the downloaded file. If Android asks, allow "Install unknown apps" for the browser or file manager you used, then tap Install.
-3. Open **Manzanilla**. It starts straight on reception, without staff enrollment. Use the staff-setup gear to configure Fish Audio if this device has no saved voice key.
+**[Download the latest app](https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk)** · [Release history](https://github.com/somdipto/manzanilla/releases)
 
-<p align="center"><img src="docs/screens/17.0.6-home.png" alt="17.0.6 Android reception home" width="720"></p>
+1. Open Manzanilla and tap **Check updates**. Resume also checks automatically; a foreground app rechecks every ten minutes.
+2. Tap the downloaded update, allow installation from this source if requested, then approve the system **Update** prompt.
+3. Do not uninstall. In-place updates retain app data and saved credentials.
 
-All releases: https://github.com/somdipto/manzanilla/releases
+Versions through 17.0.7 can hide discovery failures or defer checks. If the update does not appear, use the download link for a one-time manual in-place **Update**, not an uninstall.
 
-## Update an existing installation
+Installation still requires system confirmation; this is not silent remote installation.
 
-Open Manzanilla while connected to the internet. From 17.0.8, every app resume checks immediately; an open foreground app also rechecks every ten minutes. The home screen's **Check updates** button retries immediately. The banner shows checking, download progress, a downloaded update, an up-to-date version, or a retryable failure instead of silently hiding discovery errors. Tap the downloaded update, allow installation if Android asks, then approve Android's install prompt. Do not uninstall: an in-place update keeps app data and saved keys.
+## Staff setup
 
-Older installed versions through 17.0.7 can suppress checks for ten minutes after a recent attempt and hide discovery errors. If that prevents this repair from arriving, perform a **one-time manual in-place update** using the latest APK link above. Allow your browser to install unknown apps if requested, and choose **Update**, not uninstall. After installing 17.0.8, use **Check updates** on the home screen to see the current result.
+Open the setup gear and authenticate with the device screen lock. Enter the hotel's actual HTTPS service URL and a hotel-scoped **device** credential issued by its administrator. Never enter the administrator credential. URL and device token are encrypted and replaced together.
 
-Publication uses the semantic version in `android/VERSION` and the explicit increasing integer in `android/VERSION_CODE`. Every candidate must preserve package `dev.orange.hotel` and the existing signing certificate, supersede the last published version code, and pass artifact identity/digest checks. Verification builds are key-free; only an explicitly requested keyed-pilot release embeds `FISH_API_KEY` (see `docs/ENVIRONMENT.md`). Failed download/validation attempts are cleared so retry can discover a replacement release; an active download remains pinned to its immutable identity.
+The backend must also run the matching revision for confirmed messages and microphone-off guidance. Staff approve the hotel's real policies, contacts, hours and knowledge before use. Live audio remains blocked even if old voice keys are saved. Rotate/revoke the exposed credential from older pilot builds through its account owner; removing it from a new APK does not revoke it.
 
-<p align="center">
-  <img src="docs/screens/17.0.8-update-offer.png" alt="Stock Android app offering the published 17.0.8 update" width="720">
-</p>
+Legacy local-only notes are not uploaded, relabelled as delivered or automatically deleted by the update. New staff messages use the confirmed backend inbox flow.
 
-Android may require an "Update" confirmation for an app installed from a file; this is not a silent remote installation.
+## Evidence and limitations
 
-## Screens
+[Verification record](artifacts/VERIFICATION.md) · [Pre-change Phase 1 baseline](docs/PHASE-1-BASELINE.md) · [Configuration and security](docs/ENVIRONMENT.md) · [Pilot deployment](docs/PILOT-DEPLOYMENT.md)
 
-Every reception screen, original and current, is listed in [docs/screens](docs/screens/README.md).
+[Isolated message form](docs/screens/17.0.10-message-form-fixture.png) · [Isolated request receipt](docs/screens/17.0.10-message-receipt-fixture.png) · [Secret-free staff-led fixture video](docs/videos/17.0.10-staff-led-fixture.webm)
 
-## What is in this repository
+Fixture screenshots/video are labelled isolated verification, not real hotel requests or guest interviews. Browser bridge fixtures are not native audio proof. Physical echo handling, audible latency, language quality, real hotel receipts and supervised workflow validation remain unverified. Phase 1 is not declared complete; the omitted brief sections and three acceptance-gate definitions are still required.
 
-| Folder | What it is |
-| --- | --- |
-| `android/hotel` | The Manzanilla Reception app (landscape, microphone, auto-update) |
-| `android/app` | Earlier general-purpose controller app, kept for reference |
-| `cloud` | Backend for hotel setup, device sessions and voice calls |
-| `admin` | Small web dashboard for hotel setup |
-| `edge`, `infra`, `shared` | Supporting services and shared definitions |
-| `docs` | Architecture, pilot deployment notes, test plan |
-| `.github/workflows` | CI: build, test and publish releases |
+## Repository
 
-The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-README.md).
+`android/hotel` is the active app. `cloud` contains authenticated hotel operations; `admin` contains hotel setup and inbox views. `edge`, `infra` and `shared` contain supporting interfaces. The older `android/app` is not the reception implementation.
 
-## Status
+## Build
 
-17.0.8 repairs update discovery: app resume no longer skips checks because of a persisted cooldown; offline/discovery errors are visible and retryable; a home-screen check control and foreground rechecks make updates reachable without restarting or reinstalling the app.
-
-17.0.7 refines the approved open-canvas reception design: compact language selectors show the selected language without repeated names or keypad numbers; conversation bubbles use neutral charcoal/gray surfaces in dark mode and warm gray in light mode. Starting translation plays the app's bundled guest-language welcome before microphone capture, with guest-language text above receptionist-language text in one divided reception-side bubble. This welcome is app-owned, not generated by the voice agent.
-
-Linked captions render guest-left/receptionist-right, with original speech above its opposite-language translation. **Current Fish/Gemini feeds do not supply reliable original/translation associations; their unlinked captions remain separate.** The renderer is verified with linked synthetic events, not claimed as solved live pairing. Hotel assistance still requires the configured backend and real hotel integrations.
-
-Verification: 31 Android JVM tests, Android lint, debug and signed release assembly passed locally. Isolated browser checks covered readable selectors at small landscape sizes, all 52 welcome language pairs, neutral-bubble contrast, stale events and greeting history across restart. A disposable native Android fixture exercised actual bundled welcome playback in English, Japanese and Arabic, player release, and immediate cancellation without opening a microphone or provider connection. All 52 bundled WAV files were validated. No additional paid calls ran. The explicitly authorized pilot still embeds an extractable Fish key. Muted emulator playback is not physical speaker or live full-duplex proof; detailed evidence and prior benchmarks are in [artifacts/VERIFICATION.md](artifacts/VERIFICATION.md).
-
-Actual Android captures: [compact language selection](docs/screens/17.0.7-languages.png) and [app-owned bilingual welcome](docs/screens/17.0.7-welcome-fixture.png). The welcome fixture exercises bundled audio and its native playback event, not a live provider session. Earlier ordinary-conversation captures use **injected synthetic captions, not live speech**: [dual bubbles](docs/screens/17.0.6-conversation-fixture.png), [stopped state](docs/screens/17.0.6-stopped-fixture.png).
-
-## Build it yourself
-
-Requires JDK 17 and the Android SDK.
+Requires JDK 17 and SDK 34:
 
 ```sh
 cd android
-./gradlew :hotel:assembleDebug
+./gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug
 ```
 
-Signed release builds are produced by GitHub Actions; the signing key is stored as a repository secret and is never committed.
+Signed publication preserves the existing application identity and signing certificate, verifies the APK against the previous public release, and checks immutable update metadata. CI holds the signing credential; it is never committed. There is no keyed-pilot build option.
 
 ## License
 

@@ -4,13 +4,6 @@ import httpx
 
 class ConnectorUnavailable(Exception): pass
 
-class DemoConnector:
-    async def lookup(self, reference, surname):
-        if reference == 'DEMO-204' and surname.casefold() == 'smith':
-            return {'id':'demo-204','guest_name':'Alex Smith','room_number':'204',
-                    'eligible': True, 'status':'arrival', 'demo': True}
-        return None
-
 class RestConnector:
     def __init__(self, hotel_id):
         # Preserve case and punctuation: credentials must never alias another tenant.
@@ -43,7 +36,6 @@ class EdgeConnector:
         return result.get('booking')
 
 def connector(hotel, execute):
-    if hotel['connector'] == 'demo': return DemoConnector()
     if hotel['connector'] == 'rest': return RestConnector(hotel['id'])
     if hotel['connector'] == 'edge': return EdgeConnector(hotel['id'], execute)
     raise ConnectorUnavailable('No reservation integration configured')

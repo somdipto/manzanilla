@@ -8,6 +8,8 @@ from cloud.gateway import Gateway
 import cloud.app as server
 
 TAXI={'destination':'Airport','pickup_time':'08:30 tomorrow','guest_name':'Synthetic Guest','room_number':'204'}
+MESSAGE={'original_request':'Please ask reception about a later departure.\nKeep this exact wording.',
+         'guest_name':'Synthetic Guest','room_number':'204'}
 
 @pytest.fixture
 def operations(tmp_path,monkeypatch):
@@ -15,8 +17,8 @@ def operations(tmp_path,monkeypatch):
     monkeypatch.setattr(server,'store',store)
     monkeypatch.setenv('ORANGE_ADMIN_TOKEN','x'*40)
     for hid in ['a','b']:
-        store.save_hotel(Hotel(id=hid,name='Synthetic '+hid,connector='demo',knowledge={'breakfast':'7–10 AM'},
-                               checkin_instructions='Present ID to reception').model_dump())
+        store.save_hotel(Hotel(id=hid,name='Synthetic '+hid,knowledge={'breakfast':'7–10 AM'},
+                               checkin_instructions='Ask the reception desk for arrival assistance.').model_dump())
     dev=store.issue('a','device'); other=store.issue('a','device'); foreign=store.issue('b','device')
     headers=lambda d:{'Authorization':'Bearer '+d['token']}
     client=TestClient(server.app)
@@ -39,6 +41,7 @@ def test_operation_auth_tenant_and_user_selector_denials(operations):
     store,client,dev,other,foreign,headers,start=operations
     for d in [other,foreign]:
         assert action(client,headers(d),'question',{'query':'breakfast'}).status_code==403
+        assert action(client,headers(d),'checkin',{}).status_code==403
         assert confirm(client,headers(d),'anything').status_code==403
         assert client.post('/api/device/operations/operation-fixture/end',headers=headers(d)).status_code==403
         assert client.post('/api/device/operations/start',headers=headers(d),json=start).status_code==403
@@ -50,7 +53,7 @@ def test_operation_auth_tenant_and_user_selector_denials(operations):
 
 def test_missing_fields_and_approved_knowledge_only(operations):
     store,client,dev,_,_,headers,_=operations; hdr=headers(dev)
-    expected={'checkin':{'reference','surname'},'taxi':set(TAXI),'question':{'query'}}
+    expected={'taxi':set(TAXI),'question':{'query'},'message':{'original_request'}}
     for name,fields in expected.items():
         response=action(client,hdr,name,{}).json()
         assert response['status']=='needs_arguments'
@@ -63,15 +66,39 @@ def test_missing_fields_and_approved_knowledge_only(operations):
     assert not store.rows('SELECT * FROM items')
 
 
-def test_checkin_guidance_and_connector_unavailability(operations):
+@pytest.mark.parametrize('connector',['unconfigured','rest','edge'])
+def test_arrival_guidance_requires_no_identity_or_reservation_integration(operations,monkeypatch,connector):
     store,client,dev,_,_,headers,_=operations; hdr=headers(dev)
-    result=action(client,hdr,'checkin',{'reference':'DEMO-204','surname':'Smith'},'check').json()
-    assert result['result']['guidance_only'] and result['result']['checkin_completed'] is False
-    assert 'Present ID' in result['text']
-    assert action(client,hdr,'checkin',{'reference':'DEMO-204','surname':'Wrong'},'wrong').json()['status']=='not_found'
-    hotel=store.hotel('a'); hotel['connector']='unconfigured'; store.save_hotel(hotel)
-    unavailable=action(client,hdr,'checkin',{'reference':'REAL-000','surname':'Guest'},'offline').json()
-    assert unavailable['status']=='unavailable' and 'operator' in unavailable['text']
+    hotel=store.hotel('a'); hotel['connector']=connector; store.save_hotel(hotel)
+    def forbidden(*_,**__):
+        raise AssertionError('Arrival guidance must not access reservation integrations')
+    monkeypatch.setattr(server,'edge_execute',forbidden)
+    import cloud.gateway as gateway
+    monkeypatch.setattr(gateway,'connector',forbidden)
+    result=action(client,hdr,'checkin',{},'guide').json()
+    assert result['status']=='ok'
+    assert result['result']=={'status':'ok','instructions':hotel['checkin_instructions'],
+                              'guidance_only':True,'checkin_completed':False}
+    assert hotel['checkin_instructions'] in result['text']
+    assert 'check-in has not been completed' in result['text']
+    assert action(client,hdr,'checkin',{},'retry').json()==result
+    assert action(client,hdr,'checkin',{'reference':'UNNECESSARY','surname':'Guest'},'identity').status_code==422
+    assert not store.rows('SELECT * FROM calls')
+    assert not store.rows('SELECT * FROM items')
+
+
+@pytest.mark.parametrize('instructions',['',' \n '])
+def test_arrival_guidance_without_approved_policy_is_truthfully_unavailable(operations,instructions):
+    store,client,dev,_,_,headers,_=operations
+    hotel=store.hotel('a'); hotel['checkin_instructions']=instructions; store.save_hotel(hotel)
+    result=action(client,headers(dev),'checkin',{},'no-policy').json()
+    assert result['status']=='unavailable'
+    assert result['result']['instructions']==''
+    assert result['result']['guidance_only'] is True and result['result']['checkin_completed'] is False
+    assert 'No approved check-in instructions' in result['text']
+    assert 'operator' in result['text']
+    assert not store.rows('SELECT * FROM calls')
+    assert not store.rows('SELECT * FROM items')
 
 
 def test_confirmation_exact_binding_cancel_and_durable_receipt(operations):
@@ -97,21 +124,24 @@ def test_confirmation_exact_binding_cancel_and_durable_receipt(operations):
     assert json.loads(reopened.rows("SELECT result FROM operation_actions WHERE call_id='next'")[0]['result'])==receipt
 
 
-def test_concurrent_confirmations_and_new_call_ids_do_not_double_write(operations):
+@pytest.mark.parametrize('operation,args,success,kind',[
+    ('taxi',TAXI,'queued','taxi'),('message',MESSAGE,'saved','note')])
+def test_concurrent_confirmations_and_new_call_ids_do_not_double_write(operations,operation,args,success,kind):
     store,client,dev,_,_,headers,_=operations; hdr=headers(dev)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        drafts=list(pool.map(lambda i:action(client,hdr,'taxi',TAXI,'call-'+str(i)).json(),range(4)))
+        drafts=list(pool.map(lambda i:action(client,hdr,operation,args,'call-'+str(i)).json(),range(4)))
     assert len({draft['confirmation_id'] for draft in drafts})==1
     with ThreadPoolExecutor(max_workers=4) as pool:
         results=list(pool.map(lambda _:confirm(client,hdr,drafts[0]['confirmation_id']).json(),range(4)))
-    assert all(r['status'] in {'queued','pending'} for r in results)
-    assert len(store.rows("SELECT * FROM items WHERE kind='taxi'"))==1
-    assert confirm(client,hdr,drafts[0]['confirmation_id']).json()['result']['booked'] is False
+    assert all(r['status'] in {success,'pending'} for r in results)
+    assert len(store.rows("SELECT * FROM items WHERE kind=?",(kind,)))==1
+    assert confirm(client,hdr,drafts[0]['confirmation_id']).json()['status']==success
 
 
-def test_ended_expired_revoked_and_replaced_sessions_deny_pending_writes(operations):
+@pytest.mark.parametrize('operation,args',[('taxi',TAXI),('message',MESSAGE)])
+def test_ended_expired_revoked_and_replaced_sessions_deny_pending_writes(operations,operation,args):
     store,client,dev,_,_,headers,start=operations; hdr=headers(dev)
-    draft=action(client,hdr,'taxi',TAXI).json()
+    draft=action(client,hdr,operation,args).json()
     assert client.post('/api/device/operations/operation-fixture/end',headers=hdr).json()['status']=='ended'
     assert confirm(client,hdr,draft['confirmation_id']).status_code==403
     assert action(client,hdr,'operator',{}).status_code==403
@@ -164,9 +194,10 @@ def test_gateway_concurrent_write_dedup_and_authorization(operations):
     assert len(store.rows("SELECT * FROM items WHERE kind='taxi'"))==1
 
 
-def test_confirmation_cannot_cross_sessions_and_retention_prunes_drafts(operations):
+@pytest.mark.parametrize('operation,args',[('taxi',TAXI),('message',MESSAGE)])
+def test_confirmation_cannot_cross_sessions_and_retention_prunes_drafts(operations,operation,args):
     store,client,dev,other,_,headers,start=operations
-    draft=action(client,headers(dev),'taxi',TAXI).json()
+    draft=action(client,headers(dev),operation,args).json()
     assert client.post('/api/device/operations/start',headers=headers(other),json={**start,'session_id':'other-session'}).status_code==200
     assert confirm(client,headers(other),draft['confirmation_id'],sid='other-session').status_code==404
     store.run('UPDATE operation_sessions SET expires=? WHERE id=?',(time.time()-8*86400,'operation-fixture'))
@@ -184,3 +215,97 @@ def test_unsafe_fallback_is_not_offered_as_dialer_number(operations):
     store.save_hotel(hotel)
     result=action(client,headers(dev),'operator',{}).json()
     assert result['status']=='dialer_required' and result['result']['fallback']==''
+
+
+def test_message_exact_confirmation_cancel_retry_and_durable_truthful_receipt(operations):
+    store,client,dev,_,_,headers,_=operations; hdr=headers(dev)
+    draft=action(client,hdr,'message',MESSAGE).json()
+    assert draft['status']=='confirmation_required'
+    assert MESSAGE['original_request'] in draft['summary']
+    assert not store.rows('SELECT * FROM items')
+    assert action(client,hdr,'message',{**MESSAGE,'original_request':'Changed'},'call-1').status_code==409
+    assert action(client,hdr,'message',MESSAGE,'retry').json()==draft
+    assert confirm(client,hdr,draft['confirmation_id'],'true').status_code==422
+    cancelled=confirm(client,hdr,draft['confirmation_id'],False).json()
+    assert cancelled['status']=='cancelled'
+    assert confirm(client,hdr,draft['confirmation_id']).json()==cancelled
+    assert action(client,hdr,'message',MESSAGE,'after-cancel').json()==cancelled
+    assert not store.rows('SELECT * FROM items')
+    revised={**MESSAGE,'original_request':MESSAGE['original_request']+'\nA separately reviewed addition.'}
+    next_draft=action(client,hdr,'message',revised,'next').json()
+    assert revised['original_request'] in next_draft['summary']
+    receipt=confirm(client,hdr,next_draft['confirmation_id']).json()
+    assert receipt['status']=='saved'
+    assert receipt['result']['destination']=='staff inbox'
+    assert receipt['result']['staff_acknowledged'] is False
+    assert receipt['result']['pms_delivered'] is False
+    assert 'No staff acknowledgement or PMS delivery is confirmed' in receipt['text']
+    assert confirm(client,hdr,next_draft['confirmation_id']).json()==receipt
+    assert action(client,hdr,'message',revised,'new-retry').json()==receipt
+    reopened=Store(store.db.execute('PRAGMA database_list').fetchone()[2])
+    item=reopened.rows('SELECT * FROM items')[0]
+    assert item['id']==receipt['result']['item_id'] and item['hotel']=='a' and item['kind']=='note'
+    payload=json.loads(item['payload'])
+    assert payload['original_request']==revised['original_request']
+    assert payload['guest_name']==MESSAGE['guest_name'] and payload['room_number']==MESSAGE['room_number']
+    assert json.loads(reopened.rows("SELECT result FROM operation_actions WHERE call_id='next'")[0]['result'])==receipt
+
+
+def test_message_argument_boundaries_preserve_original_and_do_not_accept_model_approval(operations):
+    store,client,dev,_,_,headers,_=operations; hdr=headers(dev)
+    for args in [{},{'original_request':''},{'original_request':' \n '}]:
+        missing=action(client,hdr,'message',args).json()
+        assert missing['status']=='needs_arguments'
+        assert [field['name'] for field in missing['fields']]==['original_request']
+    for args in [{'original_request':'x'*4001},
+                 {**MESSAGE,'guest_name':'x'*101},{**MESSAGE,'room_number':'x'*21},
+                 {**MESSAGE,'confirmed':True},{**MESSAGE,'summary':'Invented account'},
+                 {**MESSAGE,'hotel_id':'b'}]:
+        assert action(client,hdr,'message',args).status_code==422
+    exact=' \n'+('ñ'*3995)+'\n  '
+    assert len(exact)==4000
+    draft=action(client,hdr,'message',{'original_request':exact}).json()
+    assert exact in draft['summary']
+    assert action(client,hdr,'message',{'original_request':exact,'guest_name':'','room_number':''},'retry').json()==draft
+    assert not store.rows('SELECT * FROM items')
+    result=confirm(client,hdr,draft['confirmation_id']).json()
+    assert result['status']=='saved'
+    payload=json.loads(store.rows('SELECT payload FROM items')[0]['payload'])
+    assert payload['original_request']==exact and len(payload['summary'])<=1000
+    assert 'see exact original' in payload['summary']
+
+
+@pytest.mark.parametrize('invalidate',['end','expire','revoke'])
+def test_message_confirmation_cannot_cross_authorization_write_race(operations,monkeypatch,invalidate):
+    store,client,dev,_,_,headers,_=operations; hdr=headers(dev)
+    draft=action(client,hdr,'message',MESSAGE).json()
+    original_item=store.item
+    another_process=Store(store.db.execute('PRAGMA database_list').fetchone()[2])
+    def fenced_item(hid,sid,kind,payload,require_session=False):
+        if invalidate=='end':
+            another_process.run("UPDATE sessions SET status='ended' WHERE id=?",(sid,))
+        elif invalidate=='expire':
+            another_process.run('UPDATE operation_sessions SET expires=0 WHERE id=?',(sid,))
+        else:
+            another_process.run('DELETE FROM credentials WHERE id=?',(dev['id'],))
+        return original_item(hid,sid,kind,payload,require_session=require_session)
+    monkeypatch.setattr(store,'item',fenced_item)
+    response=confirm(client,hdr,draft['confirmation_id']).json()
+    assert response['status']=='denied'
+    assert not store.rows('SELECT * FROM items')
+
+
+def test_message_confirmation_and_receipts_are_tenant_and_session_isolated(operations):
+    store,client,dev,other,foreign,headers,start=operations
+    draft=action(client,headers(dev),'message',MESSAGE).json()
+    for device in [other,foreign]:
+        assert confirm(client,headers(device),draft['confirmation_id']).status_code==403
+        sid='isolated-'+device['id']
+        assert client.post('/api/device/operations/start',headers=headers(device),
+                           json={**start,'session_id':sid}).status_code==200
+        assert confirm(client,headers(device),draft['confirmation_id'],sid=sid).status_code==404
+    assert not store.rows('SELECT * FROM items')
+    receipt=confirm(client,headers(dev),draft['confirmation_id']).json()
+    assert receipt['status']=='saved'
+    assert len(store.rows("SELECT * FROM items WHERE hotel='a'"))==1
+    assert not store.rows("SELECT * FROM items WHERE hotel='b'")

@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.util.Base64
+import android.util.Log
 import com.agentdeck.audio.LiveSpeaker
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -30,10 +31,12 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
     private inner class Run(val owner: VoiceSession) {
         val sessions = listOf(Sess(this, "guest", owner.staff, true), Sess(this, "staff", owner.guest, false))
         val playbackLock = Any()
+        val playbackOwner = TurnPlaybackOwner()
         var speaker: LiveSpeaker? = null
         var mic: HotelMic? = null
         @Volatile var recording = false
         @Volatile var lastSpeech = SystemClock.elapsedRealtime()
+        val inputTiming = AudioTurnTiming(SystemClock::elapsedRealtime) { Log.i("AudioTiming", "source=interpreter-capture $it") }
         val clock = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "InterpreterClock").apply { isDaemon = true } }
         var setupTimeout: ScheduledFuture<*>? = null
     }
@@ -42,6 +45,7 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
         val detached = CountDownLatch(1)
         @Volatile var ready = false
         val captions = TranslationCaptions("gemini:$side", run.owner.guest, run.owner.staff, target, publishInput)
+        val timing = AudioTurnTiming(SystemClock::elapsedRealtime) { Log.i("AudioTiming", "source=interpreter:$side $it") }
     }
     @Volatile private var current: Run? = null
 
@@ -50,6 +54,7 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
         val run = Run(VoiceSession(sessionId, epoch, guest, staff, mode, push))
         current = run
         run.owner.emit(JSONObject().put("type", "audio_state").put("state", "off"))
+        if (!AudioPolicy.allowStart { terminate(run, "error", it) }) return
         if (mode != "translation") { terminate(run, "error", "Assistance requires the trusted hotel service; an interpreter cannot provide it."); return }
         if (!DeskLanguages.has(guest) || !DeskLanguages.has(staff) || guest == staff) {
             terminate(run, "error", "Choose two different languages for translation."); return
@@ -68,6 +73,10 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
             run.setupTimeout = run.clock.schedule({ terminate(run, "error", "Voice setup timed out. Check the connection or contact reception.") }, 20, TimeUnit.SECONDS)
             run.sessions.forEach { open(it, key) }
             run.clock.scheduleAtFixedRate({
+                synchronized(run.playbackLock) {
+                    val played = run.speaker?.playedSamples() ?: 0L
+                    run.sessions.forEach { it.timing.playbackHead(played) }
+                }
                 run.owner.use {
                     run.owner.emit(JSONObject().put("type", "energy").put("level", run.speaker?.currentEnergy() ?: 0f))
                     if (run.recording && SystemClock.elapsedRealtime() - run.lastSpeech > 120_000)
@@ -122,9 +131,12 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
             val content = event.optJSONObject("serverContent") ?: return
             if (content.optBoolean("interrupted")) {
                 synchronized(run.playbackLock) {
-                    run.speaker?.stop()
-                    run.speaker = null
-                    run.owner.emit(JSONObject().put("type", "energy").put("level", 0))
+                    if (run.playbackOwner.interrupt(session.side)) {
+                        run.speaker?.stop()
+                        run.speaker = null
+                        run.sessions.forEach { it.timing.interrupted() }
+                        run.owner.emit(JSONObject().put("type", "energy").put("level", 0))
+                    } else session.timing.interrupted()
                 }
             }
             session.captions.accept(content).forEach { run.owner.emit(it) }
@@ -134,18 +146,41 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
                     if (!data.optString("mimeType").startsWith("audio/pcm")) continue
                     val encoded = data.optString("data")
                     if (encoded.isEmpty()) continue
-                    val pcm = Base64.decode(encoded, Base64.DEFAULT)
                     synchronized(run.playbackLock) {
                         run.owner.use {
+                            val drained = run.speaker?.let { it.playedSamples() >= it.submittedSamples() } ?: true
+                            when (run.playbackOwner.append(session.side, drained)) {
+                                TurnPlaybackOwner.Decision.CLOSED -> return@use
+                                TurnPlaybackOwner.Decision.INTERRUPTED -> {
+                                    terminate(run, "error", "Translation audio arrived after interruption without a new turn boundary. Ask staff to restart rather than risk missing words.")
+                                    return@use
+                                }
+                                TurnPlaybackOwner.Decision.CONFLICT -> {
+                                    terminate(run, "error", "Translation turns overlapped before playback finished. Playback stopped rather than mixing or losing words. Ask staff to take turns and restart.")
+                                    return@use
+                                }
+                                TurnPlaybackOwner.Decision.ACCEPT -> Unit
+                            }
+                            val pcm = Base64.decode(encoded, Base64.DEFAULT)
                             val speaker = run.speaker ?: LiveSpeaker { terminate(run, "error", "Speech playback failed. Please retry.") }
                                 .also { it.start(); run.speaker = it }
+                            val firstFrame = speaker.submittedSamples()
                             if (!speaker.append(pcm)) terminate(run, "error", "Speech playback could not keep up. Please retry.")
-                            else run.owner.phase("speaking")
+                            else {
+                                session.timing.rawReceived(firstFrame)
+                                run.owner.phase("speaking")
+                            }
                         }
                     }
                 }
             }
-            if (content.optBoolean("turnComplete") && run.recording) run.owner.phase("listening")
+            if (content.optBoolean("turnComplete")) {
+                synchronized(run.playbackLock) {
+                    run.playbackOwner.finish(session.side)
+                    session.timing.outputComplete()
+                }
+                if (run.recording) run.owner.phase("listening")
+            }
         } catch (_: Exception) { terminate(run, "error", "Voice data could not be processed. Please retry or contact reception.") }
     }
 
@@ -166,9 +201,14 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
                 run.owner.phase("listening")
             }
         }, { level ->
-            if (level > 0.012f) run.lastSpeech = SystemClock.elapsedRealtime()
+            val at = SystemClock.elapsedRealtime()
+            if (level > 0.012f) run.lastSpeech = at
+            run.inputTiming.inputLevel(level, 0.012f, at)
             run.owner.emit(JSONObject().put("type", "mic_level").put("level", level))
-        }, sampleRate = 16000)
+        }, sampleRate = 16000, echoControl = { echo ->
+            run.owner.emit(JSONObject().put("type", "notice").put("status", "unverified")
+                .put("text", "${echo.description} Echo performance has not been physically verified."))
+        })
         run.mic?.start()
     }
 
@@ -186,7 +226,12 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
         Thread({
             var off = true
             try { run.mic?.stop() } catch (_: Exception) { off = false }
-            try { synchronized(run.playbackLock) { run.speaker?.stop(); run.speaker = null } } catch (_: Exception) { off = false }
+            try { synchronized(run.playbackLock) {
+                run.playbackOwner.close()
+                run.sessions.forEach { it.timing.interrupted() }
+                run.speaker?.stop()
+                run.speaker = null
+            } } catch (_: Exception) { off = false }
             run.sessions.forEach { session ->
                 try { if (session.ws != null) session.detached.await() } catch (_: InterruptedException) { off = false }
             }

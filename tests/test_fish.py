@@ -1,4 +1,4 @@
-import asyncio, json
+import asyncio, hashlib, json
 from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
@@ -15,6 +15,7 @@ REQUEST={'guest_language':'es','staff_language':'en','mode':'translation'}
 def fish_api(tmp_path,monkeypatch):
     store=Store(str(tmp_path/'fish.db'));store.save_hotel(Hotel(id='a',name='Synthetic').model_dump())
     monkeypatch.setattr(server,'store',store)
+    monkeypatch.setattr(server,'LIVE_AUDIO_ENABLED',True)  # Offline provider components only.
     monkeypatch.setattr(fish,'provision_lock',asyncio.Lock())
     monkeypatch.setenv('FISH_API_KEY','SERVER-ONLY-TEST-KEY')
     monkeypatch.setenv('FISH_VOICE_ID','synthetic-voice')
@@ -23,7 +24,7 @@ def fish_api(tmp_path,monkeypatch):
     monkeypatch.setenv('ORANGE_ADMIN_TOKEN','x'*40)
     dev=store.issue('a','device');staff=store.issue('a','staff')
     headers={'Authorization':'Bearer '+dev['token']}
-    calls=[]; state={'status':201,'transport':'livekit','session_count':0,'end_status':204}
+    calls=[]; state={'status':201,'transport':'livekit','session_count':0,'end_status':204,'agents':{}}
     async def upstream(request):
         assert request.headers['authorization']=='Bearer SERVER-ONLY-TEST-KEY'
         data=json.loads(request.content) if request.content else None
@@ -36,18 +37,14 @@ def fish_api(tmp_path,monkeypatch):
             assert data['config']['prompt']['first_message_mode']=='off'
             assert data['config']['conversation']['record_audio'] is False
             assert data['config']['conversation']['max_duration_seconds']==600
-            assert data['config']['conversation']['speculative_response'] is False
-            assert data['config']['conversation']['interruption_sensitivity']=='balanced'
-            assert data['config']['conversation']['response_wait_ms']==450
-            assert data['config']['asr']=={'model':'elevenlabs:scribe_v2_realtime','multilingual':True,'strict_language':False}
-            assert data['config']['voice']['speaking_language']=='en'
-            assert data['config']['voice']['expressive'] is False
-            assert data['config']['llm']=={'model':'google/gemini-3.8-flash'}
-            return httpx.Response(201,json={'agent_id':'synthetic-agent'})
-        if request.url.path=='/v1/agent/agents/synthetic-agent/publish':
+            agent_id = 'synthetic-agent' if not state['agents'] else 'synthetic-agent-'+str(len(state['agents'])+1)
+            state['agents'][agent_id] = data['config']
+            return httpx.Response(201,json={'agent_id':agent_id})
+        if request.url.path.endswith('/publish'):
+            assert request.url.path.split('/')[-2] in state['agents']
             return httpx.Response(200,json={'version_number':1})
         assert request.url.path=='/v1/agent/sessions'
-        assert data['agent_id']=='synthetic-agent'
+        assert data['agent_id'] in state['agents']
         assert data['record_audio'] is False and data['tool_events'] is False
         assert set(data['overrides'])=={'system_prompt','language'}
         assert data['overrides']['language']==state.get('staff_language','en')
@@ -92,7 +89,7 @@ def test_fish_device_auth_and_interpreter_only_boundary(fish_api):
                  {**REQUEST,'guest_language':'xx'},{**REQUEST,'staff_language':'en-US'},
                  {**REQUEST,'hotel_id':'another'},{**REQUEST,'system_prompt':'bypass'}]:
         assert client.post('/api/device/fish-session',headers=headers,json=body).status_code==422
-    assert calls==[] and len(fish.SUPPORTED_LANGUAGES)==52
+    assert calls==[]
 
 @pytest.mark.parametrize('status',[401,402,409,422,429,503])
 def test_fish_provider_failure_is_unavailable_not_fallback(fish_api,status):
@@ -264,3 +261,72 @@ def test_uncertain_creation_does_not_reopen_on_guessed_expiry(fish_api):
     count=len(calls)
     assert client.post('/api/device/fish-session',headers=headers,json=REQUEST).status_code==409
     assert len(calls)==count
+
+
+def test_legacy_published_namespace_cannot_supply_a_session(fish_api):
+    store,client,headers,_,calls,_=fish_api
+    legacy = 'fish-interpreter-v3:' + hashlib.sha256(
+        b'SERVER-ONLY-TEST-KEY:synthetic-voice').hexdigest()
+    store.run('INSERT INTO provider_agents VALUES(?,?,1)',(legacy,'stale-published-agent'))
+    response=client.post('/api/device/fish-session',headers=headers,json=REQUEST)
+    assert response.status_code==200
+    assert [path for path,_ in calls][:2]==[
+        '/v1/agent/agents','/v1/agent/agents/synthetic-agent/publish']
+    assert calls[-1][1]['agent_id']=='synthetic-agent'
+    assert store.rows('SELECT * FROM provider_agents WHERE provider=?',(legacy,))==[
+        {'provider':legacy,'agent_id':'stale-published-agent','published':1}]
+    assert not any('stale-published-agent' in path for path,_ in calls)
+
+
+@pytest.mark.parametrize('section,field,replacement',[
+    ('prompt','system_prompt','Offline revised complete-meaning fidelity policy'),
+    ('llm','model','offline-changed-model'),
+    ('asr','model','offline-changed-asr'),
+    ('voice','voice_id','offline-changed-voice'),
+    ('conversation','response_wait_ms',987),
+])
+def test_semantic_configuration_change_provisions_without_mutating_live_agents(
+        fish_api,monkeypatch,section,field,replacement):
+    store,client,headers,_,calls,state=fish_api
+    first=client.post('/api/device/fish-session',headers=headers,json=REQUEST)
+    assert first.status_code==200
+    original_config=fish.agent_config
+    original_agents=store.rows('SELECT * FROM provider_agents')
+    def revised_config(voice):
+        config=original_config(voice)
+        assert config[section][field] != replacement
+        config[section][field]=replacement
+        return config
+    monkeypatch.setattr(fish,'agent_config',revised_config)
+    for _ in range(2):
+        dev=store.issue('a','device')
+        response=client.post('/api/device/fish-session',
+            headers={'Authorization':'Bearer '+dev['token']},json=REQUEST)
+        assert response.status_code==200
+    creates=[body['config'] for path,body in calls if path=='/v1/agent/agents']
+    sessions=[body for path,body in calls if path=='/v1/agent/sessions']
+    assert len(creates)==2 and creates[1][section][field]==replacement
+    assert sessions[0]['agent_id'] != sessions[1]['agent_id']
+    assert sessions[1]['agent_id']==sessions[2]['agent_id']
+    assert len([path for path,_ in calls if path.endswith('/publish')])==2
+    assert not any(path.endswith('/end') for path,_ in calls)
+    assert len(store.rows("SELECT * FROM fish_sessions WHERE status='live'"))==3
+    assert store.rows('SELECT * FROM provider_agents WHERE provider=?',
+                      (original_agents[0]['provider'],))==original_agents
+    assert state['agents'][sessions[0]['agent_id']]==creates[0]
+
+
+def test_identical_configuration_reordering_reuses_published_agent(fish_api,monkeypatch):
+    store,client,headers,_,calls,_=fish_api
+    first=client.post('/api/device/fish-session',headers=headers,json=REQUEST)
+    assert first.status_code==200
+    original_config=fish.agent_config
+    def reordered_config(voice):
+        return {k:dict(reversed(list(v.items())))
+                for k,v in reversed(list(original_config(voice).items()))}
+    monkeypatch.setattr(fish,'agent_config',reordered_config)
+    other=store.issue('a','device')
+    assert client.post('/api/device/fish-session',
+        headers={'Authorization':'Bearer '+other['token']},json=REQUEST).status_code==200
+    assert len([path for path,_ in calls if path=='/v1/agent/agents'])==1
+    assert len([path for path,_ in calls if path.endswith('/publish')])==1
