@@ -13,9 +13,9 @@ Broader voice/privacy/benchmark gates: [issue #2](https://github.com/somdipto/ma
   Remove the obsolete character renderer and its bundled Three.js dependency.
 - Preserve independent 52-language translation selectors and existing greeting
   assets. A listed language is not a claim of verified end-to-end voice quality.
-- Day offers translation or assistance. Night goes directly to assistance
-  language selection. Translation interprets; assistance answers using approved
-  hotel information and authorized tools.
+- Home offers translation and hotel assistance, with an independent night-mode
+  control. Translation interprets; assistance answers using approved hotel
+  information and authorized tools.
 - Preserve package `dev.orange.hotel`, release signing identity and installed
   settings/keys/data. Updates install over the existing app, without uninstall.
 - Keep provider names and secrets out of guest-facing screens. Staff configuration
@@ -23,6 +23,9 @@ Broader voice/privacy/benchmark gates: [issue #2](https://github.com/somdipto/ma
 - Shared Manzanilla provider keys belong in the backend. Existing supported BYOK
   device credentials require Keystore encryption; no plaintext fallback or baked
   shared master key. Preserve readable encrypted credentials during migration.
+  The explicitly user-authorized keyed testing pilot is an exposure exception,
+  not the production security design; its extractable-key risk is documented in
+  `artifacts/VERIFICATION.md`.
 
 ## Baseline score and evidence
 
@@ -169,8 +172,9 @@ caption fixtures prove the renderer, not upstream provider association or speech
 Implementation of repository-local repairs can start from this spec. Full
 product acceptance additionally requires:
 
-- A bootable landscape Android emulator and the target physical audio hardware.
-  Earlier AVD boot failures remain unresolved; browser proof is not Android proof.
+- Target physical audio hardware. The isolated 960×540 API-34 fixture now passes
+  signed upgrade, launch and Back navigation; earlier larger-fixture failures
+  remain recorded. Neither browser nor emulator UI proof establishes acoustics.
 - Secure provider access plus verified Agents/ASR/voice/LLM entitlements, actual
   model selection, tariffs, grant eligibility and retention settings.
 - An approved backend deployment for managed shared keys, hotel knowledge and

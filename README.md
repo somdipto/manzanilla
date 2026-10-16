@@ -2,7 +2,7 @@
 
 **Faster execution hardware for the hospitality industry.**
 
-Manzanilla Reception is a landscape Android app with a reception bell, light/dark themes and hands-free live translation. Reception and guest languages have independent 52-language selectors. A prerecorded guest-language greeting plays before the microphone opens. Ordinary APKs contain no provider account key; staff can save an encrypted device key after Android credential authentication, or use a configured managed backend. An explicitly opted-in keyed pilot embeds a Fish key for immediate testing and is extractable, not production-safe. Previously saved Gemini keys remain supported.
+Manzanilla Reception is a landscape Android app with an open-canvas reception home, navy appearance options and hands-free live translation. Reception and guest languages have independent 52-language selectors. A prerecorded guest-language greeting plays before the microphone opens. Ordinary APKs contain no provider account key; staff can save an encrypted device key after Android credential authentication, or use a configured managed backend. An explicitly opted-in keyed pilot embeds a Fish key for immediate testing and is extractable, not production-safe. Previously saved Gemini keys remain supported.
 
 
 <p align="center">
@@ -17,7 +17,7 @@ Manzanilla Reception is a landscape Android app with a reception bell, light/dar
 2. Open the downloaded file. If Android asks, allow "Install unknown apps" for the browser or file manager you used, then tap Install.
 3. Open **Manzanilla**. It starts straight on reception, without staff enrollment. Use the staff-setup gear to configure Fish Audio if this device has no saved voice key.
 
-<p align="center"><img src="docs/screens/1-bell.png" alt="Reception bell" width="520"></p>
+<p align="center"><img src="docs/screens/17.0.6-home.png" alt="17.0.6 Android reception home" width="720"></p>
 
 All releases: https://github.com/somdipto/manzanilla/releases
 
@@ -60,6 +60,8 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 Linked captions render guest-left/receptionist-right, with original speech above its opposite-language translation. **Current Fish/Gemini feeds do not supply reliable original/translation associations; their unlinked captions remain separate.** The renderer is verified with linked synthetic events, not claimed as solved live pairing. Hotel assistance still requires the configured backend and real hotel integrations.
 
 Verification: 31 Android JVM tests, Android lint, debug and signed release assembly passed locally. The signed 17.0.6/code 36 APK upgraded 17.0.5 without uninstall in an isolated 960×540 landscape AVD; cold launch and actual system Back to home passed. Actual APK screenshots: [home](docs/screens/17.0.6-home.png), [languages](docs/screens/17.0.6-languages.png). Browser checks covered small landscape layouts, paired captions, RTL, stale sessions, stop/restart release gating and updater retry. No additional paid calls ran. The explicitly authorized pilot still embeds an extractable Fish key. Physical audio and live paired captions remain unverified; detailed evidence and prior voice benchmarks are in [artifacts/VERIFICATION.md](artifacts/VERIFICATION.md).
+
+Conversation screenshots from the actual Android WebView use **injected synthetic captions, not live speech**: [dual bubbles](docs/screens/17.0.6-conversation-fixture.png), [stopped state](docs/screens/17.0.6-stopped-fixture.png).
 
 ## Build it yourself
 

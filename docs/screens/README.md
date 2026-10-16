@@ -1,6 +1,23 @@
 # Reception screens
 
-Real screenshots from the Android emulator (854x480 landscape), taken from the shipped app.
+## 17.0.6 current design
+
+Actual Android emulator captures at 960×540 landscape:
+
+| Screen | Evidence |
+| --- | --- |
+| Reception home | [17.0.6-home.png](17.0.6-home.png), exact GitHub-built signed APK |
+| Guest/receptionist language selection | [17.0.6-languages.png](17.0.6-languages.png), signed local APK |
+| Original-over-translation dual bubbles | [17.0.6-conversation-fixture.png](17.0.6-conversation-fixture.png), injected synthetic captions in credential-free Android debug fixture |
+| Stopped/restart control | [17.0.6-stopped-fixture.png](17.0.6-stopped-fixture.png), same synthetic fixture |
+
+The conversation captures prove the Android renderer, not live speech association,
+microphone capture or translation quality. Current Fish/Gemini captions remain
+explicitly unlinked where no reliable original/translation association exists.
+
+## Historical reception screens
+
+Earlier Android emulator captures (854×480 landscape), not the current design:
 
 | Screen | File |
 | --- | --- |
