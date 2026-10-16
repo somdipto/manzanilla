@@ -30,7 +30,7 @@ Older installed versions through 17.0.7 can suppress checks for ten minutes afte
 Publication uses the semantic version in `android/VERSION` and the explicit increasing integer in `android/VERSION_CODE`. Every candidate must preserve package `dev.orange.hotel` and the existing signing certificate, supersede the last published version code, and pass artifact identity/digest checks. Verification builds are key-free; only an explicitly requested keyed-pilot release embeds `FISH_API_KEY` (see `docs/ENVIRONMENT.md`). Failed download/validation attempts are cleared so retry can discover a replacement release; an active download remains pinned to its immutable identity.
 
 <p align="center">
-  <img src="docs/screenshots/auto-update-prompt.png" alt="Update prompt" width="520">
+  <img src="docs/screens/17.0.8-update-offer.png" alt="Stock Android app offering the published 17.0.8 update" width="720">
 </p>
 
 Android may require an "Update" confirmation for an app installed from a file; this is not a silent remote installation.
