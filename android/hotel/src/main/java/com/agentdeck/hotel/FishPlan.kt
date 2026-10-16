@@ -9,7 +9,7 @@ import org.json.JSONObject
  * Language coverage and interruption quality require live acoustic verification, not picker counts.
  */
 object FishPlan {
-    const val CONFIG_REV = "5"
+    const val CONFIG_REV = "6"
     const val AGENT_NAME = "Manzanilla Interpreter"
     const val MAX_SECONDS = 600
     const val CLIENT_CAP_MS = 540_000L
@@ -28,7 +28,7 @@ object FishPlan {
             Do not repeat the original words. The guest was already greeted in the guest language. Never greet. Stay silent until you hear a person. Never ask how you can help. Never add commentary.
             Keep numbers, dates, times, prices, names, room numbers, and currencies exact.
             If you cannot tell which of the two languages was spoken, stay silent.
-            One or two short spoken sentences.
+            One short spoken sentence.
         """.trimIndent()
     }
 
@@ -55,7 +55,10 @@ object FishPlan {
             .put("timezone", TIMEZONE)
             .put("interruptible", true)
             .put("interruption_sensitivity", "balanced")
-            .put("response_wait_ms", 700)
+            // Fish's documented Fast preset; the default 550 ms adds dead air to every reply.
+            .put("response_wait_ms", 450)
+            // Left unset so Fish keeps its automatic ceiling (wait + 0.5 s).
+            // Kept off: an observed duplicate response followed provider-error recovery with this on.
             .put("speculative_response", false))
 
     fun sessionBody(agentId: String, guest: String, staff: String): JSONObject = JSONObject()

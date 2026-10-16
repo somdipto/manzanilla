@@ -38,7 +38,7 @@ def fish_api(tmp_path,monkeypatch):
             assert data['config']['conversation']['max_duration_seconds']==600
             assert data['config']['conversation']['speculative_response'] is False
             assert data['config']['conversation']['interruption_sensitivity']=='balanced'
-            assert data['config']['conversation']['response_wait_ms']==700
+            assert data['config']['conversation']['response_wait_ms']==450
             assert data['config']['asr']=={'model':'elevenlabs:scribe_v2_realtime','multilingual':True,'strict_language':False}
             assert data['config']['voice']['speaking_language']=='en'
             assert data['config']['voice']['expressive'] is False

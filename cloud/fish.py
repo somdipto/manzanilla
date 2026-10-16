@@ -115,7 +115,7 @@ async def mint(store, dev, value):
                             'knowledge_base':{'enabled':False,'knowledge_source_ids':[]},
                             'conversation':{'max_duration_seconds':MAX_DURATION,'record_audio':False,'reengage_enabled':False,
                                             'interruptible':True,'interruption_sensitivity':'balanced',
-                                            'response_wait_ms':700,'speculative_response':False}}})
+                                            'response_wait_ms':450,'speculative_response':False}}})
                         response.raise_for_status()
                         agent_id = provider_id(response.json()['agent_id'])
                         store.run('INSERT OR IGNORE INTO provider_agents(provider,agent_id,published) VALUES(?,?,0)',(namespace,agent_id))
