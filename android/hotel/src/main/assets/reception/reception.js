@@ -4,11 +4,10 @@
   const native = !!window.ManzaniaNative;
   const content = document.getElementById('content');
   const languages = { es:{name:'Spanish',native:'Español'},en:{name:'English',native:'English'},ca:{name:'Catalan',native:'Català'},fr:{name:'French',native:'Français'},de:{name:'German',native:'Deutsch'},it:{name:'Italian',native:'Italiano'},pt:{name:'Portuguese',native:'Português'},nl:{name:'Dutch',native:'Nederlands'},ar:{name:'Arabic',native:'العربية'},zh:{name:'Chinese',native:'中文'},ru:{name:'Russian',native:'Русский'},uk:{name:'Ukrainian',native:'Українська'},pl:{name:'Polish',native:'Polski'},ro:{name:'Romanian',native:'Română'},sv:{name:'Swedish',native:'Svenska'},el:{name:'Greek',native:'Ελληνικά'},tr:{name:'Turkish',native:'Türkçe'},ja:{name:'Japanese',native:'日本語'},ko:{name:'Korean',native:'한국어'},hi:{name:'Hindi',native:'हिन्दी'},cs:{name:'Czech',native:'Čeština'},da:{name:'Danish',native:'Dansk'},fi:{name:'Finnish',native:'Suomi'},hu:{name:'Hungarian',native:'Magyar'},bg:{name:'Bulgarian',native:'Български'},hr:{name:'Croatian',native:'Hrvatski'},sk:{name:'Slovak',native:'Slovenčina'},sr:{name:'Serbian',native:'Српски'},no:{name:'Norwegian',native:'Norsk'},id:{name:'Indonesian',native:'Bahasa Indonesia'},th:{name:'Thai',native:'ไทย'},vi:{name:'Vietnamese',native:'Tiếng Việt'},ms:{name:'Malay',native:'Bahasa Melayu'},tl:{name:'Tagalog',native:'Tagalog'},he:{name:'Hebrew',native:'עברית'},fa:{name:'Persian',native:'فارسی'},ur:{name:'Urdu',native:'اردو'},bn:{name:'Bengali',native:'বাংলা'},ta:{name:'Tamil',native:'தமிழ்'},te:{name:'Telugu',native:'తెలుగు'},kn:{name:'Kannada',native:'ಕನ್ನಡ'},mr:{name:'Marathi',native:'मराठी'},gu:{name:'Gujarati',native:'ગુજરાતી'},pa:{name:'Punjabi',native:'ਪੰਜਾਬੀ'},ne:{name:'Nepali',native:'नेपाली'},kk:{name:'Kazakh',native:'Қазақша'},ka:{name:'Georgian',native:'ქართული'},hy:{name:'Armenian',native:'Հայերեն'},et:{name:'Estonian',native:'Eesti'},lv:{name:'Latvian',native:'Latviešu'},lt:{name:'Lithuanian',native:'Lietuvių'},af:{name:'Afrikaans',native:'Afrikaans'} };
-  // DeskLanguages.kt order. Both pickers scroll independently; the keypad covers the first ten.
+  // DeskLanguages.kt order; the hardware keypad covers the first ten entries.
   const translationLanguages = languages;
-  let languageSide = 'staff_language';
-  let appearance = 'light';
-  let appearanceChanging = false;
+  let languageSide = 'language';
+  let appearance = 'dark';
   const themeIcon = () => appearance === 'light'
     ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 15.7A8.5 8.5 0 0 1 8.3 4 8.5 8.5 0 1 0 20 15.7Z"/></svg>'
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>';
@@ -53,7 +52,8 @@
   const shortcuts = ['checkin', 'operator', 'taxi', 'question'];
   const concierge = () => conciergeCopy[state.language] || conciergeCopy.en;
   const greet = (language) => (window.MANZANILLA_GREET && window.MANZANILLA_GREET[language]) || '';
-  const state = { page: 'idle', mode: 'translation', night: false, language: 'en', staff_language: 'es', demo: !native, connected: false, audio: 'off', active: false, phase: '', sessionId: '', generation: null, closed: true, terminated: true, error: '', metrics: '', utterances: new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: '' };
+  const state = { page: 'idle', mode: 'translation', night: false, language: 'en', staff_language: 'es', demo: !native, connected: false, audio: 'off', active: false, phase: '', sessionId: '', generation: null, closed: true, terminated: true, error: '', metrics: '', utterances: new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: '', pendingPage: '', micLevel: 0 };
+  let queuedShortcut = '';
   const selected = { language: false, staff_language: false };
   let defaultReceived = false;
   let preferencesRestored = false;
@@ -62,27 +62,37 @@
     translate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 5h12M9 2v3m3 0c-.5 5-3.5 8-8 10m1-8c1.5 3 4.2 5.7 7 7m1 7 4-11 4 11m-6.4-4h4.8"/></svg>',
     bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 17h18M5 17v-3a7 7 0 0 1 14 0v3M2 21h20M12 4v3m-2-3h4"/></svg>',
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg>',
-    exchange: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 8h16m-4-4 4 4-4 4M20 16H4m4-4-4 4 4 4"/></svg>'
+    bed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 18v3m18-3v3M3 11V5h18v6M2 18v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5H2Zm4-7V8h5v3m2 0V8h5v3"/></svg>',
+    car: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m4 9 2-5h12l2 5M3 18v3m18-3v3M2 18v-6l2-3h16l2 3v6H2Zm3-5h2m10 0h2"/></svg>',
+    message: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 3h18v14H8l-5 4V3Zm4 5h10M7 12h7"/></svg>',
+    mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/></svg>'
   };
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const t = () => copy[state.language] || copy.en;
   const langName = (language) => translationLanguages[language]?.native || languages[language]?.native || language;
-  const languagePicker = (side, label) => `<section class="language-side" aria-label="${label}"><button class="side-heading" data-action="side:${side}" aria-pressed="${languageSide===side}">${label}<strong dir="auto">${esc(langName(state[side]))}</strong></button><div class="language-options" role="group" aria-label="${label}: 52 languages in reception order">${Object.entries(translationLanguages).map(([id,item],i)=>`<button class="choice language-option" data-action="pair:${side}:${id}" aria-label="${i+1}. ${esc(item.name)} · ${esc(item.native)}" aria-pressed="${state[side]===id}"><span class="key" aria-hidden="true">${i+1}</span><span class="language-name" lang="${id}" dir="auto">${esc(item.native)}</span></button>`).join('')}</div></section>`;
+  const languagePicker = (side, label) => `<section class="language-side" data-keypad="${languageSide === side}"><label for="${side}">${label}</label><select id="${side}" data-language-side="${side}" aria-describedby="${side}-hint" ${state.audio !== 'off' ? 'disabled' : ''}>${Object.entries(translationLanguages).map(([id,item],i) => `<option value="${id}" lang="${id}" dir="${languageDir(id)}" ${state[side] === id ? 'selected' : ''}>${esc(item.native)} · ${esc(item.name)}${i < 10 ? ' (' + (i === 9 ? 0 : i + 1) + ')' : ''}</option>`).join('')}</select><small id="${side}-hint">${side === 'language' ? 'The language you speak' : 'The language reception speaks'}</small></section>`;
   const send = (action, detail = {}) => {
     if (!native) return;
-    const scope = state.sessionId && !['start','info','languages','appearance','night','settings','exit','apply_update','bell'].includes(action)
+    const scope = state.sessionId && !['start','info','languages','appearance','night','settings','apply_update'].includes(action)
       ? { session_id: state.sessionId, ...(state.generation === null ? {} : { generation: state.generation }) } : {};
     window.ManzaniaNative.postMessage(JSON.stringify({ action, ...scope, ...detail }));
   };
   const action = (name, label, className = 'primary', disabled = false) => `<button type="button" class="${className}" data-action="${name}" ${disabled ? 'disabled' : ''}>${label}</button>`;
-  const back = () => `<div class="back-row"><button class="back" data-action="back" aria-label="Back">${icons.back}</button></div>`;
   const fine = (text) => `<p class="fine">${esc(text)}</p>`;
 
-  const captionLabel = entry => entry.side === 'assistant' ? (state.mode === 'translation' ? 'Translation' : 'Assistant') : !entry.from ? 'Microphone' : entry.side === 'guest' ? 'Guest' : 'Reception';
-  const caption = entry => `<article class="caption caption-${entry.side === 'guest' ? 'guest' : 'reception'}"><span class="caption-side">${captionLabel(entry)}</span>${entry.original ? `<p class="caption-original" lang="${esc(entry.from)}" dir="auto">${esc(entry.original)}</p>` : ''}${entry.text ? `<p class="caption-text" lang="${esc(entry.to)}" dir="auto">${esc(entry.text)}</p>` : ''}</article>`;
+  const languageDir = language => !language ? 'auto' : /^(ar|he|fa|ur)(-|$)/.test(language) ? 'rtl' : 'ltr';
+  const captionLabel = entry => entry.side === 'assistant' ? state.mode === 'translation' ? 'Translation · unlinked' : 'Manzanilla' : entry.side === 'guest' ? 'Guest' : 'Receptionist';
+  const captionLanguage = language => language ? langName(language) : 'Language not identified';
+  const caption = entry => `<article class="caption caption-${entry.side === 'guest' ? 'guest' : 'reception'}"><span class="caption-side">${captionLabel(entry)}</span>${entry.original ? `<div><span class="caption-language">${esc(captionLanguage(entry.from))} · Original speech</span><p class="caption-original" lang="${esc(entry.from || 'und')}" dir="${languageDir(entry.from)}">${esc(entry.original)}</p></div>` : ''}${entry.text ? `<div${entry.original ? ' class="caption-translation"' : ''}><span class="caption-language">${esc(captionLanguage(entry.to))} · ${state.mode === 'translation' ? 'Translation' : 'Response'}</span><p class="caption-text" lang="${esc(entry.to || 'und')}" dir="${languageDir(entry.to)}">${esc(entry.text)}</p></div>` : ''}</article>`;
   const conversation = () => state.utterances.size ? [...state.utterances.values()].map(caption).join('') : `<div class="empty-transcript">${esc(state.mode === 'translation' ? t().begin : t().welcome)}</div>`;
   const operationDraft = () => /^(operation|voice):/.test(state.draft?.draft_id || '');
-  const phaseLabel = () => ({ connecting: t().connect, greeting: 'Welcome', thinking: 'Thinking', speaking: t().speaking, listening: t().listen })[state.phase] || t().reception;
+  const phaseLabel = () => ({ connecting: t().connect, greeting: 'Welcome', thinking: 'Translating', speaking: t().speaking, listening: 'Live conversation', ending: 'Stopping conversation', stopped: 'Conversation stopped' })[state.phase] || t().reception;
+  const sessionAudioText = () => ({ off:'Microphone off · audio released', recording:'Microphone on · listening to the room', stopping:'Stopping audio · release pending', unknown:'Audio release not confirmed · ask reception for help' })[state.audio];
+  const sessionDock = () => {
+    const stopped = state.closed || state.terminated;
+    const restart = state.terminated && !state.active && state.audio === 'off';
+    return `<div class="session-actions" data-stopped="${stopped}"><div class="session-control"><div class="session-icon" role="meter" aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(state.micLevel * 100)}" style="--level:${state.micLevel}">${icons.mic}</div><div class="session-control-copy"><strong>${esc(stopped ? state.phase === 'ending' ? 'Stopping · please wait' : 'Stopped' : phaseLabel())}</strong><span>${esc(sessionAudioText())}</span></div></div>${state.mode === 'reception' && !stopped ? action('message', esc(t().message), 'secondary', ['connecting','greeting'].includes(state.phase)) : ''}${action(restart ? 'restart' : 'stop', restart ? 'Restart conversation' : stopped ? 'Releasing audio…' : 'Stop conversation', 'stop', stopped && !restart)}</div>`;
+  };
   function renderNotices() {
     const target = document.getElementById('notices');
     target.hidden = !state.notices.length;
@@ -96,129 +106,68 @@
 
   function render() {
     document.documentElement.dataset.appearance = appearance;
-    document.documentElement.lang = ['idle', 'modes', 'languages'].includes(state.page) ? 'en' : state.language;
+    document.documentElement.lang = ['idle','languages','translation_languages'].includes(state.page) ? 'en' : state.language;
     document.documentElement.dataset.night = String(state.night);
     document.documentElement.dataset.page = state.page;
     document.documentElement.dataset.captureActive = String(state.active);
-    document.documentElement.dataset.concierge = String(state.page === 'active' && state.mode === 'reception');
     const nightToggle = document.getElementById('night-toggle');
     nightToggle.textContent = state.night ? 'Night reception on' : 'Night reception';
     nightToggle.ariaPressed = String(state.night);
-    nightToggle.hidden = !['idle', 'modes'].includes(state.page);
-    document.getElementById('settings').hidden = !native || !['idle','modes','error'].includes(state.page);
-    const status = document.getElementById('connection');
-    status.dataset.connected = String(state.connected && !state.demo);
+    nightToggle.hidden = state.page !== 'idle';
+    document.getElementById('settings').hidden = !native || !['idle','error'].includes(state.page);
     content.dataset.page = state.page;
     document.getElementById('mode-title').textContent = 'Reception';
-    document.getElementById('connection-text').textContent = state.demo ? 'UI walkthrough' : state.connected ? 'Voice configured' : 'Voice setup needed';
+    document.getElementById('connection-text').textContent = state.connected ? 'Voice configured' : 'Voice setup needed';
     document.getElementById('hotel-label').textContent = state.hotel || 'Hotel reception';
-    const privacy = { off: 'Microphone off', recording: 'Microphone recording', stopping: 'Stopping audio · release pending', unknown: 'Audio state unknown · ask reception for help' }[state.audio];
-    document.getElementById('privacy').innerHTML = `<span class="mic-dot${state.audio === 'recording' ? ' mic-live' : ''}"></span>${esc(state.phase === 'ending' && state.audio === 'recording' ? 'Stopping · microphone release pending' : privacy)}`;
-    document.getElementById('hardware-hint').textContent = state.active ? 'Green or red to end' : ['languages','translation_languages'].includes(state.page) ? 'Scroll or tap · digits select the first entries' : 'Green button to begin';
-    document.getElementById('stage-caption').textContent = state.page === 'idle' ? 'A little help. A warmer welcome.' : '';
+    document.getElementById('privacy').innerHTML = `<span class="mic-dot${state.audio === 'recording' ? ' mic-live' : ''}"></span>${esc(sessionAudioText())}`;
+    document.getElementById('hardware-hint').textContent = state.active ? 'Green or red to stop' : state.page === 'translation_languages' ? 'Digits: first ten · Green: start · Red: back' : 'Green: translation';
+    const homeAction = (name, icon, label, note = '') => `<button class="home-action${name === 'translation' ? ' home-action-main' : ''}" data-action="${name}">${name === 'translation' ? '<span class="orb">' + icons.arrow + '</span>' : icon}<span>${label}</span>${note ? '<small>' + note + '</small>' : ''}</button>`;
     const html = {
-      idle: () => `<h1>A warm welcome<br>in every language.</h1>${action('wake', icons.bell + 'Ring for reception', 'primary ring-button')}<div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="Switch to ${appearance==='light'?'dark':'light'} mode. Press 1." title="Switch theme · 1">${themeIcon()}<span class="appearance-key" aria-hidden="true">1</span></button></div>`,
-      modes: () => `<h2>How can we help?</h2><div class="choice-list">${action('translation', icons.translate + '<strong>Live translation</strong>', 'choice service')}${action('reception', icons.bell + '<strong>Hotel assistance</strong>', 'choice service')}</div>`,
-      languages: () => `<div class="language-intro"><h2 class="language-heading">Choose your language</h2><p class="keypad-hint">Scroll or tap any language. Digits select the first entries.</p></div><div class="language-list">${Object.entries(languages).map(([id, item], i) => action('language:' + id, `<span class="key">${i + 1}</span><strong lang="${id}" dir="auto">${item.native}</strong>`, 'choice language language-' + id, state.audio !== 'off')).join('')}</div>${state.audio !== 'off' ? fine('Audio release must be confirmed before starting again.') : ''}`,
-      translation_languages: () => `<div class="status-line"><h2 class="language-heading">Choose languages</h2><button class="back" data-action="back" aria-label="Back">${icons.back}</button></div><div class="language-pair">${languagePicker('staff_language','Reception')}${languagePicker('language','Guest')}</div>${sameLanguage() ? fine('Choose two different languages.') : ''}${state.audio !== 'off' ? fine('Audio release must be confirmed before starting again.') : ''}${action('start','Start translation','primary',sameLanguage() || state.audio !== 'off')}`,
-      active: () => `<div class="status-line"><h2>${esc(phaseLabel())}</h2>${['connecting','greeting'].includes(state.phase) ? '<span class="spinner" aria-label="Preparing conversation"></span>' : '<div class="session-icon" role="meter" aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i><i></i><i></i><i></i><i></i></div>'}</div><div class="session-scroll">${state.mode === 'translation' ? `<div class="pair">${esc(langName(state.staff_language))}${icons.exchange}${esc(langName(state.language))}</div>` : `<div class="shortcut-list">${shortcuts.map((id,i) => action(id, `<span class="key">${i + 1}</span><strong>${esc(concierge()[i])}</strong>`, 'choice shortcut', ['connecting','greeting'].includes(state.phase))).join('')}</div>`}<div class="conversation">${conversation()}</div>${state.metrics ? `<p class="metrics">${esc(state.metrics)}</p>` : ''}</div><div class="session-actions">${state.mode === 'reception' ? action('message', esc(t().message), 'secondary', ['connecting','greeting'].includes(state.phase)) : ''}${action('stop', esc(t().end), 'stop')}</div>`,
-      operation_form: () => `<h2>${esc(concierge()[shortcuts.indexOf(state.operation?.action)] || 'Hotel request')}</h2><form id="operation-form" class="operation-form">${(state.operation?.fields || []).map((field, index) => `<label for="operation-field-${index}">${esc(field.label)}${field.required ? ' *' : ''}<input id="operation-field-${index}" name="${esc(field.name)}" value="${esc(state.operation.values[field.name] || '')}" ${field.required ? 'required' : ''} autocomplete="off" dir="auto"></label>`).join('')}<div class="button-row"><button type="submit" class="primary">Review request</button>${action('cancel-operation', esc(t().cancel), 'secondary')}</div></form>${action('stop',esc(t().end),'stop')}`,
-      confirming: () => `<h2>${esc(operationDraft() ? 'Confirm hotel request?' : t().draft)}</h2><div class="draft">${state.draft?.guest_name || state.draft?.room_reference ? `<div class="draft-meta">${esc([state.draft?.guest_name, state.draft?.room_reference].filter(Boolean).join(' · '))}</div>` : ''}${esc(state.draft?.message || '')}</div>${operationDraft() ? fine('Only confirm if these request details are correct.') : fine('Saved only on this tablet after you confirm. Not sent to staff.')}<div class="button-row">${action('confirm', esc(state.confirmed ? 'Submitting…' : operationDraft() ? 'Confirm request' : t().save), 'primary', state.confirmed)}${action('cancel-draft', esc(t().cancel), 'secondary', state.confirmed)}</div>`,
-      saved: () => `<h2>${esc(state.outcome ? 'Hotel request update' : t().saved)}</h2><p class="lead" dir="auto">${esc(state.outcome ? state.outcome.text : t().local)}</p>${state.outcome?.receipt ? `<div class="receipt" dir="auto">${esc(state.outcome.receipt)}</div>` : ''}<div class="button-row">${action('continue', esc(t().continue))}${action('stop', esc(t().end), 'secondary')}</div>`,
-      ending: () => `<div class="status-line"><h2>Ending conversation</h2><span class="spinner" aria-label="Releasing audio"></span></div>`,
-      error: () => `<h2>Conversation unavailable</h2><div class="notice error">${esc(state.error || 'Please ask reception for help.')}</div>${fine(state.audio === 'off' ? 'Microphone off. Staff can check this device’s setup.' : 'Audio release is not confirmed. Ask reception for help before restarting.')}<div class="button-row">${action('retry', 'Try again', 'primary',state.audio !== 'off')}${action('home', 'Return to bell', 'secondary')}</div>`
+      idle: () => `<div class="welcome"><h1>Welcome.</h1><p>Speak. We’ll translate.</p></div><nav class="home-actions" aria-label="Reception services">${homeAction('translation',icons.translate,'Real-Time Translation','Talk to each other')}${homeAction('reception',icons.bell,'Hotel assistance')}${homeAction('request:checkin',icons.bed,'Check in')}${homeAction('request:taxi',icons.car,'Get a taxi')}${homeAction('request:message',icons.message,'Leave a message')}</nav><div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="Switch to ${appearance === 'dark' ? 'brighter' : 'dimmed'} appearance" title="Appearance · keypad 1">${themeIcon()}</button></div>`,
+      languages: () => `<div class="status-line"><div><h2 class="language-heading">Hotel assistance</h2><p class="keypad-hint">Choose your language to speak with Manzanilla.</p></div><button class="back" data-action="back">${icons.back}Back</button></div><div class="language-list">${Object.entries(languages).map(([id,item],i) => action('language:' + id, `<span class="key">${i < 10 ? i === 9 ? 0 : i + 1 : ''}</span><strong lang="${id}" dir="${languageDir(id)}">${esc(item.native)}</strong>`, 'choice language', state.audio !== 'off')).join('')}</div>${state.audio !== 'off' ? fine('Audio release must be confirmed before starting again.') : ''}`,
+      translation_languages: () => `<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">Speak naturally. We’ll translate both ways.</p></div><button class="back" data-action="back">${icons.back}Back</button></div><div class="language-pair">${languagePicker('language','Guest')}${languagePicker('staff_language','Receptionist')}</div><p id="setup-feedback" class="setup-feedback${sameLanguage() ? ' error' : ''}" role="status">${sameLanguage() ? 'Choose two different languages.' : state.audio !== 'off' ? 'Audio release must be confirmed before starting again.' : 'The microphone stays off until you start.'}</p>${action('start','Start translation','primary setup-start',sameLanguage() || state.audio !== 'off')}`,
+      active: () => `<div class="status-line session-top"><div><h2>${state.mode === 'translation' ? 'Real-Time Translation' : 'Hotel assistance'}</h2><p>${esc(state.mode === 'translation' ? 'Guest: ' + langName(state.language) + ' · Receptionist: ' + langName(state.staff_language) : phaseLabel())}</p></div><button class="back" data-action="back">${icons.back}Back</button></div>${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}<div class="session-scroll">${state.mode === 'reception' && !state.closed ? `<div class="shortcut-list">${shortcuts.map((id,i) => action(id, `<span class="key">${i + 1}</span><strong>${esc(concierge()[i])}</strong>`, 'choice shortcut', ['connecting','greeting'].includes(state.phase))).join('')}</div>` : ''}<div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">${conversation()}</div>${state.metrics ? `<p class="metrics">${esc(state.metrics)}</p>` : ''}</div>${sessionDock()}`,
+      operation_form: () => `<div class="status-line"><h2>${esc(concierge()[shortcuts.indexOf(state.operation?.action)] || 'Hotel request')}</h2><button class="back" data-action="back">${icons.back}Back</button></div><form id="operation-form" class="operation-form">${(state.operation?.fields || []).map((field,index) => `<label for="operation-field-${index}">${esc(field.label)}${field.required ? ' *' : ''}<input id="operation-field-${index}" name="${esc(field.name)}" value="${esc(state.operation.values[field.name] || '')}" ${field.required ? 'required' : ''} autocomplete="off" dir="auto"></label>`).join('')}<div class="button-row"><button type="submit" class="primary">Review request</button>${action('cancel-operation',esc(t().cancel),'secondary')}</div></form>${action('stop',esc(t().end),'stop')}`,
+      confirming: () => `<div class="status-line"><h2>${esc(operationDraft() ? 'Confirm hotel request?' : t().draft)}</h2><button class="back" data-action="back">${icons.back}Back</button></div><div class="draft">${state.draft?.guest_name || state.draft?.room_reference ? `<div class="draft-meta">${esc([state.draft?.guest_name,state.draft?.room_reference].filter(Boolean).join(' · '))}</div>` : ''}${esc(state.draft?.message || '')}</div>${operationDraft() ? fine('Only confirm if these request details are correct.') : fine('Saved only on this tablet after you confirm. Not sent to staff.')}<div class="button-row">${action('confirm',esc(state.confirmed ? 'Submitting…' : operationDraft() ? 'Confirm request' : t().save),'primary',state.confirmed)}${action('cancel-draft',esc(t().cancel),'secondary',state.confirmed)}</div>`,
+      saved: () => `<h2>${esc(state.outcome ? 'Hotel request update' : t().saved)}</h2><p class="lead" dir="auto">${esc(state.outcome ? state.outcome.text : t().local)}</p>${state.outcome?.receipt ? `<div class="receipt" dir="auto">${esc(state.outcome.receipt)}</div>` : ''}<div class="button-row">${action('continue',esc(t().continue))}${action('stop',esc(t().end),'secondary')}</div>`,
+      error: () => `<div class="status-line"><h2>Conversation unavailable</h2><button class="back" data-action="back">${icons.back}Back</button></div><div class="notice error">${esc(state.error || 'Please ask reception for help.')}</div>${fine(state.audio === 'off' ? 'Microphone off. Staff can check this device’s setup.' : 'Audio release is not confirmed. Ask reception for help before restarting.')}<div class="button-row">${action('retry','Try again','primary',state.audio !== 'off')}${action('home','Back to home','secondary')}</div>`
     };
     const focusedElement = document.activeElement;
     const focusedAction = focusedElement?.dataset?.action;
-    const focusedInput = focusedElement?.closest('#operation-form') ? { name: focusedElement.name, start: focusedElement.selectionStart, end: focusedElement.selectionEnd } : null;
+    const focusedSelect = focusedElement?.dataset?.languageSide;
+    const focusedInput = focusedElement?.closest('#operation-form') ? { name:focusedElement.name,start:focusedElement.selectionStart,end:focusedElement.selectionEnd } : null;
     const scrollTop = content.scrollTop;
-    const scrolls = [...content.querySelectorAll('.session-scroll,.draft,.language-options,.language-list')].map(element => element.scrollTop);
+    const scrolls = [...content.querySelectorAll('.session-scroll,.draft,.language-list')].map(element => element.scrollTop);
     content.innerHTML = (html[state.page] || html.idle)();
     content.scrollTop = scrollTop;
-    [...content.querySelectorAll('.session-scroll,.draft,.language-options,.language-list')].forEach((element, index) => { element.scrollTop = scrolls[index] || 0; });
-    if (focusedAction) [...content.querySelectorAll('[data-action]')].find(button => button.dataset.action === focusedAction)?.focus({ preventScroll: true });
+    [...content.querySelectorAll('.session-scroll,.draft,.language-list')].forEach((element,index) => { element.scrollTop = scrolls[index] || 0; });
+    if (focusedAction) [...content.querySelectorAll('[data-action]')].find(button => button.dataset.action === focusedAction)?.focus({ preventScroll:true });
+    if (focusedSelect) content.querySelector(`[data-language-side="${focusedSelect}"]`)?.focus({ preventScroll:true });
     if (focusedInput) {
       const input = [...content.querySelectorAll('#operation-form input')].find(element => element.name === focusedInput.name);
-      input?.focus({ preventScroll: true });
-      if (input && focusedInput.start !== null) input.setSelectionRange(focusedInput.start, focusedInput.end);
+      input?.focus({ preventScroll:true });
+      if (input && focusedInput.start !== null) input.setSelectionRange(focusedInput.start,focusedInput.end);
     }
     renderNotices();
-    window.manzaniaScene?.setState(state.page, state.phase);
   }
 
   function activity() { send('activity'); }
-  async function toggleAppearance() {
-    if (appearanceChanging || state.page !== 'idle') return;
-    appearanceChanging = true;
-    const rect = content.querySelector('.appearance-toggle')?.getBoundingClientRect();
-    const x = rect ? rect.left + rect.width / 2 : innerWidth / 2;
-    const y = rect ? rect.top + rect.height / 2 : innerHeight / 2;
-    const radius = Math.hypot(Math.max(x, innerWidth-x), Math.max(y, innerHeight-y));
-    const apply = () => { appearance = appearance === 'light' ? 'dark' : 'light'; render(); send('appearance', { value: appearance }); };
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { apply(); appearanceChanging=false; return; }
-    try {
-      if (document.startViewTransition) {
-        const transition = document.startViewTransition(apply);
-        await transition.ready;
-        await document.documentElement.animate({ clipPath:[`circle(0px at ${x}px ${y}px)`,`circle(${radius}px at ${x}px ${y}px)`] }, { duration:620,easing:'cubic-bezier(.2,.7,.2,1)',pseudoElement:'::view-transition-new(root)' }).finished;
-      } else {
-        // Older Android WebViews: freeze the old DOM visually, then reveal the new palette beneath it.
-        const source = document.querySelector('.app');
-        const frozen = source.cloneNode(true);
-        const originals = [source,...source.querySelectorAll('*')];
-        const copies = [frozen,...frozen.querySelectorAll('*')];
-        originals.forEach((element,i) => {
-          const styles=getComputedStyle(element);
-          for(let j=0;j<styles.length;j++){const key=styles[j];copies[i].style.setProperty(key,styles.getPropertyValue(key),'important');}
-          copies[i].removeAttribute('id'); copies[i].removeAttribute('data-action');
-          if(element.tagName==='CANVAS') { copies[i].width=element.width;copies[i].height=element.height;copies[i].getContext('2d').drawImage(element,0,0); }
-        });
-        const overlay=document.createElement('div');overlay.className='theme-snapshot';overlay.setAttribute('aria-hidden','true');overlay.inert=true;
-        overlay.style.background=getComputedStyle(document.body).backgroundColor;overlay.append(frozen);document.body.append(overlay);
-        apply();
-        const began=performance.now();
-        await new Promise(resolve=>{const frame=now=>{const p=Math.min(1,(now-began)/620);const size=radius*(1-Math.pow(1-p,3));const mask=`radial-gradient(circle at ${x}px ${y}px, transparent ${size}px, #000 ${size+1}px)`;overlay.style.webkitMaskImage=mask;overlay.style.maskImage=mask;if(p<1)requestAnimationFrame(frame);else{overlay.remove();resolve();}};requestAnimationFrame(frame);});
-      }
-    } catch { document.querySelectorAll('.theme-snapshot').forEach(node=>node.remove()); }
-    finally { appearanceChanging=false; }
+  function toggleAppearance() {
+    if (state.page !== 'idle') return;
+    appearance = appearance === 'light' ? 'dark' : 'light';
+    render();
+    send('appearance', { value:appearance });
   }
   function sameLanguage() { return state.mode === 'translation' && state.language === state.staff_language; }
   function page(next) { state.page = next; render(); }
-  function wake() {
-    if (state.page !== 'idle') return;
-    window.manzaniaScene?.pressBell();
-    ringSound();
-    if (state.night) chooseMode('reception'); else page('modes');
-  }
-  let bellAudio;
-  function ringSound() {
-    if (native) { send('bell'); return; }
-    try {
-      const Audio = window.AudioContext || window.webkitAudioContext;
-      if (!Audio) return;
-      bellAudio ||= new Audio();
-      bellAudio.resume();
-      const now = bellAudio.currentTime;
-      [[1318,.15],[2639,.055],[3681,.025]].forEach(([frequency, volume]) => {
-        const oscillator = bellAudio.createOscillator();
-        const gain = bellAudio.createGain();
-        oscillator.frequency.value = frequency;
-        gain.gain.setValueAtTime(.0001, now);
-        gain.gain.exponentialRampToValueAtTime(volume, now + .007);
-        gain.gain.exponentialRampToValueAtTime(.0001, now + .85);
-        oscillator.connect(gain); gain.connect(bellAudio.destination);
-        oscillator.start(now); oscillator.stop(now + .9);
-        oscillator.onended = () => { oscillator.disconnect(); gain.disconnect(); };
-      });
-    } catch { /* A muted or unsupported browser still has the visual bell. */ }
-  }
   function toggleNight() {
-    if (!['idle', 'modes'].includes(state.page) || state.active) return;
+    if (state.page !== 'idle' || state.active) return;
     activity(); state.night = !state.night; state.mode = state.night ? 'reception' : 'translation';
     page('idle'); send('night', { enabled: state.night });
   }
   function chooseMode(mode) {
-    if (state.night && mode !== 'reception') return;
+    if (state.active || state.audio !== 'off') return;
+    queuedShortcut = '';
     state.mode = mode;
     state.error = '';
     silence();
@@ -240,11 +189,14 @@
     selected[side] = true;
     send('languages', { language: state.language, staff_language: state.staff_language });
   }
-  function start() {
+  function start(restart = false) {
     if (state.active || state.phase === 'ending' || state.audio !== 'off') return;
     if (sameLanguage()) { toast('Choose a different guest language for translation.'); return; }
+    if (!native) { state.error = 'Voice conversations require the reception tablet. No microphone has been opened.'; page('error'); return; }
     silence();
-    clearGuest();
+    if (!restart) clearGuest();
+    state.pendingPage = '';
+    state.micLevel = 0;
     state.sessionId = window.crypto?.randomUUID?.() || 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, character => {
       const value = window.crypto?.getRandomValues ? window.crypto.getRandomValues(new Uint8Array(1))[0] & 15 : Math.floor(Math.random() * 16);
       return (character === 'x' ? value : (value & 3) | 8).toString(16);
@@ -253,7 +205,7 @@
     state.closed = false;
     state.terminated = false;
     state.active = true;
-    state.phase = state.demo ? 'listening' : 'connecting';
+    state.phase = 'connecting';
     state.error = '';
     page('active');
     send('start', { session_id: state.sessionId, mode: state.mode, language: state.language, staff_language: state.staff_language, greet: greet(state.language) });
@@ -261,33 +213,46 @@
   function silence() {
     window.speechSynthesis?.cancel();
     send('silence');
-    window.manzaniaScene?.energy(0);
+    state.micLevel = 0;
   }
   function chooseShortcut(name) {
     if (!state.active || state.closed || state.mode !== 'reception' || state.page !== 'active' || ['connecting','greeting'].includes(state.phase)) return;
     if (state.demo) { addNotice('Hotel requests require a connected reception tablet.', 'unavailable'); return; }
     send(name);
   }
-  function stop() {
-    silence();
+  function finishNavigation() {
+    if (!state.pendingPage || !state.terminated || state.active || state.audio !== 'off') return false;
+    const next = state.pendingPage;
+    state.pendingPage = '';
+    queuedShortcut = '';
+    if (next === 'idle') clearGuest();
+    page(next);
+    return true;
+  }
+  function stop(next = '') {
+    if (next) state.pendingPage = next;
+    if (!state.active) { finishNavigation(); return; }
     if (state.phase === 'ending') return;
+    silence();
     state.closed = true;
-    clearGuest();
-    if (state.active && native) {
-      state.phase = 'ending';
-      page('ending');
-      send('stop');
-      return;
-    }
-    state.active = false;
-    state.phase = '';
-    state.error = '';
-    page('idle');
+    state.draft = null;
+    state.confirmed = false;
+    state.operation = null;
+    state.outcome = null;
+    queuedShortcut = '';
+    state.phase = 'ending';
+    if (state.audio === 'recording') state.audio = 'stopping';
+    page('active');
+    send('stop');
   }
   function goBack() {
-    if (state.active) { stop(); return; }
-    if (state.page === 'idle') { send('exit'); if (!native) toast('This button returns to the device launcher.'); return; }
-    page({ modes: 'idle', translation_languages:'modes', languages: state.night ? 'idle' : 'modes', error: 'idle' }[state.page] || 'idle');
+    if (state.page === 'idle') return;
+    if (state.active || state.audio !== 'off') {
+      stop(state.mode === 'translation' ? 'translation_languages' : 'languages');
+      return;
+    }
+    queuedShortcut = '';
+    page(state.page === 'active' ? state.mode === 'translation' ? 'translation_languages' : 'languages' : 'idle');
   }
   let toastTimer;
   function toast(message) {
@@ -299,18 +264,31 @@
   }
   function perform(name) {
     activity();
-    if(name.startsWith('side:')) {const side=name.split(':')[1];if(state.page!=='translation_languages'||!['language','staff_language'].includes(side))return;languageSide=side;render();return;}
-    if(name.startsWith('pair:')) {const [,side,language]=name.split(':');if(state.page!=='translation_languages'||!['language','staff_language'].includes(side)||!Object.hasOwn(translationLanguages,language))return;const scrolls=[...content.querySelectorAll('.language-options')].map(el=>el.scrollTop);selectLanguage(side,language);languageSide=side;render();[...content.querySelectorAll('.language-options')].forEach((el,i)=>el.scrollTop=scrolls[i]);return;}
+    if (name.startsWith('request:')) {
+      const request = name.split(':')[1];
+      if (state.page !== 'idle' || !['checkin','taxi','message'].includes(request)) return;
+      chooseMode('reception');
+      if (state.page === 'languages') queuedShortcut = request;
+      return;
+    }
+    if (name.startsWith('pair:')) {
+      const [,side,language] = name.split(':');
+      if (state.page !== 'translation_languages' || state.audio !== 'off' || !['language','staff_language'].includes(side) || !Object.hasOwn(translationLanguages,language)) return;
+      selectLanguage(side,language);
+      languageSide = side;
+      render();
+      return;
+    }
     if (name.startsWith('language:')) { const language=name.split(':')[1]; if(state.page !== 'languages' || !languages[language])return;selectLanguage('language',language); start(); return; }
     switch (name) {
       case 'appearance': toggleAppearance(); break;
-      case 'wake': wake(); break;
       case 'translation': chooseMode('translation'); break;
       case 'reception': chooseMode('reception'); break;
       case 'start': start(); break;
+      case 'restart': if (state.terminated && state.audio === 'off') start(true); break;
       case 'stop': stop(); break;
       case 'back': goBack(); break;
-      case 'home': stop(); break;
+      case 'home': if (state.active || state.audio !== 'off') stop('idle'); else { clearGuest(); page('idle'); } break;
       case 'retry': if(state.mode === 'reception') start(); else page('translation_languages'); break;
       case 'checkin': case 'operator': case 'taxi': case 'question': chooseShortcut(name); break;
       case 'message':
@@ -334,6 +312,16 @@
     }
   }
   content.addEventListener('click', event => { const button = event.target.closest('[data-action]'); if (button && !button.disabled) perform(button.dataset.action); });
+  content.addEventListener('focusin', event => {
+    const side = event.target.dataset.languageSide;
+    if (!['language','staff_language'].includes(side)) return;
+    languageSide = side;
+    content.querySelectorAll('.language-side').forEach(element => { element.dataset.keypad = String(element.querySelector('select').dataset.languageSide === side); });
+  });
+  content.addEventListener('change', event => {
+    const side = event.target.dataset.languageSide;
+    if (side) perform(`pair:${side}:${event.target.value}`);
+  });
   content.addEventListener('input', event => {
     const input = event.target;
     if (state.operation && input.closest('#operation-form')) state.operation.values[input.name] = input.value;
@@ -356,25 +344,23 @@
     activity();
     renderNotices();
   });
-  document.getElementById('exit').addEventListener('click', () => { stop(); send('exit'); if (!native) toast('This button returns to the device launcher.'); });
-  document.getElementById('stage').addEventListener('click', () => { activity(); if (state.page === 'idle') wake(); });
   document.getElementById('night-toggle').addEventListener('click', toggleNight);
   document.getElementById('settings').addEventListener('click',()=>send('settings'));
 
   function hardware(key) {
     activity();
-    if(state.page==='translation_languages'&&/^[0-9]$/.test(key)){perform('pair:'+languageSide+':'+Object.keys(translationLanguages)[key==='0'?9:Number(key)-1]);return;}
+    if (state.page === 'translation_languages' && /^[0-9]$/.test(key)) { perform('pair:' + languageSide + ':' + Object.keys(translationLanguages)[key === '0' ? 9 : Number(key)-1]); return; }
+    if (state.page === 'languages' && /^[0-9]$/.test(key)) { perform('language:' + Object.keys(languages)[key === '0' ? 9 : Number(key)-1]); return; }
     if (key === 'back' || key === 'red' || key === '0') { goBack(); return; }
     if (key === 'green') {
       if (state.active) stop();
-      else if (state.page === 'idle') wake();
+      else if (state.page === 'idle') chooseMode('translation');
       else if (state.page === 'translation_languages') start();
+      else if (state.page === 'active' && state.terminated) start(true);
       return;
     }
     if (state.page === 'idle' && key === '1') toggleAppearance();
-    else if (state.page === 'languages' && /^[1-9]$/.test(key)) perform('language:' + Object.keys(languages)[Number(key) - 1]);
-    else if (state.page === 'modes' && key === '1') chooseMode('translation');
-    else if (state.page === 'modes' && key === '2') chooseMode('reception');
+    else if (state.page === 'idle' && key === '2') chooseMode('reception');
     else if (state.page === 'active' && state.mode === 'reception' && /^[1-4]$/.test(key)) chooseShortcut(shortcuts[Number(key)-1]);
   }
 
@@ -400,7 +386,7 @@
       bar.disabled = true;
       const pct = Number(percent);
       const known = Number.isFinite(pct) && pct >= 0;
-      bar.innerHTML = `${text || 'Downloading…'}<span class="track"><span class="fill" style="width:${known ? pct : 0}%"></span></span>`;
+      bar.innerHTML = `${esc(text || 'Downloading…')}<span class="track"><span class="fill" style="width:${known ? Math.min(100,pct) : 0}%"></span></span>`;
       return;
     }
     bar.disabled = false;
@@ -413,19 +399,29 @@
     if (state.generation === null) state.generation = event.generation;
     return event.generation === state.generation;
   }
-  function detachGuest() {
+  function detachGuest(preserveHistory = false) {
     state.closed = true;
     state.terminated = true;
     state.active = false;
-    state.phase = '';
+    state.phase = preserveHistory ? 'stopped' : '';
+    state.micLevel = 0;
+    state.draft = null;
+    state.confirmed = false;
+    state.operation = null;
+    state.outcome = null;
+    queuedShortcut = '';
     if (state.audio !== 'off') state.audio = 'unknown';
-    clearGuest();
-    window.manzaniaScene?.energy(0);
+    if (!preserveHistory) { clearGuest(); state.pendingPage = ''; }
   }
   function receive(event) {
     if (typeof event === 'string') { try { event = JSON.parse(event); } catch { return; } }
     if (!event || typeof event !== 'object') return;
     const type = event.type;
+    if (type === 'navigation' && event.action === 'back') {
+      if (state.active && !matchesSession(event)) return;
+      goBack();
+      return;
+    }
     if (type === 'appearance') { appearance = event.value === 'dark' ? 'dark' : 'light'; render(); return; }
     if (type === 'visibility') {
       if (event.visible === false) { detachGuest(); state.error = ''; page('idle'); }
@@ -458,22 +454,23 @@
       if (!['off','recording','stopping','unknown'].includes(event.state)) return;
       if (state.closed && !['off','unknown'].includes(event.state)) return;
       state.audio = event.state;
-      render(); return;
+      if (state.audio !== 'recording') state.micLevel = 0;
+      if (!finishNavigation()) render();
+      return;
     }
     if (state.terminated) return;
     const terminal = type === 'reception_event' && ['stopped','timeout','error'].includes(event.phase);
     if (state.closed && !terminal) return;
     if (type === 'mic_level') {
       const level = state.audio === 'recording' ? Math.min(1, Math.max(0, Number(event.level) || 0)) : 0;
+      state.micLevel = level;
       const meter = content.querySelector('.session-icon');
       meter?.style.setProperty('--level', String(level));
       meter?.setAttribute('aria-valuenow', String(Math.round(level * 100)));
       return;
     }
-    if (type === 'energy') {
-      window.manzaniaScene?.energy(Math.min(1, Math.max(0, Number(event.level) || 0)));
-      return;
-    }
+    // Playback energy is not microphone input; never animate the mic from it.
+    if (type === 'energy') return;
     if (type === 'notice') {
       addNotice(event.text, event.status);
       if (state.draft && ['error','failed','unavailable','denied','save_failed'].includes(event.status)) { state.confirmed = false; render(); }
@@ -482,19 +479,22 @@
     if (type === 'metrics') { state.metrics = String(event.text || ''); if (state.page === 'active') render(); return; }
     if (type === 'caption') {
       if (typeof event.utterance_id !== 'string' || !event.utterance_id || !['guest','staff','assistant'].includes(event.side) || !['original','text'].includes(event.field) || !['append','replace'].includes(event.operation) || typeof event.text !== 'string' || typeof event.final !== 'boolean') return;
-      const key = `${event.side}:${event.utterance_id}`;
+      const key = `${state.sessionId}:${event.side}:${event.utterance_id}`;
       let entry = state.utterances.get(key);
       if (!entry) {
         entry = { side: event.side, from: '', to: '', original: '', text: '', final: { original: false, text: false } };
         state.utterances.set(key, entry);
       }
-      if (entry.final[event.field] && event.operation === 'append') return;
+      if (entry.final[event.field] && (!event.final || event.operation === 'append')) return;
       entry[event.field] = event.operation === 'replace' ? event.text : entry[event.field] + event.text;
       entry.final[event.field] = event.final;
-      if (typeof event.from === 'string') entry.from = event.from;
-      if (typeof event.to === 'string') entry.to = event.to;
+      if (typeof event.from === 'string' && event.from) entry.from = event.from;
+      if (typeof event.to === 'string' && event.to) entry.to = event.to;
       const transcript = content.querySelector('.conversation');
+      const scroller = content.querySelector('.session-scroll');
+      const follow = scroller && scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop < 60;
       if (transcript) transcript.innerHTML = conversation();
+      if (follow) scroller.scrollTop = scroller.scrollHeight;
       if (event.side !== 'assistant' && event.text.trim()) activity();
       return;
     }
@@ -520,17 +520,20 @@
     const phase = event.phase;
     if (terminal) {
       const error = phase === 'error' ? String(event.text || event.message || 'Please ask reception to check the connection and device setup.') : '';
-      detachGuest();
+      detachGuest(true);
       state.error = error;
-      page(error ? 'error' : 'idle');
+      if (!finishNavigation()) page('active');
       if (phase === 'timeout') toast('Conversation ended after inactivity.');
       return;
     }
     if (phase === 'ending') {
       state.closed = true;
-      clearGuest();
+      state.micLevel = 0;
+      state.draft = null;
+      state.operation = null;
       state.phase = 'ending';
-      page('ending'); return;
+      if (state.audio === 'recording') state.audio = 'stopping';
+      page('active'); return;
     }
     if (phase === 'confirming') {
       if (typeof event.draft_id !== 'string' || !event.draft_id || state.draft?.draft_id === event.draft_id) return;
@@ -552,14 +555,20 @@
     if (state.page === 'confirming' && state.draft?.draft_id.startsWith('voice:') && state.confirmed && phase === 'listening') {
       state.draft = null; state.confirmed = false; state.page = 'active';
     }
-    if (['confirming','saved','operation_form'].includes(state.page)) { window.manzaniaScene?.setState(state.page, phase); return; }
+    if (['confirming','saved','operation_form'].includes(state.page)) return;
     page('active');
+    if (phase === 'listening' && queuedShortcut) {
+      const request = queuedShortcut;
+      queuedShortcut = '';
+      if (request === 'message') perform('message');
+      else chooseShortcut(request);
+    }
   }
   window.manzania = Object.freeze({ receive });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); hardware('back'); return; }
-    if (event.target.matches('input,textarea,select')) return;
-    if (/^[0-9]$/.test(event.key)) hardware(event.key);
+    if (event.target.matches('input,textarea')) return;
+    if (/^[0-9]$/.test(event.key)) { event.preventDefault(); hardware(event.key); }
   });
   document.addEventListener('pointerdown', activity, { passive: true });
   document.addEventListener('wheel', activity, { passive: true });
@@ -572,6 +581,13 @@
   }
   document.addEventListener('visibilitychange', () => { if (document.hidden) hideGuest(); });
   window.addEventListener('pagehide', hideGuest);
+  function updateClock() {
+    const now = new Date();
+    document.getElementById('date').textContent = new Intl.DateTimeFormat('en-GB',{ weekday:'short',day:'numeric',month:'short' }).format(now);
+    document.getElementById('time').textContent = new Intl.DateTimeFormat('en-GB',{ hour:'2-digit',minute:'2-digit' }).format(now);
+  }
+  updateClock();
+  setInterval(updateClock,60000);
   render();
   send('info');
 })();

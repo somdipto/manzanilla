@@ -4,11 +4,14 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.ToneGenerator
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -16,6 +19,8 @@ import android.os.SystemClock
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import com.agentdeck.ui.ReceptionView
 import org.json.JSONObject
 import java.util.UUID
@@ -48,6 +53,7 @@ class HotelActivity : Activity() {
     private var night = false
     private var foreground = false
     private var destroyed = false
+    private var backCallback: OnBackInvokedCallback? = null
     private var pendingPermission: SessionOwner.Lease? = null
     private var audioState = "off"
     private val guestUtterances = LinkedHashMap<String, String>()
@@ -79,7 +85,7 @@ class HotelActivity : Activity() {
         val fishReady = fishStore.has() || BuildConfig.FISH_API_KEY.isNotBlank()
         val geminiReady = store.has()
         val ready = backendConfigured() || fishReady || geminiReady
-        page.push(JSONObject().put("type", "appearance").put("value", deck.getString("reception_appearance", "light")))
+        page.push(JSONObject().put("type", "appearance").put("value", deck.getString("reception_appearance", "dark")))
         page.push(JSONObject().put("type", "night_mode").put("enabled", night))
         page.push(JSONObject().put("type", "reception_info").put("hotel_name", "Hotel reception")
             .put("sample_hotel", false).put("configured", ready).put("staff_language", "es"))
@@ -316,6 +322,7 @@ class HotelActivity : Activity() {
             "appearance" -> {
                 val value = if (message.optString("value") == "dark") "dark" else "light"
                 deck.edit().putString("reception_appearance", value).apply()
+                window.setBackgroundDrawable(ColorDrawable(if (value == "dark") Color.rgb(8, 15, 21) else Color.rgb(16, 34, 48)))
                 reception?.push(JSONObject().put("type", "appearance").put("value", value))
             }
             "night" -> if (owner.current == null) {
@@ -367,8 +374,25 @@ class HotelActivity : Activity() {
         }
     }
 
+    private fun navigateBack() {
+        val event = JSONObject().put("type", "navigation").put("action", "back").put("source", "android")
+        val lease = owner.current
+        reception?.push(if (lease != null) scoped(lease, event) else event)
+        if (lease != null) stopSession()
+    }
+
+    @Deprecated("Legacy system Back dispatch")
+    override fun onBackPressed() = navigateBack()
+
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        val dark = deck.getString("reception_appearance", "dark") != "light"
+        window.setBackgroundDrawable(ColorDrawable(if (dark) Color.rgb(8, 15, 21) else Color.rgb(16, 34, 48)))
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback = OnBackInvokedCallback { navigateBack() }.also {
+                onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, it)
+            }
+        }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         reception = ReceptionView(this, ::handle) { stopSession("error", "The reception screen stopped. Return to the launcher and reopen Reception.") }
@@ -401,6 +425,7 @@ class HotelActivity : Activity() {
     }
     override fun onDestroy() {
         destroyed = true
+        if (Build.VERSION.SDK_INT >= 33) backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
         ui.removeCallbacks(watchdog)
         stopSession(done = {
             if (fishProvider.isInitialized()) fish.release()

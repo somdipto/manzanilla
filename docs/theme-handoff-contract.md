@@ -1,18 +1,16 @@
 # Manzanilla remediation spec and UI integration contract
 
-Status: specification only; none of the repairs below is claimed implemented.
-Baseline: release 17.0.4, commit `04ae19a`, and the read-only audit.
+Status: repair checklist with the 17.0.6 visual cutover below; passing evidence
+lives in `artifacts/VERIFICATION.md`. Historical audit baseline: 17.0.4, `04ae19a`.
 Development acceptance procedures: [TEST-PLAN.md](TEST-PLAN.md).
 Broader voice/privacy/benchmark gates: [issue #2](https://github.com/somdipto/manzanilla/issues/2).
 
 ## Product decisions
 
-- **3D character and bell are required.** The user's clarification supersedes
-  the supplied handoff's Canvas 2D renderer instructions. Repair the existing
-  3D implementation; retain its rig where useful. No mascot redesign is implied.
-- The supplied handoff remains the reference for the restrained palette, layout,
-  light/dark appearance, controls and interaction, not its renderer technology.
-  Original reference: `/Users/dan/Desktop/x/Manzanilla-Theme-Handoff-2026-10-14/`.
+- **The approved 17.0.6 open-canvas design supersedes the earlier 3D handoff.**
+  Preserve the original production logo, one continuous cyan/ivory gradient,
+  navy surfaces and compact phone controls across every guest page and staff setup.
+  Remove the obsolete character renderer and its bundled Three.js dependency.
 - Preserve independent 52-language translation selectors and existing greeting
   assets. A listed language is not a claim of verified end-to-end voice quality.
 - Day offers translation or assistance. Night goes directly to assistance
@@ -68,10 +66,10 @@ Finish each phase's observable gate before treating it as complete.
    translated utterances; apply greeting-before-capture to every supported route.
    Gate: both directions, overlapping/interrupted turns, Spanish assistance and
    distinct interpreter/concierge behavior.
-4. **Guest UI and 3D behavior: R04, R11-R13.** Migrate every producer/consumer to
-   the contract below, restore message review and visible truthful audio state,
-   and repair active-call rendering. Gate: actual browser plus landscape Android
-   WebView checks, including both themes and reduced motion.
+4. **Guest UI and audio behavior: R04, R11-R13.** Migrate every producer/consumer
+   to the contract below, retain message review and truthful audio state, and
+   apply the approved shared theme. Gate: actual browser plus landscape Android
+   WebView checks, including both appearances and reduced motion.
 5. **Hotel operations: R09.** Connect assistance to the existing authenticated
    gateway, property knowledge, scoped PMS reads, staff requests and configured
    taxi/operator routes. Gate: synthetic-property receipts and denial/failure
@@ -102,7 +100,7 @@ native/domain tests exercise behavior, not source strings or copied payloads.
 | R08 | Carry `translation` versus `reception` into native/provider/gateway session creation; replace the OpenAI-only night route for the selected Fish/Gemini architecture. | Interpreter translates without answering or invoking tools; concierge answers approved hotel questions and can use allowlisted tools. No silent interpreter fallback for assistance. |
 | R09 | Implement check-in guidance, human escalation, taxi requests and questions through existing gateway authorization/confirmation/idempotency boundaries. | Receipts identify the real outcome. Queued is not booked, dialer-opened is not answered, guidance is not completed check-in, and missing configuration gives actionable unavailable state. Real-service acceptance remains pending until the integrations exist. |
 | R10 | Scope unequal-language validation to translation mode. | Spanish assistance works with Spanish staff configuration; equal-language translation still cannot start. |
-| R11 | Repair the existing 3D `scene.js` state/render loop, framing and playback-energy integration. Keep editable character code separate from generated vendor code. | The actual 3D scene renders during active listening/thinking/speaking, responds to playback rather than microphone input, respects reduced motion, and pauses/releases appropriately when hidden. |
+| R11 | Apply the approved 17.0.6 open-canvas design, original logo and continuous gradient; remove the obsolete 3D renderer. | Home, paired language selectors, conversation, forms and notices share the theme. Real scoped microphone input drives the input meter; playback never impersonates input. |
 | R12 | Restore visible audio privacy state in the guest UI, backed by actual capture/release acknowledgements. | Connecting/greeting does not falsely say mic-on; recording, stopping, off and unknown states remain visible and truthful in both themes. |
 | R13 | Remove the conflicting assistance render branch and restore the message action/review/save/cancel path. | A guest can reach review, cancel without saving, and explicitly save. Local-save copy stays truthful; staff delivery requires a separate real backend receipt. |
 | R14 | Make `SecretStore` fail closed when secure storage is unavailable. Remove the `pl:` write path and explicitly migrate readable existing plaintext entries into encrypted storage. | Keystore failure never stores a new plaintext key or reports secure save. Migration preserves readable credentials or presents an explicit recoverable error; no silent deletion. |
@@ -120,6 +118,12 @@ This section specifies target behavior, not the current implementation.
 - Each native event carries session/generation ownership. Caption events also
   carry utterance identity, ordering/finality and language/side metadata. Provider
   IDs and fields must be checked against the real SDK/protocol, not invented.
+- The UI joins caption fields only with the same session, original speaker side
+  and `utterance_id`. Original speech is above its opposite-language translation;
+  guest bubbles sit left and receptionist bubbles right in one chronological scroller.
+  Fish segment IDs identify speaker revisions, not translation pairs; Gemini Live
+  supplies no documented original/output association. Those feeds remain explicitly
+  unlinked. Never infer a pair from arrival order or claim live pairing is solved.
 - Normalize provider input/output deltas, replacements and final records once at
   the native boundary. Define the concrete schema there before editing callers,
   then migrate both providers, host, bridge allowlist and UI in the same cutover.
@@ -132,7 +136,9 @@ This section specifies target behavior, not the current implementation.
   the transport is detached. Terminal states clear native and UI ownership.
   A delayed event from an old session cannot transition a new/closed session.
 - Audio state is explicit, separate from provider thinking/listening/speaking.
-  Output energy drives the 3D speaking response; mic level is an input meter.
+  Only real scoped `mic_level` while recording drives the microphone input meter.
+  Stop/restart and conversation Back wait for terminal state and confirmed audio off.
+  Android Back dispatches `navigation/back`; internal navigation never exits the app.
 - `reception_info` initializes hotel defaults without overwriting an active
   selection. Appearance/night restore from host preferences. Keep update
   offer/progress/confirmation events separate from voice-session state.
@@ -142,26 +148,21 @@ This section specifies target behavior, not the current implementation.
 - Message drafts belong to one session. Review cannot be displaced by unrelated
   captions; confirmed writes are idempotent, and a new guest starts clean.
 
-## 3D and interaction acceptance
+## Visual and interaction acceptance
 
-Use a real 3D character/rig and 3D bell, not a flat character replacement.
-Keep the handoff's monochrome guest surfaces, large controls and light default.
-Theme preference must survive restart; theme and night mode remain independent.
-Use the existing character as the starting point, with coherent materials and
-framing rather than an unrelated character redesign.
-
-Translation has independent 52-entry scrolling lists and explicit Start.
+Use the approved open-canvas navy reception design and original logo. Appearance
+preference must survive restart; appearance and night mode remain independent.
+Translation opens two native 52-entry language selectors and explicit Start.
 Assistance starts after choosing the guest language; the greeting plays before
-capture. Restore the four shortcuts and reachable message review.
+capture. Preserve the four shortcuts and reachable message review.
 Keep digit-key selection and touch working; do not claim 52 unique single-digit
 shortcuts. Check green/red/back hardware behavior on the target device.
 
-Verify actual landscape Android WebView pixels at the target density/resolution,
-including the 2560x1600 target, visible audio state, text scaling, RTL, long
-captions, unclipped character framing and controls at least 48 CSS px.
-The 3D animation must follow real session/playback state. Reduced motion may
-render static poses, but state changes must still draw. A WebGL failure shows
-honest fallback status; it does not count as passing 3D acceptance.
+Verify actual landscape Android WebView pixels and controls at least 48 CSS px.
+Cover 640×360, 740×360 and 844×390 phone layouts, RTL and long captions. Transcript
+scrolls as one conversation while headers and audio controls stay fixed. Linked
+caption fixtures prove the renderer, not upstream provider association or speech.
+
 
 ## External prerequisites and release gate
 

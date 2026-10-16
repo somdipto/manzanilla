@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.KeyguardManager
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -34,8 +35,8 @@ class KeyEntryActivity : Activity() {
     private var foreground = false
     private val fields = ArrayList<EditText>()
     private var dialog: AlertDialog? = null
-    private val background = Color.rgb(235, 232, 225)
-    private val ink = Color.rgb(36, 36, 38)
+    private val background = Color.rgb(8, 15, 21)
+    private val ink = Color.rgb(229, 237, 243)
 
     override fun onCreate(state: Bundle?) {
         // Do not restore a prior configuration view hierarchy or typed credentials.
@@ -196,6 +197,8 @@ class KeyEntryActivity : Activity() {
             filterTouchesWhenObscured = true
             setSingleLine()
             setTextColor(ink)
+            setHintTextColor(Color.rgb(157, 178, 194))
+            backgroundTintList = ColorStateList.valueOf(Color.rgb(97, 201, 237))
             customSelectionActionModeCallback = object : ActionMode.Callback {
                 override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean = false
                 override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
@@ -259,6 +262,9 @@ class KeyEntryActivity : Activity() {
 
     private fun button(value: String, action: () -> Unit) = Button(this).apply {
         text = value
+        setTextColor(ink)
+        backgroundTintList = ColorStateList.valueOf(Color.rgb(24, 44, 59))
+        minHeight = (48 * resources.displayMetrics.density).toInt()
         filterTouchesWhenObscured = true
         setOnClickListener { action() }
     }

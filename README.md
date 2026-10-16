@@ -55,9 +55,11 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 
 ## Status
 
-17.0.5 is a testing pilot: multilingual Scribe + Gemini/Fish interpretation, account-scoped native agent caching, managed session admission/ownership/revocation, exact-hotel PMS credential isolation, cancellation-safe write claims, and failed-update recovery. Its explicitly authorized keyed APK works without manual provider-key entry; the embedded account key is extractable. Hotel assistance still requires a configured backend and real hotel integrations; this release does not invent PMS or telephone connectivity.
+17.0.6 applies the approved open-canvas reception design to the Android app: original logo, one continuous cyan/ivory gradient, paired 52-language selectors and a shared navy theme for conversations, forms, notices and staff setup. Android Back returns inside reception rather than exiting. Stop/restart waits for native termination and audio release.
 
-Verification: 84 backend tests and 31 Android JVM tests pass locally; Android lint, debug and signed release assembly pass. Short live synthetic calls produced spoken translations in both directions for English–Spanish and Catalan–Spanish, preserving room 204. This is not a 52-language quality benchmark. Physical microphone/speaker echo, natural barge-in, production latency targets and real hotel service delivery remain unverified. Exact upgrade/device and provider evidence is recorded in [artifacts/VERIFICATION.md](artifacts/VERIFICATION.md).
+Linked captions render guest-left/receptionist-right, with original speech above its opposite-language translation. **Current Fish/Gemini feeds do not supply reliable original/translation associations; their unlinked captions remain separate.** The renderer is verified with linked synthetic events, not claimed as solved live pairing. Hotel assistance still requires the configured backend and real hotel integrations.
+
+Verification: 31 Android JVM tests, Android lint, debug and signed release assembly passed locally. The signed 17.0.6/code 36 APK upgraded 17.0.5 without uninstall in an isolated 960×540 landscape AVD; cold launch and actual system Back to home passed. Actual APK screenshots: [home](docs/screens/17.0.6-home.png), [languages](docs/screens/17.0.6-languages.png). Browser checks covered small landscape layouts, paired captions, RTL, stale sessions, stop/restart release gating and updater retry. No additional paid calls ran. The explicitly authorized pilot still embeds an extractable Fish key. Physical audio and live paired captions remain unverified; detailed evidence and prior voice benchmarks are in [artifacts/VERIFICATION.md](artifacts/VERIFICATION.md).
 
 ## Build it yourself
 

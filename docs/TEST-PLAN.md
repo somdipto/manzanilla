@@ -2,9 +2,9 @@
 
 ## Current remediation acceptance
 
-The authoritative scope, repair IDs R01-R17 and 3D requirement are in
-[the remediation spec](theme-handoff-contract.md). This is a planned verification
-procedure, not a new passing test report.
+The authoritative repair IDs R01-R17 and approved 17.0.6 visual requirements are
+in [the remediation spec](theme-handoff-contract.md). Passing evidence is recorded
+separately in `artifacts/VERIFICATION.md`; this file defines the procedure.
 
 1. **Reproduce before repairing.** For each repair ID, preserve a minimal
    consumer-visible failure scenario. Keep deterministic native/domain
@@ -22,9 +22,10 @@ procedure, not a new passing test report.
    same-language rejection, Spanish assistance, greeting/cancel, both caption
    forms, message review/cancel/save, all shortcut outcomes, late events,
    language-preserving host refresh and update offer/progress/action. Inspect
-   visible audio state and real 3D rendering in active calls, both themes, RTL,
-   text scaling, reduced motion and hidden/resumed state. Browser bridge fixtures
-   establish UI behavior only.
+   visible audio state, guest-left/receptionist-right paired caption fixtures,
+   explicitly unlinked provider captions, both appearances, RTL, text scaling,
+   reduced motion and hidden/resumed state. Browser bridge fixtures establish UI
+   behavior only; never claim they prove real voice pairing.
 4. **Exercise Android ownership and updates.** Use an isolated landscape AVD with
    synthetic configuration, then the target physical device for acoustic checks.
    Cover permissions, idle timeout, pause/resume, screen sleep, disconnect,

@@ -1,3 +1,18 @@
+# UI update verification — 2026-10-16
+
+## 17.0.6 scope and exercised checks
+
+- Applied the user-approved original logo/open-canvas gradient design to packaged reception assets, all guest pages and native staff controls. Removed the obsolete Three.js/character scene.
+- Local integrated command: `:hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug :hotel:assembleRelease --no-daemon` — **BUILD SUCCESSFUL**, 31 JVM tests, zero failures. Initial lint caught an API-27-only navigation-bar attribute in the API-26 theme; removing the unnecessary attribute fixed compatibility. Existing SDK XML/deprecation warnings remain.
+- Signed local APK identity: `dev.orange.hotel`, 17.0.6/code 36, established pilot signing key. Debug DEX inspection confirmed no existing pilot credential; the explicitly opted-in release retains the existing authorized credential. No secret value was logged.
+- Fresh isolated API-34 AVD `reception1706`, serial `emulator-5584`, 960×540, no microphone/audio input, no user data or provider calls. Installed signed 17.0.5/code 35, then `adb install -r` upgraded to 17.0.6/code 36. `firstInstallTime` remained `2026-10-16 14:18:28`.
+- Actual signed APK cold launch: **Status: ok**, `LaunchState: COLD`, `TotalTime: 4997` ms. Dismissed Android's one-time immersive onboarding, opened Real-Time Translation, captured the real language page, pressed Android system Back, and observed home with `HotelActivity` still top-resumed. This smaller fixture passes launch/navigation; it does not erase the prior larger-fixture failures below.
+- Native screenshots: [`home`](../docs/screens/17.0.6-home.png), [`language selection`](../docs/screens/17.0.6-languages.png). These are emulator captures, not browser mockups.
+- Served actual production assets on isolated loopback port 18766 with a synthetic native bridge. Home and setup fit 640×360, 740×360, 844×390, 960×540 and 390×844. Verified all 52 choices, equal-language rejection and selection retention through Back.
+- Synthetic scoped events verified both speakers' original-over-translation bubbles despite translation arriving first, final-over-partial precedence, explicitly unlinked assistant output, Arabic RTL, rejection of old-session captions, input-meter isolation from playback energy, stop waiting for terminal AND audio off, restart history retention, Back to setup/home, failed-update retry action and reduced-motion behavior.
+- **Live paired captions are blocked:** Fish LiveKit segment IDs identify one speaker's revisions, not original/translation associations; Gemini Live similarly lacks documented input/output association. Renderer joins only stable same-session/speaker/utterance keys. No FIFO/timing guesses or invented associations were introduced. See the provider contract comments in `TranslationCaptions.kt`, `FishVoice.kt` and `VoiceSession.kt`, and [Fish wire protocol](https://docs.fish.audio/agents/deploy/protocol.md).
+- No additional paid benchmarks ran. No physical microphone/speaker, natural barge-in, speech quality/latency or complete in-app installer confirmation result is claimed.
+
 # Verification record — 2026-10-15
 
 ## Scope

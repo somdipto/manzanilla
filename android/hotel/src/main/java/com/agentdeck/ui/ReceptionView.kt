@@ -10,6 +10,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.agentdeck.hotel.BuildConfig
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.util.ArrayDeque
@@ -22,13 +23,15 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
     private var ready = false
     private var disposed = false
     private var shown = false
+    private var dark = context.getSharedPreferences("deck", Context.MODE_PRIVATE).getString("reception_appearance", "dark") != "light"
     private val host = "manzania-reception.invalid"
 
     init {
-        setBackgroundColor(if (context.getSharedPreferences("deck", Context.MODE_PRIVATE).getString("reception_appearance", "light") == "dark") Color.rgb(16, 16, 18) else Color.rgb(235, 232, 225))
+        setBackgroundColor(if (dark) Color.rgb(8, 15, 21) else Color.rgb(16, 34, 48))
         visibility = View.GONE
         addView(browser, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         browser.setBackgroundColor(Color.TRANSPARENT)
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         browser.settings.apply {
             javaScriptEnabled = true
             allowFileAccess = false
@@ -62,7 +65,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
                 val uri = request?.url
                 val path = uri?.path?.removePrefix("/") ?: ""
                 val permitted = uri?.scheme == "https" && uri.host == host && uri.query == null &&
-                    request?.method == "GET" && path in setOf("index.html", "reception.js", "reception.css", "scene.js", "character.js", "vendor/three.js", "greetings.js")
+                    request?.method == "GET" && path in setOf("index.html", "reception.js", "reception.css", "greetings.js")
                 if (permitted) {
                     val mime = when { path.endsWith(".js") -> "application/javascript"; path.endsWith(".css") -> "text/css"; else -> "text/html" }
                     try {
@@ -102,6 +105,10 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
 
     fun push(message: JSONObject) {
         if (disposed) return
+        if (message.optString("type", message.optString("t")) == "appearance") {
+            dark = message.optString("value") != "light"
+            setBackgroundColor(if (dark) Color.rgb(8, 15, 21) else Color.rgb(16, 34, 48))
+        }
         if (!message.has("type") && message.has("t")) message.put("type", message.optString("t"))
         if (!ready) {
             if (message.optString("type") == "energy") return
@@ -125,7 +132,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
             addView(TextView(context).apply {
                 text = "Reception could not load.\nReturn to the launcher and open Reception again."
                 textSize = 20f
-                setTextColor(Color.rgb(36, 36, 38))
+                setTextColor(Color.rgb(241, 243, 239))
                 gravity = Gravity.CENTER
             })
             addView(Button(context).apply { text = "Back to launcher"; setOnClickListener { action(JSONObject().put("action", "exit")) } })
