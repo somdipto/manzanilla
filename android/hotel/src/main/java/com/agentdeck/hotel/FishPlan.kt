@@ -9,11 +9,13 @@ import org.json.JSONObject
  * Language coverage and interruption quality require live acoustic verification, not picker counts.
  */
 object FishPlan {
+    // The agent and its sessions follow the device's own timezone, never a fixed hotel location.
+    fun deviceTimezone(): String = java.util.TimeZone.getDefault().id
+
     const val CONFIG_REV = "8"
     const val AGENT_NAME = "Manzanilla Interpreter"
     const val MAX_SECONDS = 600
     const val CLIENT_CAP_MS = 540_000L
-    const val TIMEZONE = "Europe/Madrid"
     const val DEFAULT_VOICE = "802e3bc2b27e49c2995d23ef70e6ac89"
 
     fun prompt(guest: String, staff: String): String {
@@ -71,7 +73,7 @@ object FishPlan {
         .put("conversation", JSONObject()
             .put("max_duration_seconds", MAX_SECONDS)
             .put("record_audio", false)
-            .put("timezone", TIMEZONE)
+            .put("timezone", deviceTimezone())
             .put("interruptible", true)
             .put("interruption_sensitivity", "balanced")
             // Fish's documented Fast preset; the default 550 ms adds dead air to every reply.
@@ -82,7 +84,7 @@ object FishPlan {
 
     fun sessionBody(agentId: String, guest: String, staff: String): JSONObject = JSONObject()
         .put("agent_id", agentId)
-        .put("timezone", TIMEZONE)
+        .put("timezone", deviceTimezone())
         .put("record_audio", false)
         .put("tool_events", false)
         .put("world_context", false)

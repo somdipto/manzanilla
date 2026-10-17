@@ -52,7 +52,10 @@
   const shortcuts = ['checkin', 'operator', 'taxi', 'question'];
   const concierge = () => conciergeCopy[state.language] || conciergeCopy.en;
   const greet = (language) => (window.MANZANILLA_GREET && window.MANZANILLA_GREET[language]) || '';
-  const state = { page: 'idle', mode: 'translation', night: false, language: 'en', staff_language: 'es', demo: !native, connected: false, audioAvailable: false, audioGate: 'Translation audio is unavailable in this build. Ask staff to check Settings.', audio: 'off', active: false, phase: '', sessionId: '', generation: null, closed: true, terminated: true, error: '', metrics: '', utterances: new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: '', pendingPage: '', micLevel: 0, speaker: 'auto' };
+  const localeLanguage = (navigator.language || '').slice(0, 2).toLowerCase();
+  const firstLanguage = Object.keys(languages)[0];
+  const initialGuest = Object.hasOwn(languages, localeLanguage) ? localeLanguage : firstLanguage;
+  const state = { page: 'idle', mode: 'translation', night: false, language: initialGuest, staff_language: initialGuest, demo: !native, connected: false, audioAvailable: false, audioGate: 'Translation audio is unavailable in this build. Ask staff to check Settings.', audio: 'off', active: false, phase: '', sessionId: '', generation: null, closed: true, terminated: true, error: '', metrics: '', utterances: new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: '', pendingPage: '', micLevel: 0, speaker: 'auto' };
   let queuedShortcut = '';
   const selected = { language: false, staff_language: false };
   let defaultReceived = false;
