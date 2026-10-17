@@ -17,7 +17,7 @@ Application-level inbox payloads are not encrypted by the database layer. Config
 
 Authenticated staff setup accepts the actual HTTPS hotel service URL and a device credential. They are stored as one encrypted bundle through `HotelConnection` / `SecretStore`, using authenticated encryption and a device-keystore key. Replacing the bundle cannot accidentally pair a new token with an old URL. The URL cannot contain login information, query parameters or a fragment.
 
-No account key, backend URL/device-token pair or administrator credential is compiled into the APK. Legacy saved voice credentials remain encrypted but inactive. Old local-only notes are not automatically uploaded or erased; they must not be interpreted as staff delivery.
+The signed release compiles `FISH_API_KEY` from the CI secret when the device store is empty. No backend URL, device token, or administrator credential is compiled into the APK. Legacy saved voice credentials remain encrypted. Old local-only notes are not automatically uploaded or erased; they must not be interpreted as staff delivery.
 
 ## Live audio gate
 
@@ -31,7 +31,7 @@ Timing logs contain endpoint names, sequences and monotonic timestamps, not gues
 
 ## Signing and publication
 
-Signing uses `ORANGE_KEYSTORE`, `ORANGE_STORE_PASSWORD`, `ORANGE_KEY_ALIAS` and `ORANGE_KEY_PASSWORD`; CI also reads `ORANGE_KEYSTORE_BASE64`. These remain CI-only. The account-key embedding option has been removed from the build and publication workflows.
+Signing uses `ORANGE_KEYSTORE`, `ORANGE_STORE_PASSWORD`, `ORANGE_KEY_ALIAS` and `ORANGE_KEY_PASSWORD`; CI also reads `ORANGE_KEYSTORE_BASE64`. The signed release job also reads `FISH_API_KEY` and `FISH_VOICE_ID` from repository secrets and compiles the Fish key into the APK for the owner's test install. These values stay in CI. Never commit them. A published APK makes that Fish key extractable.
 
 `android/VERSION` and `android/VERSION_CODE` advance explicitly. Publication must preserve `dev.orange.hotel` and the existing signer, supersede the previous public APK and reproduce `release-metadata.json` from the exact artifact. Ordinary file-installed apps still require system confirmation to update.
 

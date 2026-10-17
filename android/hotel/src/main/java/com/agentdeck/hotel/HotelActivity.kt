@@ -45,7 +45,7 @@ class HotelActivity : Activity() {
     }
     private val localProvider = lazy { GeminiVoice(this, { event -> runOnUiThread { forward(event) } }, store) }
     private val local by localProvider
-    private val fishProvider = lazy { FishVoice(this, { event -> runOnUiThread { forward(event) } }) { fishStore.load().orEmpty() } }
+    private val fishProvider = lazy { FishVoice(this, { event -> runOnUiThread { forward(event) } }) { fishStore.load().orEmpty().ifBlank { BuildConfig.FISH_API_KEY } } }
     private val fish by fishProvider
     private val hotelConnection by lazy { HotelConnection(this) }
     private var gateway: HotelGateway? = null

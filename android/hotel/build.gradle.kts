@@ -25,6 +25,7 @@ android {
             require(it > 34) { "Release candidates must supersede published code 34" }
         }
         buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://api.github.com/repos/somdipto/manzanilla/releases/latest"))
+        buildConfigField("String", "FISH_API_KEY", javaString(injected("FISH_API_KEY")))
         buildConfigField("String", "FISH_VOICE_ID", javaString(injected("FISH_VOICE_ID")))
         manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl")) "true" else "false"
         versionName = rootProject.file("VERSION").readText().trim()

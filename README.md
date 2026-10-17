@@ -38,7 +38,7 @@ Publication uses the semantic version in `android/VERSION` and the explicit incr
   <img src="docs/screens/17.0.10-installed.png" alt="The app after the in-place update" width="720">
 </p>
 
-Android may require an "Update" confirmation for an app installed from a file; this is not a silent remote installation. Version 17.0.11 is the signed release that carries the screens below. Open the installed app and tap **Check updates**, or resume the app so it checks on its own.
+Android may require an "Update" confirmation for an app installed from a file; this is not a silent remote installation. Version 17.0.12 is the signed release that carries the screens below. Open the installed app and tap **Check updates**, or resume the app so it checks on its own.
 
 ## Screens
 
