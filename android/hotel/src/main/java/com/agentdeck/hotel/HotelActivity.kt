@@ -296,7 +296,7 @@ class HotelActivity : Activity() {
         when (action) {
             "stop", "message", "confirm", "checkin", "operator", "taxi", "question" ->
                 if (!owner.accepts(message.optString("session_id"), message.optInt("generation", -1), duringClose = true)) return
-            "silence", "activity" -> if (owner.current != null &&
+            "silence", "activity", "speaker" -> if (owner.current != null &&
                 !owner.accepts(message.optString("session_id"), message.optInt("generation", -1))) return
         }
         when (action) {
@@ -343,6 +343,10 @@ class HotelActivity : Activity() {
                 gateway?.action(it, message.optString("action"), message.optJSONObject("arguments") ?: JSONObject())
             }
             "activity" -> lastActivity = SystemClock.elapsedRealtime()
+            "speaker" -> if (owner.current != null) {
+                val side = message.optString("side")
+                fish.speaker(if (side == "guest" || side == "staff") side else null)
+            }
             "silence" -> if (greetPlayer != null && owner.current != null) stopSession() else stopGreeting()
             "exit" -> stopSession(done = { finish() })
             "check_updates" -> updater.check()

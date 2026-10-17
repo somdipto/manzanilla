@@ -169,6 +169,8 @@ internal class InterpreterCaptions(private val guest: String, private val staff:
         var margin = 0.0
         var paired = false
     }
+    @Volatile private var forced: String? = null
+    private var lastSide: String? = null
     private val turns = LinkedHashMap<String, Turn>()
     private val dropped = HashSet<String>()
     private val pending = ArrayDeque<Turn>()
@@ -177,6 +179,11 @@ internal class InterpreterCaptions(private val guest: String, private val staff:
     private val recentAgent = ArrayDeque<String>()
 
     private fun other(lang: String) = if (lang == guest) staff else guest
+
+    /** Manual speaker fallback: one shared microphone carries no per-voice signal, so when the
+     * receptionist knows who is about to speak (or language evidence keeps failing), they can pin
+     * the side. "guest"/"staff" pin it; anything else returns to language detection. */
+    fun forceSpeaker(side: String?) { forced = side }
 
     /** Consumes one raw caption event from the transport; returns the events to show. */
     @Synchronized fun accept(caption: JSONObject): List<JSONObject> {
@@ -205,13 +212,26 @@ internal class InterpreterCaptions(private val guest: String, private val staff:
             turns[id] = turn
         }
         val margin = DoubleArray(1)
-        val heard = LanguageId.classify(text, guest, staff, margin)
+        val classified = LanguageId.classify(text, guest, staff, margin)
+        val pinned = forced
+        // The pin says WHO is speaking; the language still comes from the text. Only when language
+        // evidence is near zero does the pin (or, unpinned, the previous speaker's alternation -
+        // conversation turns alternate) decide the language too.
+        val heard = when {
+            pinned != null && margin[0] >= 0.15 -> classified
+            pinned == "staff" -> staff
+            pinned == "guest" -> guest
+            margin[0] < 0.15 && lastSide != null -> if (lastSide == "staff") guest else staff
+            else -> classified
+        }
+        if (pinned != null) margin[0] = 1.0
         if (!turn.paired || final) {
-            turn.side = if (heard == staff) "staff" else "guest"
+            turn.side = if (pinned != null) pinned else if (heard == staff) "staff" else "guest"
             turn.from = heard
             turn.to = other(heard)
             turn.margin = margin[0]
         }
+        if (final) lastSide = turn.side
         turn.original = text
         val events = mutableListOf(UnpairedCaptions.caption(id, turn.side, turn.from, turn.to, "original", "replace", text, final))
         if (final && !turn.paired && !pending.contains(turn)) pending.addLast(turn)

@@ -52,7 +52,7 @@
   const shortcuts = ['checkin', 'operator', 'taxi', 'question'];
   const concierge = () => conciergeCopy[state.language] || conciergeCopy.en;
   const greet = (language) => (window.MANZANILLA_GREET && window.MANZANILLA_GREET[language]) || '';
-  const state = { page: 'idle', mode: 'translation', night: false, language: 'en', staff_language: 'es', demo: !native, connected: false, audioAvailable: false, audioGate: 'Translation audio is unavailable in this build. Ask staff to check Settings.', audio: 'off', active: false, phase: '', sessionId: '', generation: null, closed: true, terminated: true, error: '', metrics: '', utterances: new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: '', pendingPage: '', micLevel: 0 };
+  const state = { page: 'idle', mode: 'translation', night: false, language: 'en', staff_language: 'es', demo: !native, connected: false, audioAvailable: false, audioGate: 'Translation audio is unavailable in this build. Ask staff to check Settings.', audio: 'off', active: false, phase: '', sessionId: '', generation: null, closed: true, terminated: true, error: '', metrics: '', utterances: new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: '', pendingPage: '', micLevel: 0, speaker: 'auto' };
   let queuedShortcut = '';
   const selected = { language: false, staff_language: false };
   let defaultReceived = false;
@@ -104,7 +104,9 @@
   const sessionDock = () => {
     if (state.mode === 'translation') {
       const bands = state.bands || [state.micLevel, state.micLevel, state.micLevel];
-      return `<div class="voice-ball" data-hearing="${state.phase === 'listening' && state.audio === 'recording'}" role="meter" aria-label="Voice" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(state.micLevel * 100)}" style="--level:${state.micLevel};--b0:${bands[0]};--b1:${bands[1]};--b2:${bands[2]}">${icons.mic}</div>`;
+      const pick = (id, label) => `<button type="button" class="speaker-opt" data-speaker="${id}" aria-pressed="${state.speaker === id}">${label}</button>`;
+      const speakerPick = `<div class="speaker-pick" role="group" aria-label="Who is speaking">${pick('auto','Auto')}${pick('guest','Guest')}${pick('staff','Receptionist')}</div>`;
+      return `<div class="voice-ball" data-hearing="${state.phase === 'listening' && state.audio === 'recording'}" role="meter" aria-label="Voice" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(state.micLevel * 100)}" style="--level:${state.micLevel};--b0:${bands[0]};--b1:${bands[1]};--b2:${bands[2]}">${icons.mic}</div>${speakerPick}`;
     }
     const stopped = state.closed || state.terminated;
     const restart = state.terminated && !state.active && state.audio === 'off';
@@ -229,6 +231,7 @@
     state.closed = false;
     state.terminated = false;
     state.active = true;
+    state.speaker = 'auto';
     state.phase = 'connecting';
     state.error = '';
     page('active');
@@ -339,6 +342,14 @@
     }
   }
   content.addEventListener('click', event => { const button = event.target.closest('[data-action]'); if (button && !button.disabled) perform(button.dataset.action); });
+  content.addEventListener('click', event => {
+    const button = event.target.closest('[data-speaker]');
+    if (!button || state.mode !== 'translation' || !state.active) return;
+    activity();
+    state.speaker = button.dataset.speaker;
+    send('speaker', { side: state.speaker === 'auto' ? '' : state.speaker });
+    render();
+  });
   content.addEventListener('focusin', event => {
     const side = event.target.dataset.languageSide;
     if (!['language','staff_language'].includes(side)) return;

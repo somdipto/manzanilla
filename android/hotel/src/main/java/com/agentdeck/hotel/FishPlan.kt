@@ -40,6 +40,11 @@ object FishPlan {
     // so the pin follows the staff language when available and English otherwise.
     private val SPEAKING_SUPPORTED = setOf("en", "ja", "zh", "ko", "es", "fr", "de")
 
+    // Deepgram Nova-3 waits ~0.4 s from the caller's last word to a transcript versus ~0.9 s for
+    // Scribe v2 Realtime (https://docs.fish.audio/agents/build/voice-language), but its mid-call
+    // language switching covers only this set, so sessions outside it keep the broader Scribe model.
+    private val NOVA3_SWITCHING = setOf("en", "es", "fr", "de", "hi", "ru", "pt", "ja", "it", "nl")
+
     private val GENERIC_PROMPT = """
         You are a spoken interpreter between a hotel guest and a receptionist who share one microphone. Each conversation tells you the two languages.
         When you hear one language, speak only the translation in the other language. Switch the spoken output language on every utterance to the other person's language.
@@ -82,5 +87,6 @@ object FishPlan {
         .put("tool_events", false)
         .put("world_context", false)
         .put("overrides", JSONObject()
-            .put("system_prompt", prompt(guest, staff)))
+            .put("system_prompt", prompt(guest, staff))
+            .apply { if (guest in NOVA3_SWITCHING && staff in NOVA3_SWITCHING) put("asr", JSONObject().put("model", "deepgram:nova-3")) })
 }

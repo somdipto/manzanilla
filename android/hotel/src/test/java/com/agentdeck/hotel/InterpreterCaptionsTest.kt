@@ -110,4 +110,33 @@ class InterpreterCaptionsTest {
         assertEquals("u2", events[0].getString("utterance_id"))
         assertEquals("original", events[0].getString("field"))
     }
+
+    @Test fun manualSpeakerPinOverridesLanguageEvidence() {
+        val c = InterpreterCaptions(guest = "es", staff = "en")
+        c.forceSpeaker("staff")
+        val e1 = c.accept(raw("human", "u1", "Hola, ¿tiene una habitación libre para esta noche?", true))
+        assertEquals("staff", e1[0].getString("side"))
+        assertEquals("es", e1[0].getString("from"))
+        // A pinned side is deliberate: the agent cross-check must not flip it back.
+        val e2 = c.accept(raw("assistant", "a1", "Hola, ¿tiene una habitación libre para esta noche?", true))
+        assertEquals("staff", e2.last().getString("side"))
+    }
+
+    @Test fun clearingPinReturnsToLanguageDetection() {
+        val c = InterpreterCaptions(guest = "es", staff = "en")
+        c.forceSpeaker("staff")
+        c.forceSpeaker(null)
+        val e1 = c.accept(raw("human", "u1", "Hola, ¿tiene una habitación libre para esta noche?", true))
+        assertEquals("guest", e1[0].getString("side"))
+    }
+
+    @Test fun ambiguousTurnAlternatesFromPreviousSpeaker() {
+        val c = InterpreterCaptions(guest = "es", staff = "en")
+        val e1 = c.accept(raw("human", "u1", "Hola, ¿tiene una habitación libre para esta noche?", true))
+        assertEquals("guest", e1[0].getString("side"))
+        // No letters, no language evidence: the next speaker is usually the other person.
+        val e2 = c.accept(raw("human", "u2", "205", true))
+        assertEquals("staff", e2[0].getString("side"))
+        assertEquals("en", e2[0].getString("from"))
+    }
 }

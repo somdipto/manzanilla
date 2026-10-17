@@ -1,3 +1,20 @@
+# 17.0.17 - Speaker-side fixes and faster recognition on common language pairs
+
+## Speaker side (guest vs receptionist)
+
+- One shared microphone carries no per-voice signal on the provider wire (only local-participant vs agent identity), so sides come from the language of each utterance's transcript. Verified against the Fish wire protocol: transcription streams carry only segment ID + final flag.
+- Ambiguous utterances (near-zero language evidence: numbers, names) no longer default to the guest side; they alternate from the previous speaker, matching how conversation turns work.
+- New manual fallback on the translation screen: an Auto / Guest / Receptionist control. Auto keeps language-based sides; tapping Guest or Receptionist pins the side until changed back. The pin says who is speaking; the spoken language still comes from the transcript. A pinned side is never flipped by the agent-output cross-check.
+
+## Faster speech recognition within the Fish stack
+
+- Sessions whose two languages are both in Deepgram Nova-3's mid-call switching set (en, es, fr, de, hi, ru, pt, ja, it, nl) now run Nova-3 (~0.4 s last-word-to-transcript per Fish docs, Fish's own default) instead of ElevenLabs Scribe v2 Realtime (~0.9 s). Other language pairs keep Scribe's broader coverage. Per-session override via `overrides.asr.model`; both models are Fish-hosted and Fish-billed - no third-party key exists anywhere in the app.
+
+## Verification
+
+- `:hotel:testDebugUnitTest` 50/50 green, including pin-overrides-language, pin-clears-to-detection, and ambiguous-turn-alternation cases.
+- Translation screen preview rendered locally (Auto and Receptionist states) before shipping.
+
 # 17.0.16 - Hardcode audit of the translation path
 
 ## What was hardcoded, what is dynamic now

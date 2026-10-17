@@ -62,6 +62,9 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
     }
     @Volatile private var current: Run? = null
 
+    /** Pins the caption speaker side for the live run; null returns to language detection. */
+    fun speaker(side: String?) { current?.interpreter?.forceSpeaker(side) }
+
     @Synchronized fun start(guest: String, staff: String, mode: String = "translation", sessionId: String = "", epoch: Int = 0) {
         if (current != null) return
         val run = Run(VoiceSession(sessionId, epoch, guest, staff, mode, push))
