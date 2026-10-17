@@ -1,3 +1,25 @@
+# 17.0.18 - Dead code removal and remaining fixed values
+
+## Removed
+
+- The legacy `android/app` module (an unrelated imported companion app: Stream Deck menus, camera, pet sprites) deleted with its `include(":app")`; the repo now builds only the reception app.
+- Dead UI classes `LiveCompanionView` and `LiveVoiceScene` (referenced by nothing).
+
+## Fixed values removed
+
+- Agent/session timezone was fixed to Europe/Madrid; it now follows the device timezone (`TimeZone.getDefault()`).
+- The reception info default staff language was fixed to Spanish; it now comes from the device locale when that language is supported, and is omitted otherwise.
+- The translation picker's initial languages were fixed to English/Spanish; they now start from the browser/device locale within the supported language list.
+
+## Kept deliberately (platform constraints and product config, not logic hardcoding)
+
+- Fish's 7-language speaking allowlist and Nova-3's 10-language switching set (vendor-documented capability lists).
+- The default Fish voice id fallback and the per-language classifier evidence tables (scripts, letters, stopwords for every supported language - this is detection data, not a fixed side or language).
+
+## Verification
+
+- `:hotel:testDebugUnitTest` green (50/50) after the deletions; JS syntax checked. CI runs lint + assemble on push.
+
 # 17.0.17 - Speaker-side fixes and faster recognition on common language pairs
 
 ## Speaker side (guest vs receptionist)
