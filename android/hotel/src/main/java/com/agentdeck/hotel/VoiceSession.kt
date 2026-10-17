@@ -14,7 +14,6 @@ internal class VoiceSession(
     private enum class State { ACTIVE, STOPPING, CLOSED }
     private var state = State.ACTIVE
     private var ready = false
-    private var greeted = false
     private var capturing = false
     private val stopped = ArrayList<() -> Unit>()
 
@@ -34,9 +33,8 @@ internal class VoiceSession(
         emit(event)
     }
     @Synchronized fun ready(open: () -> Unit) { ready = true; capture(open) }
-    @Synchronized fun greeted(open: () -> Unit) { greeted = true; capture(open) }
     private fun capture(open: () -> Unit) {
-        if (state == State.ACTIVE && ready && greeted && !capturing) {
+        if (state == State.ACTIVE && ready && !capturing) {
             capturing = true
             open()
         }

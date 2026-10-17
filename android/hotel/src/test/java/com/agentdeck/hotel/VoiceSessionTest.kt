@@ -6,34 +6,28 @@ import org.junit.Test
 import java.util.concurrent.CountDownLatch
 
 class VoiceSessionTest {
-    @Test fun captureWaitsForBothPrerequisitesInEitherOrderAndOpensOnce() {
-        for (greetingFirst in listOf(true, false)) {
-            var captures = 0
-            val owner = VoiceSession("guest", 1, "en", "es", "translation") {}
-            val open = { captures++; Unit }
-            if (greetingFirst) owner.greeted(open) else owner.ready(open)
-            assertEquals(0, captures)
-            if (greetingFirst) owner.ready(open) else owner.greeted(open)
-            owner.ready(open)
-            owner.greeted(open)
-            assertEquals(1, captures)
-        }
+    @Test fun captureWaitsForReadyAndOpensOnce() {
+        var captures = 0
+        val owner = VoiceSession("guest", 1, "en", "es", "translation") {}
+        val open = { captures++; Unit }
+        owner.ready(open)
+        owner.ready(open)
+        assertEquals(1, captures)
     }
 
-    @Test fun stoppingBeforeEitherReadyOrGreetingFencesLateCaptureAndPlayback() {
-        for (greetingFirst in listOf(true, false)) {
+    @Test fun stoppingBeforeReadyFencesLateCaptureAndPlayback() {
+        run {
             val events = ArrayList<JSONObject>()
             val owner = VoiceSession("old", 1, "en", "es", "translation", events::add)
             var captures = 0
             var playback = 0
             var acknowledged = false
-            if (greetingFirst) owner.greeted { captures++ } else owner.ready { captures++ }
+            owner.ready { captures++ }
             assertTrue(owner.close { acknowledged = true })
             owner.ready { captures++ }
-            owner.greeted { captures++ }
             owner.use { playback++ }
             owner.phase("speaking")
-            assertEquals(0, captures)
+            assertEquals(1, captures)
             assertEquals(0, playback)
             assertTrue(events.isEmpty())
             assertFalse(acknowledged)
@@ -77,7 +71,6 @@ class VoiceSessionTest {
         val delayed = Thread {
             releaseCallback.await()
             old.ready { oldCaptures++ }
-            old.greeted { oldCaptures++ }
             old.emit(JSONObject().put("type", "caption").put("text", "previous guest"))
         }
         delayed.start()
@@ -86,7 +79,6 @@ class VoiceSessionTest {
         events.clear()
         val fresh = VoiceSession("fresh", 9, "fr", "de", "translation", events::add)
         var newCaptures = 0
-        fresh.greeted { newCaptures++ }
         fresh.ready { newCaptures++ }
         releaseCallback.countDown()
         delayed.join()

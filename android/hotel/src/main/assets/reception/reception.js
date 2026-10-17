@@ -84,22 +84,21 @@
   const fine = (text) => `<p class="fine">${esc(text)}</p>`;
 
   const languageDir = language => !language ? 'auto' : /^(ar|he|fa|ur)(-|$)/.test(language) ? 'rtl' : 'ltr';
-  const captionLabel = entry => entry.kind === 'app_greeting' ? 'Welcome' : entry.side === 'assistant' ? 'Manzanilla (not a translation)' : entry.side === 'guest' ? 'Guest' : 'Receptionist';
+  const captionLabel = entry => entry.side === 'assistant' ? 'Manzanilla (not a translation)' : entry.side === 'guest' ? 'Guest' : 'Receptionist';
   const captionLanguage = language => language ? langName(language) : 'Language not identified';
   const caption = entry => {
     if (state.mode === 'translation') {
       const said = entry.original || '';
       const translated = entry.text || '';
       const side = entry.side === 'guest' ? 'guest' : 'reception';
-      return `<article class="caption caption-${side}${entry.kind === 'app_greeting' ? ' greeting' : ''}"><p class="said" dir="${languageDir(entry.from)}">${esc(said)}</p>${translated ? `<p class="translated" dir="${languageDir(entry.to)}">${esc(translated)}</p>` : ''}</article>`;
+      return `<article class="caption caption-${side}"><p class="said" dir="${languageDir(entry.from)}">${esc(said)}</p>${translated ? `<p class="translated" dir="${languageDir(entry.to)}">${esc(translated)}</p>` : ''}</article>`;
     }
-    const welcome = entry.kind === 'app_greeting';
     const parts = [];
     if (entry.original) parts.push({ language: entry.from, text: entry.original, field: 'original', label: '' });
     if (entry.text) parts.push({ language: entry.to, text: entry.text, field: 'text', label: '' });
     const paired = parts.length === 2 && state.language !== state.staff_language && ((entry.from === state.language && entry.to === state.staff_language) || (entry.from === state.staff_language && entry.to === state.language));
     if (paired && parts[0].language === state.staff_language) parts.reverse();
-    return `<article id="${esc(entry.id)}" class="caption caption-${entry.side === 'guest' ? 'guest' : 'reception'}" data-source="${welcome ? 'app' : 'provider'}"${welcome ? ' data-kind="app_greeting"' : ''}><span class="caption-side">${captionLabel(entry)}</span>${parts.map((part,index) => `<div class="caption-part${index ? ' caption-divider' : ''}" data-field="${part.field}"><span class="caption-language">${esc(captionLanguage(part.language))}${welcome || !part.label ? '' : ` · ${part.label}`}</span><p class="caption-${part.field === 'original' ? 'original' : 'text'}" lang="${esc(part.language || 'und')}" dir="${languageDir(part.language)}">${esc(part.text)}</p></div>`).join('')}</article>`;
+    return `<article id="${esc(entry.id)}" class="caption caption-${entry.side === 'guest' ? 'guest' : 'reception'}" data-source="provider"}><span class="caption-side">${captionLabel(entry)}</span>${parts.map((part,index) => `<div class="caption-part${index ? ' caption-divider' : ''}" data-field="${part.field}"><span class="caption-language">${esc(captionLanguage(part.language))}${!part.label ? '' : ` · ${part.label}`}</span><p class="caption-${part.field === 'original' ? 'original' : 'text'}" lang="${esc(part.language || 'und')}" dir="${languageDir(part.language)}">${esc(part.text)}</p></div>`).join('')}</article>`;
   };
   const conversation = () => state.utterances.size ? [...state.utterances.values()].map(caption).join('') : `<div class="empty-transcript">${esc(state.mode === 'translation' ? t().begin : 'Choose a service or type a message. The microphone stays off.')}</div>`;
   const phaseLabel = () => ({ connecting: t().connect, ready: 'Staff-led support', greeting: 'Welcome', thinking: 'Translating', speaking: t().speaking, listening: 'Live', ending: 'Stopping', stopped: 'Stopped' })[state.phase] || t().reception;
@@ -502,16 +501,6 @@
       state.audio = event.state;
       if (state.audio !== 'recording') state.micLevel = 0;
       if (!finishNavigation()) render();
-      return;
-    }
-    if (type === 'app_greeting') {
-      if (event.state !== 'started' || !state.active || state.closed || state.terminated || event.language !== state.language || event.staff_language !== state.staff_language) return;
-      const key = `${state.sessionId}:app:greeting`;
-      const guestWelcome = greet(event.language);
-      const staffWelcome = greet(event.staff_language);
-      if (state.utterances.has(key) || !guestWelcome || !staffWelcome) return;
-      state.utterances.set(key, { id: key, kind: 'app_greeting', side: 'app', from: event.language, to: event.staff_language, original: guestWelcome, text: staffWelcome });
-      render();
       return;
     }
     if (state.terminated) return;

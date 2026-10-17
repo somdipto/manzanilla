@@ -1,4 +1,15 @@
-# 17.0.18 - Dead code removal and remaining fixed values
+# Verification notes (newest first)
+
+## 17.0.19 (2026-10-18) - Scribe everywhere, mic at ready, Fish-spoken greeting
+
+Root causes fixed (from the Oct 17 symptom-to-code diagnosis):
+- STT: Nova-3-for-speed override (17.0.17 misjudgment) removed; Scribe v2 realtime is the ASR model in every mode again. Accuracy first for an interpreter (Coval Oct 17: Scribe 4.3% WER vs Nova-3 5.3%).
+- Latency: mic capture now opens at room-ready, not after a locally-played greeting WAV finished. The WAV gate (VoiceSession.greeted, playGreeting in HotelActivity, greetingDone in FishVoice) is deleted; capture gate is `ready && !capturing`.
+- Greeting: the agent itself speaks one short guest-language greeting via agent config first_message (mode "fixed", per-session overrides.first_message from greetings.js). The 40 bulk-rendered 16kHz mono greeting WAVs are deleted from assets.
+- Voice: expressive:true in agent config (was false, a cause of the robotic sound).
+- Guest UX: the "unverified" echo dev-notice and its captions emit are removed; guests see no dev notices.
+
+Verified: :hotel:testDebugUnitTest 50/50 green (VoiceSessionTest greeting-gate tests rewritten for the ready-only gate); reception.js node --check OK. Real-device speech/echo behavior is APK-verified by the owner, not claimed here.
 
 ## Removed
 

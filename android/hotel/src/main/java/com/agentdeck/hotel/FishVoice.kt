@@ -45,7 +45,7 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
     private val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
     private val meta = ctx.getSharedPreferences("fishmeta", Context.MODE_PRIVATE)
     private val cleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private inner class Run(val owner: VoiceSession) {
+    private inner class Run(val owner: VoiceSession, val greet: String) {
         val timing = AudioTurnTiming(SystemClock::elapsedRealtime) { Log.i("AudioTiming", "source=interpreter-sdk $it") }
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         val calls = ConcurrentHashMap.newKeySet<Call>()
@@ -65,9 +65,9 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
     /** Pins the caption speaker side for the live run; null returns to language detection. */
     fun speaker(side: String?) { current?.interpreter?.forceSpeaker(side) }
 
-    @Synchronized fun start(guest: String, staff: String, mode: String = "translation", sessionId: String = "", epoch: Int = 0) {
+    @Synchronized fun start(guest: String, staff: String, mode: String = "translation", sessionId: String = "", epoch: Int = 0, greet: String = "") {
         if (current != null) return
-        val run = Run(VoiceSession(sessionId, epoch, guest, staff, mode, push))
+        val run = Run(VoiceSession(sessionId, epoch, guest, staff, mode, push), greet)
         current = run
         run.owner.emit(JSONObject().put("type", "audio_state").put("state", "off"))
         if (!AudioPolicy.allowStart { terminate(run, "error", it) }) return
@@ -97,7 +97,6 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
         }
     }
 
-    fun greetingDone() { current?.let { run -> run.owner.greeted { capture(run) } } }
     fun stop(onStopped: () -> Unit = {}) { val run = current; if (run == null) onStopped() else detach(run, null, onStopped) }
     fun release() = stop()
 
@@ -173,18 +172,6 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
         }
     }
 
-    private fun echoNotice(): String {
-        val supported = runCatching {
-            Class.forName("livekit.org.webrtc.audio.WebRtcAudioUtils")
-                .getMethod("isAcousticEchoCancelerSupported").invoke(null) as? Boolean
-        }.getOrNull()
-        return when (supported) {
-            true -> "This device reports hardware echo cancellation; real echo behavior still needs a physical conversation test."
-            false -> "This device does NOT report hardware echo cancellation; the speaker may feed back into the microphone. Keep volume moderate."
-            null -> "Audio echo-control capability is not reported by this SDK path; echo performance has not been physically verified."
-        }
-    }
-
     private fun capture(run: Run) {
         run.scope.launch {
             if (!run.owner.active()) return@launch
@@ -204,8 +191,6 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
                 run.owner.use {
                     run.recording = true
                     run.owner.emit(JSONObject().put("type", "audio_state").put("state", "recording"))
-                    run.owner.emit(JSONObject().put("type", "notice").put("status", "unverified")
-                        .put("text", echoNotice()))
                     run.owner.phase("listening")
                 }
             } catch (_: CancellationException) { }
@@ -324,7 +309,7 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
             .put("description", "Hotel interpreter").put("config", FishPlan.agentConfig(voiceId, staff))).getString("agent_id")
 
     private fun createSession(run: Run, apiKey: String, id: String, guest: String, staff: String): Session =
-        parseSession(run, call(run, apiKey, "POST", "/v1/agent/sessions", FishPlan.sessionBody(id, guest, staff)),
+        parseSession(run, call(run, apiKey, "POST", "/v1/agent/sessions", FishPlan.sessionBody(id, guest, staff, run.greet)),
             "https://api.fish.audio/v1/agent/sessions", apiKey)
     private fun parseSession(run: Run, json: JSONObject, sessionBase: String, credential: String): Session {
         check(json.optString("transport") == "livekit") { "Unsupported transport" }

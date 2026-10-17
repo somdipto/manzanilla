@@ -6,9 +6,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
-import android.media.AudioAttributes
 import android.media.AudioManager
-import android.media.MediaPlayer
 import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Build
@@ -56,8 +54,6 @@ class HotelActivity : Activity() {
     private var pendingPermission: SessionOwner.Lease? = null
     private var audioState = "off"
     private var lastActivity = 0L
-    private var greetPlayer: MediaPlayer? = null
-    private var greetToken = 0
     private val watchdog = object : Runnable {
         override fun run() {
             if (destroyed) return
@@ -161,14 +157,7 @@ class HotelActivity : Activity() {
         } else {
             // The only approved route is the Fish-hosted interpreter; never fall back to another provider.
             engine = Engine.FISH
-            fish.start(request.guest, request.staff, request.mode, request.id, lease.generation)
-        }
-        if (!current(lease)) return
-        playGreeting(lease) {
-            if (current(lease) && foreground) when (engine) {
-                Engine.FISH -> fish.greetingDone()
-                null -> Unit
-            }
+            fish.start(request.guest, request.staff, request.mode, request.id, lease.generation, request.greeting)
         }
     }
 
@@ -177,7 +166,6 @@ class HotelActivity : Activity() {
         if (done != null) afterRelease.add(done)
         val lease = owner.beginClose()
         if (lease == null) { if (owner.current == null) finishReleaseActions(); return }
-        stopGreeting()
         gateway?.end()
         phase(lease, "ending")
         audio(lease, "stopping")
@@ -204,50 +192,6 @@ class HotelActivity : Activity() {
         while (afterRelease.isNotEmpty()) afterRelease.removeAt(0).invoke()
     }
 
-    private fun playGreeting(lease: SessionOwner.Lease, done: () -> Unit) {
-        stopGreeting()
-        val token = greetToken
-        phase(lease, "greeting")
-        try {
-            val player = MediaPlayer()
-            greetPlayer = player
-            player.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-            assets.openFd("greetings/${lease.request.guest}.wav").use { player.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
-            player.setOnCompletionListener {
-                if (token == greetToken && current(lease)) { stopGreeting(); done() }
-            }
-            player.setOnErrorListener { _, _, _ ->
-                if (token == greetToken && current(lease)) stopSession("error", "The welcome audio could not play. Ask staff to check the speaker before starting.")
-                true
-            }
-            player.setOnPreparedListener {
-                if (token != greetToken || !current(lease) || !foreground || it !== greetPlayer) return@setOnPreparedListener
-                try {
-                    it.start()
-                    if (it.isPlaying && token == greetToken && current(lease) && foreground && it === greetPlayer) {
-                        push(lease, JSONObject().put("type", "app_greeting").put("state", "started")
-                            .put("language", lease.request.guest).put("staff_language", lease.request.staff))
-                    }
-                } catch (_: Exception) {
-                    if (token == greetToken && current(lease)) stopSession("error", "The welcome audio could not play. Ask staff to check the speaker before starting.")
-                }
-            }
-            player.prepareAsync()
-        } catch (_: Exception) {
-            stopSession("error", "The welcome audio is unavailable. Ask staff to check this installation.")
-        }
-    }
-
-    private fun stopGreeting() {
-        greetToken++
-        greetPlayer?.let { player ->
-            player.setOnCompletionListener(null); player.setOnPreparedListener(null); player.setOnErrorListener(null)
-            runCatching { player.stop() }
-            player.release()
-        }
-        greetPlayer = null
-    }
 
     private fun ringBell() {
         if (!ringing.compareAndSet(false, true)) return
@@ -348,7 +292,7 @@ class HotelActivity : Activity() {
                 val side = message.optString("side")
                 fish.speaker(if (side == "guest" || side == "staff") side else null)
             }
-            "silence" -> if (greetPlayer != null && owner.current != null) stopSession() else stopGreeting()
+            "silence" -> if (owner.current != null) stopSession()
             "exit" -> stopSession(done = { finish() })
             "check_updates" -> updater.check()
             "apply_update" -> if (owner.current == null) updater.installOffered() else notice("End the conversation before installing the update.")
