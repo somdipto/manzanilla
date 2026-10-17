@@ -154,3 +154,7 @@ The API wallet returned 180.00 immediately after both calls, unchanged from its 
 Ordinary CI/debug/release builds remain provider-key-free. This requested keyed release is an explicit security exception: anyone holding the APK can extract the account credential and bypass backend admission limits. The key is stored as an encrypted Actions secret, not repository source. Rotate before production.
 
 Managed admission reserves 600 seconds per session, at most one outstanding lease per device; default UTC-day caps are 1800 hotel seconds and 3600 account seconds. Reservations are not refunded and are not dollar-denominated limits. Unknown creation outcomes and failed termination fail closed; they require revocation/reconciliation rather than guessed expiry. Real PMS, operator/taxi delivery, deployment region, privacy/retention setup, and physical reception hardware remain production prerequisites.
+
+# 17.0.14 - Aurora wave animation
+
+The reception background wave now drifts slowly (26-second ease-in-out loop). The change is one CSS rule on the existing aurora SVG: transform-only keyframes, so it runs on the GPU compositor with no repaints and no JavaScript. The existing global prefers-reduced-motion rule disables it automatically. Verified by rendering the shipped reception page in a real browser and frame-diffing 10 captures (motion confined to the wave region); layout, text and controls are pixel-identical otherwise.
