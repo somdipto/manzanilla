@@ -1,60 +1,68 @@
 # Manzanilla
 
-Reception support for guests and hotel staff. Staff retain responsibility for guidance, requests and human handoff.
+**Faster execution hardware for the hospitality industry.**
 
-## Current version: 17.0.10
+Manzanilla Reception is a landscape Android app for guests and hotel staff. The home screen offers live translation, hotel assistance, arrival guidance, taxi requests, and staff messages. The English greeting line is “Hey, hi, how are you doing?”
 
-- Hotel assistance works with the microphone off: arrival guidance, hotel questions, taxi requests, confirmed staff messages and human-contact options.
-- Actual hotel configuration is required. Missing guidance or contacts remain unavailable; no sample reservation or invented policy powers the app.
-- Messages and taxi requests require review and confirmation. A saved inbox receipt is not staff acknowledgement, an answered call or a taxi booking.
-- **Live translation is gated pending verified free-only audio eligibility.** Existing language selectors, local greetings and voice code are retained, but credentials cannot bypass the gate. There is no paid fallback or automatic route switching.
-- The English startup greeting remains **“Hey, how are you doing?”** Local greeting playback is app-owned, not proof of a live provider conversation.
-- No provider account key or hotel device token is embedded in the APK. The hotel connection is entered through authenticated staff setup and encrypted on the device.
+<p align="center">
+  <a href="https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Manzanilla%20Reception-2ea44f?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="56"></a>
+  &nbsp;
+  <a href="https://github.com/somdipto/manzanilla/releases"><img src="https://img.shields.io/badge/All%20releases-GitHub-24292e?style=for-the-badge&logo=github" alt="All releases" height="56"></a>
+</p>
 
-This release fixes stale managed-agent configuration identities, prevents conflicting translation output from being mixed, removes the translation-shortening instruction and adds endpoint-labelled timing. These are source/contract improvements, **not a measured physical-device latency or full-duplex acceptance claim**.
+## How the app looks
 
-## Install or update
+These are the current screens, rendered at a 6-inch landscape size. They are not a live hotel conversation.
 
-**[Download the latest app](https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk)** · [Release history](https://github.com/somdipto/manzanilla/releases)
+<p align="center"><img src="docs/screens/current-home.png" alt="Reception home" width="720"></p>
 
-1. Open Manzanilla and tap **Check updates**. Resume also checks automatically; a foreground app rechecks every ten minutes.
-2. Tap the downloaded update, allow installation from this source if requested, then approve the system **Update** prompt.
-3. Do not uninstall. In-place updates retain app data and saved credentials.
+<p align="center"><img src="docs/screens/current-languages.png" alt="Live translation language choice" width="720"></p>
 
-Versions through 17.0.7 can hide discovery failures or defer checks. If the update does not appear, use the download link for a one-time manual in-place **Update**, not an uninstall.
+<p align="center"><img src="docs/screens/current-assistance.png" alt="Hotel assistance language choice" width="720"></p>
 
-Installation still requires system confirmation; this is not silent remote installation.
+<p align="center"><img src="docs/screens/current-translation-greeting.png" alt="Translation greeting with the green microphone orb" width="720"></p>
 
-## Staff setup
+<p align="center"><img src="docs/screens/current-translation-listening.png" alt="Translation listening with the red microphone orb" width="720"></p>
 
-Open the setup gear and authenticate with the device screen lock. Enter the hotel's actual HTTPS service URL and a hotel-scoped **device** credential issued by its administrator. Never enter the administrator credential. URL and device token are encrypted and replaced together.
+Every reception screen, including older releases, is listed in [docs/screens](docs/screens/README.md).
 
-The backend must also run the matching revision for confirmed messages and microphone-off guidance. Staff approve the hotel's real policies, contacts, hours and knowledge before use. Live audio remains blocked even if old voice keys are saved. Rotate/revoke the exposed credential from older pilot builds through its account owner; removing it from a new APK does not revoke it.
+## Install
 
-Legacy local-only notes are not uploaded, relabelled as delivered or automatically deleted by the update. New staff messages use the confirmed backend inbox flow.
+1. On the Android device, open **[Manzanilla-Reception.apk (latest)](https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk)**.
+2. Open the downloaded file. If Android asks, allow installation from this source, then tap Install.
+3. Open **Manzanilla**. Use the staff-setup gear for the hotel service. No provider account key is embedded in the APK.
 
-## Evidence and limitations
+## Update an existing installation
 
-[Verification record](artifacts/VERIFICATION.md) · [Pre-change Phase 1 baseline](docs/PHASE-1-BASELINE.md) · [Configuration and security](docs/ENVIRONMENT.md) · [Pilot deployment](docs/PILOT-DEPLOYMENT.md)
+Open Manzanilla while connected to the internet. Tap **Check updates**. Tap the downloaded update, allow installation if Android asks, then approve the system **Update** prompt. Do not uninstall. An in-place update keeps app data and saved credentials.
 
-[Isolated message form](docs/screens/17.0.10-message-form-fixture.png) · [Isolated request receipt](docs/screens/17.0.10-message-receipt-fixture.png) · [Secret-free staff-led fixture video](docs/videos/17.0.10-staff-led-fixture.webm)
+<p align="center"><img src="docs/screens/17.0.10-update-offer.png" alt="The installed app offering a downloaded update" width="720"></p>
 
-Fixture screenshots/video are labelled isolated verification, not real hotel requests or guest interviews. Browser bridge fixtures are not native audio proof. Physical echo handling, audible latency, language quality, real hotel receipts and supervised workflow validation remain unverified. Phase 1 is not declared complete; the omitted brief sections and three acceptance-gate definitions are still required.
+<p align="center"><img src="docs/screens/17.0.10-installed.png" alt="The app after the in-place update" width="720"></p>
 
-## Repository
+The published download is still 17.0.10 until the next signed release. The screens above are the current source, not that published APK.
 
-`android/hotel` is the active app. `cloud` contains authenticated hotel operations; `admin` contains hotel setup and inbox views. `edge`, `infra` and `shared` contain supporting interfaces. The older `android/app` is not the reception implementation.
+## What is in this repository
+
+| Folder | What it is |
+| --- | --- |
+| `android/hotel` | The Manzanilla Reception app |
+| `cloud` | Hotel operations backend |
+| `admin` | Hotel setup and inbox |
+| `edge`, `infra`, `shared` | Supporting interfaces |
+| `docs` | Screens, deployment notes, and configuration |
+| `.github/workflows` | Build, test, and signed release |
 
 ## Build
 
-Requires JDK 17 and SDK 34:
+Requires JDK 17 and Android SDK 34.
 
 ```sh
 cd android
-./gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug
+./gradlew :hotel:assembleDebug
 ```
 
-Signed publication preserves the existing application identity and signing certificate, verifies the APK against the previous public release, and checks immutable update metadata. CI holds the signing credential; it is never committed. There is no keyed-pilot build option.
+Signed release builds run in GitHub Actions. The signing key stays in repository secrets and is never committed.
 
 ## License
 
