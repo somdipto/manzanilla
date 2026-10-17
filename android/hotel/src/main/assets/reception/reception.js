@@ -84,12 +84,16 @@
   const captionLabel = entry => entry.kind === 'app_greeting' ? 'Welcome' : entry.side === 'assistant' ? state.mode === 'translation' ? 'Translation · unlinked' : 'Manzanilla · unlinked' : entry.side === 'guest' ? 'Guest' : 'Receptionist';
   const captionLanguage = language => language ? langName(language) : 'Language not identified';
   const caption = entry => {
+    if (state.mode === 'translation') {
+      const said = entry.original || '';
+      const translated = entry.text || '';
+      const side = entry.side === 'guest' ? 'guest' : 'reception';
+      return `<article class="caption caption-${side}${entry.kind === 'app_greeting' ? ' greeting' : ''}"><p class="said" dir="${languageDir(entry.from)}">${esc(said)}</p>${translated ? `<p class="translated" dir="${languageDir(entry.to)}">${esc(translated)}</p>` : ''}</article>`;
+    }
     const welcome = entry.kind === 'app_greeting';
     const parts = [];
-    // The part's language is already shown, so the field label would repeat it.
     if (entry.original) parts.push({ language: entry.from, text: entry.original, field: 'original', label: '' });
     if (entry.text) parts.push({ language: entry.to, text: entry.text, field: 'text', label: '' });
-    // Reorder only an explicitly identified language pair, never unrelated feeds.
     const paired = parts.length === 2 && state.language !== state.staff_language && ((entry.from === state.language && entry.to === state.staff_language) || (entry.from === state.staff_language && entry.to === state.language));
     if (paired && parts[0].language === state.staff_language) parts.reverse();
     return `<article id="${esc(entry.id)}" class="caption caption-${entry.side === 'guest' ? 'guest' : 'reception'}" data-source="${welcome ? 'app' : 'provider'}"${welcome ? ' data-kind="app_greeting"' : ''}><span class="caption-side">${captionLabel(entry)}</span>${parts.map((part,index) => `<div class="caption-part${index ? ' caption-divider' : ''}" data-field="${part.field}"><span class="caption-language">${esc(captionLanguage(part.language))}${welcome || !part.label ? '' : ` · ${part.label}`}</span><p class="caption-${part.field === 'original' ? 'original' : 'text'}" lang="${esc(part.language || 'und')}" dir="${languageDir(part.language)}">${esc(part.text)}</p></div>`).join('')}</article>`;
@@ -98,11 +102,16 @@
   const phaseLabel = () => ({ connecting: t().connect, ready: 'Staff-led support', greeting: 'Welcome', thinking: 'Translating', speaking: t().speaking, listening: 'Live', ending: 'Stopping', stopped: 'Stopped' })[state.phase] || t().reception;
   const sessionAudioText = () => ({ off:'Mic off', recording:'Mic on', stopping:'Releasing mic', unknown:'Mic state unknown · ask staff' })[state.audio];
   const sessionDock = () => {
+    if (state.mode === 'translation') {
+      const bands = state.bands || [state.micLevel, state.micLevel, state.micLevel];
+      return `<div class="voice-ball" data-hearing="${state.phase === 'listening' && state.audio === 'recording'}" role="meter" aria-label="Voice" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(state.micLevel * 100)}" style="--level:${state.micLevel};--b0:${bands[0]};--b1:${bands[1]};--b2:${bands[2]}">${icons.mic}</div>`;
+    }
     const stopped = state.closed || state.terminated;
     const restart = state.terminated && !state.active && state.audio === 'off';
-    const indicator = state.mode === 'reception' ? `<div class="session-icon" role="img" aria-label="Staff-led support">${icons.bell}</div>` : `<div class="session-icon" role="meter" aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(state.micLevel * 100)}" style="--level:${state.micLevel}">${icons.mic}</div>`;
-    return `<div class="session-actions" data-stopped="${stopped}"><div class="session-control">${indicator}<div class="session-control-copy"><strong>${esc(stopped ? state.phase === 'ending' ? 'Stopping…' : 'Stopped' : phaseLabel())}</strong><span>${esc(sessionAudioText())}</span></div></div>${state.mode === 'reception' && !stopped ? action('message', 'Message staff', 'secondary', ['connecting','greeting'].includes(state.phase)) : ''}${action(restart ? 'restart' : 'stop', restart ? 'Restart' : stopped ? 'Releasing…' : 'Stop', 'stop', stopped && !restart)}</div>`;
+    const indicator = `<div class="session-icon" role="img" aria-label="Staff-led support">${icons.bell}</div>`;
+    return `<div class="session-actions" data-stopped="${stopped}"><div class="session-control">${indicator}<div class="session-control-copy"><strong>${esc(stopped ? state.phase === 'ending' ? 'Stopping…' : 'Stopped' : phaseLabel())}</strong><span>${esc(sessionAudioText())}</span></div></div>${!stopped ? action('message', 'Message staff', 'secondary', ['connecting','greeting'].includes(state.phase)) : ''}${action(restart ? 'restart' : 'stop', restart ? 'Restart' : stopped ? 'Releasing…' : 'Stop', 'stop', stopped && !restart)}</div>`;
   };
+
   function renderNotices() {
     const target = document.getElementById('notices');
     target.hidden = !state.notices.length;
@@ -116,6 +125,7 @@
 
   function render() {
     document.documentElement.dataset.appearance = appearance;
+    document.documentElement.dataset.translation = state.page === 'active' && state.mode === 'translation' ? 'live' : '';
     document.documentElement.lang = ['idle','languages','translation_languages'].includes(state.page) ? 'en' : state.language;
     document.documentElement.dataset.night = String(state.night);
     document.documentElement.dataset.page = state.page;
@@ -131,13 +141,15 @@
     document.getElementById('connection-text').textContent = state.connected ? 'Hotel connected' : 'Hotel setup needed';
     document.getElementById('hotel-label').textContent = state.hotel || 'Hotel reception';
     document.getElementById('privacy').innerHTML = `<span class="mic-dot${state.audio === 'recording' ? ' mic-live' : ''}"></span>${esc(sessionAudioText())}`;
-    document.getElementById('hardware-hint').textContent = state.active ? 'Green or red to stop' : state.page === 'translation_languages' ? 'Digits: first ten · Green: start · Red: back' : 'Green: translation';
+    document.getElementById('hardware-hint').textContent = state.active ? 'Green or red to stop' : state.page === 'translation_languages' ? 'Digits: first ten · ' + (state.audioAvailable ? 'Green: start · ' : '') + 'Red: back' : 'Green: translation';
     const homeAction = (name, icon, label, note = '') => `<button class="home-action${name === 'translation' ? ' home-action-main' : ''}" data-action="${name}">${name === 'translation' ? '<span class="orb">' + icons.arrow + '</span>' : icon}<span>${label}</span>${note ? '<small>' + note + '</small>' : ''}</button>`;
     const html = {
       idle: () => `<div class="welcome"><h1>Welcome.</h1><p>Guest and staff support.</p></div><nav class="home-actions" aria-label="Reception services">${homeAction('translation',icons.translate,'Live translation',state.audioAvailable ? 'Talk to each other' : 'Audio not yet eligible')}${homeAction('reception',icons.bell,'Hotel assistance')}${homeAction('request:checkin',icons.bed,'Arrival guide')}${homeAction('request:taxi',icons.car,'Taxi request')}${homeAction('request:message',icons.message,'Message staff')}</nav><div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="Switch to ${appearance === 'dark' ? 'brighter' : 'dimmed'} appearance" title="Appearance · keypad 1">${themeIcon()}</button></div>`,
-      languages: () => `<div class="status-line"><div><h2 class="language-heading">Hotel assistance</h2><p class="keypad-hint">Choose a language. Microphone off.</p></div><button class="back" data-action="back">${icons.back}Back</button></div><div class="language-list">${Object.entries(languages).map(([id,item],i) => action('language:' + id, `<span class="key">${i < 10 ? i === 9 ? 0 : i + 1 : ''}</span><strong lang="${id}" dir="${languageDir(id)}">${esc(item.native)}</strong>`, 'choice language', state.audio !== 'off')).join('')}</div>${state.audio !== 'off' ? fine('Wait for microphone release.') : ''}`,
-      translation_languages: () => `<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">Guest ↔ Receptionist</p></div><button class="back" data-action="back">${icons.back}Back</button></div><div class="language-pair">${languagePicker('language','Guest')}${languagePicker('staff_language','Receptionist')}</div><p id="setup-feedback" class="setup-feedback${sameLanguage() ? ' error' : ''}" role="status">${esc(!state.audioAvailable ? state.audioGate : sameLanguage() ? 'Choose two different languages.' : state.audio !== 'off' ? 'Wait for microphone release.' : 'Microphone off until Start.')}</p>${action('start',state.audioAvailable ? 'Start translation' : 'Audio unavailable','primary setup-start',!state.audioAvailable || sameLanguage() || state.audio !== 'off')}${!state.audioAvailable ? action('reception','Hotel assistance','secondary') : ''}`,
-      active: () => `<div class="status-line session-top"><div><h2>${state.mode === 'translation' ? 'Translation' : 'Hotel assistance'}</h2><p>${esc(state.mode === 'translation' ? langName(state.language) + ' ↔ ' + langName(state.staff_language) : phaseLabel())}</p></div><button class="back" data-action="back">${icons.back}Back</button></div>${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}<div class="session-scroll">${state.mode === 'reception' && !state.closed ? `<div class="shortcut-list">${shortcuts.map((id,i) => action(id, `<span class="key">${i + 1}</span><strong>${esc(concierge()[i])}</strong>`, 'choice shortcut', ['connecting','greeting'].includes(state.phase))).join('')}</div>` : ''}<div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">${conversation()}</div>${state.metrics ? `<p class="metrics">${esc(state.metrics)}</p>` : ''}</div>${sessionDock()}`,
+      languages: () => `<div class="status-line"><div><h2 class="language-heading">Hotel assistance</h2></div><button class="back" data-action="back">${icons.back}Back</button></div><label class="assist-label" for="assist-language">Language</label><select id="assist-language" class="assist-language" lang="${state.language}" dir="${languageDir(state.language)}">${Object.entries(languages).map(([id,item]) => `<option value="${id}" lang="${id}" dir="${languageDir(id)}" ${state.language === id ? 'selected' : ''}>${esc(item.native)}</option>`).join('')}</select>${action('assist-go','Continue','primary assist-go')}`,
+      translation_languages: () => `<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">Guest ↔ Receptionist</p></div><button class="back" data-action="back">${icons.back}Back</button></div><div class="language-pair">${languagePicker('language','Guest')}${languagePicker('staff_language','Receptionist')}</div>${action('start',state.audioAvailable ? 'Start translation' : 'Audio unavailable','primary setup-start',!state.audioAvailable || sameLanguage() || state.audio !== 'off')}`,
+      active: () => state.mode === 'translation'
+        ? `<button class="translate-back" data-action="back" aria-label="Back">${icons.back}</button><p class="pair-title">${esc(langName(state.language))} → ${esc(langName(state.staff_language))}</p><div class="session-scroll"><div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">${conversation()}</div></div>${sessionDock()}`
+        : `<div class="status-line session-top"><div><h2>Hotel assistance</h2><p>${esc(phaseLabel())}</p></div><button class="back" data-action="back">${icons.back}Back</button></div>${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}<div class="session-scroll">${!state.closed ? `<div class="shortcut-list">${shortcuts.map((id,i) => action(id, `<span class="key">${i + 1}</span><strong>${esc(concierge()[i])}</strong>`, 'choice shortcut', ['connecting','greeting'].includes(state.phase))).join('')}</div>` : ''}<div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">${conversation()}</div>${state.metrics ? `<p class="metrics">${esc(state.metrics)}</p>` : ''}</div>${sessionDock()}`,
       operation_form: () => `<div class="status-line"><h2>${esc(state.operation?.action === 'message' ? 'Message staff' : concierge()[shortcuts.indexOf(state.operation?.action)] || 'Hotel request')}</h2><button class="back" data-action="back">${icons.back}Back</button></div><form id="operation-form" class="operation-form">${(state.operation?.fields || []).map((field,index) => `<label for="operation-field-${index}">${esc(field.label)}${field.required ? ' *' : ''}${field.name === 'original_request' ? `<textarea id="operation-field-${index}" name="${esc(field.name)}" maxlength="4000" ${field.required ? 'required' : ''} autocomplete="off" dir="auto">${esc(state.operation.values[field.name] || '')}</textarea>` : `<input id="operation-field-${index}" name="${esc(field.name)}" value="${esc(state.operation.values[field.name] || '')}" ${field.required ? 'required' : ''} autocomplete="off" dir="auto">`}</label>`).join('')}<div class="button-row"><button type="submit" class="primary">Review</button>${action('cancel-operation',esc(t().cancel),'secondary')}</div></form>${action('stop','End','stop')}`,
       confirming: () => `<div class="status-line"><h2>Confirm request?</h2><button class="back" data-action="back">${icons.back}Back</button></div><div class="draft">${esc(state.draft?.message || '')}</div>${fine('Confirm only if the details are correct.')}<div class="button-row">${action('confirm',state.confirmed ? 'Sending…' : 'Confirm','primary',state.confirmed)}${action('cancel-draft',esc(t().cancel),'secondary',state.confirmed)}</div>`,
       saved: () => `<h2>Request receipt</h2><section class="request-receipt"><p class="lead" dir="auto">${esc(state.outcome?.text || 'No receipt returned. Ask staff to check.')}</p>${state.outcome?.receipt ? `<div class="receipt" dir="auto">${esc(state.outcome.receipt)}</div>` : ''}</section><div class="button-row">${action('continue',esc(t().continue))}${action('stop','End','secondary')}</div>`,
@@ -296,6 +308,13 @@
       case 'appearance': toggleAppearance(); break;
       case 'translation': chooseMode('translation'); break;
       case 'reception': chooseMode('reception'); break;
+      case 'assist-go': {
+        const language = document.getElementById('assist-language')?.value;
+        if (state.page !== 'languages' || !languages[language]) return;
+        selectLanguage('language', language);
+        start();
+        break;
+      }
       case 'start': start(); break;
       case 'restart': if (state.terminated && state.audio === 'off') start(true); break;
       case 'stop': stop(); break;
@@ -487,8 +506,11 @@
     if (type === 'mic_level') {
       const level = state.audio === 'recording' ? Math.min(1, Math.max(0, Number(event.level) || 0)) : 0;
       state.micLevel = level;
-      const meter = content.querySelector('.session-icon');
+      if (Array.isArray(event.bands) && event.bands.length >= 3) state.bands = event.bands.slice(0, 3).map(value => Math.min(1, Math.max(0, Number(value) || 0)));
+      else state.bands = [level, level * 0.72, level * 0.4];
+      const meter = content.querySelector('.voice-ball, .session-icon');
       meter?.style.setProperty('--level', String(level));
+      (state.bands || []).forEach((band, index) => meter?.style.setProperty('--b' + index, String(band)));
       meter?.setAttribute('aria-valuenow', String(Math.round(level * 100)));
       return;
     }

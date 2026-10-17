@@ -1,7 +1,7 @@
 /* Premade opening line, spoken in the guest language before the microphone opens. */
 window.MANZANILLA_GREET = {
   es: '¡Hola, cómo estás?',
-  en: 'Hey, how are you doing?',
+  en: 'Hey, hi, how are you doing?',
   ca: 'Hola, com estàs?',
   fr: 'Salut, ça va ?',
   de: 'Hallo, wie geht es dir?',

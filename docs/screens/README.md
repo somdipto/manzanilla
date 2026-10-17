@@ -1,5 +1,17 @@
 # Reception screens
 
+## Current working screens
+
+Browser renders of the current source at a 6-inch landscape size, 837×471 CSS pixels. These are not a published APK and not a live hotel conversation.
+
+| Screen | Image |
+| --- | --- |
+| Home | [current-home.png](current-home.png) |
+| Live translation language choice | [current-languages.png](current-languages.png) |
+| Hotel assistance language choice | [current-assistance.png](current-assistance.png) |
+| Translation greeting, green microphone orb | [current-translation-greeting.png](current-translation-greeting.png) |
+| Translation listening, red microphone orb | [current-translation-listening.png](current-translation-listening.png) |
+
 ## 17.0.10 staff-led support
 
 Isolated verification captures, not real hotel or guest requests:

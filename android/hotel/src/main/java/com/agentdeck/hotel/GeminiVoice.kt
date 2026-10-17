@@ -208,6 +208,8 @@ class GeminiVoice(private val ctx: Context, private val push: (JSONObject) -> Un
         }, sampleRate = 16000, echoControl = { echo ->
             run.owner.emit(JSONObject().put("type", "notice").put("status", "unverified")
                 .put("text", "${echo.description} Echo performance has not been physically verified."))
+        }, spectrum = { bands ->
+            run.owner.emit(JSONObject().put("type", "mic_level").put("level", bands.average()).put("bands", org.json.JSONArray().put(bands[0]).put(bands[1]).put(bands[2])))
         })
         run.mic?.start()
     }
