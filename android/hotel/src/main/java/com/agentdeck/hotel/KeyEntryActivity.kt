@@ -129,7 +129,7 @@ class KeyEntryActivity : Activity() {
         if (!authorized()) return
         val column = column()
         column.addView(label("Staff setup", 24f))
-        column.addView(label("Hotel support works with the microphone off. Live audio awaits verified free-only eligibility. Existing voice keys remain encrypted and inactive."))
+        column.addView(label("Live translation uses the audio credential built into this release. Saving a credential below replaces it on this device only. Keys stay encrypted on this device."))
         column.addView(label("Hotel service", 20f))
         val connectionUrl = EditText(this).apply {
             hint = "HTTPS hotel service URL"
@@ -145,8 +145,7 @@ class KeyEntryActivity : Activity() {
         fields.add(connectionUrl)
         column.addView(connectionUrl)
         addProvider(column, "Hotel connection", "hotel_connection", connectionUrl)
-        addProvider(column, "Voice credential A (inactive)", "fish")
-        addProvider(column, "Voice credential B (inactive)", "gem")
+        addProvider(column, "Voice credential (release override)", "fish")
         column.addView(button("Done") { finish() })
         setContentView(ScrollView(this).apply {
             isSaveEnabled = false

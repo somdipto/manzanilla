@@ -103,7 +103,7 @@ def test_resolution_scope_and_summary(platform):
 
 def test_ticket_single_use_and_real_gateway_path(platform,monkeypatch):
     db,client=platform; dev=db.issue('a','device')
-    monkeypatch.setattr(server,'LIVE_AUDIO_ENABLED',True)  # Offline fake relay only.
+    monkeypatch.setattr(server,'GENERIC_RELAY_ENABLED',True)  # Offline fake relay only.
     async def fake_relay(ws,hotel,gateway,pending,metadata):
         await ws.send_json({'type':'ready'})
         msg=await ws.receive_json()
@@ -122,7 +122,7 @@ def test_ticket_single_use_and_real_gateway_path(platform,monkeypatch):
 
 def test_missing_gemini_key_reports_failure(platform,monkeypatch):
     db,client=platform;dev=db.issue('a','device');monkeypatch.delenv('GEMINI_API_KEY',raising=False)
-    monkeypatch.setattr(server,'LIVE_AUDIO_ENABLED',True)  # Missing-key component failure only.
+    monkeypatch.setattr(server,'GENERIC_RELAY_ENABLED',True)  # Missing-key component failure only.
     ticket=client.post('/api/device/session',headers={'Authorization':'Bearer '+dev['token']},json=VOICE).json()['ticket']
     with client.websocket_connect('/ws/device',headers={'X-Orange-Ticket':ticket}) as ws:
         assert ws.receive_json()['type']=='error'

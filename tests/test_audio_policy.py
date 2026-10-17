@@ -1,4 +1,4 @@
-"""Public admission remains closed even when provider credentials are present."""
+"""Voice admission: the managed Fish interpreter route is open; the legacy generic relay stays closed."""
 import time
 import pytest
 from fastapi.testclient import TestClient
@@ -22,8 +22,7 @@ def audio_gate(tmp_path,monkeypatch):
     calls=[]
     def forbidden(*args,**kwargs):
         calls.append((args,kwargs))
-        raise AssertionError('Public audio admission must not reach provider code')
-    monkeypatch.setattr(server,'mint',forbidden)
+        raise AssertionError('Blocked routes must not reach provider code')
     monkeypatch.setattr(server,'relay',forbidden)
     monkeypatch.setattr(fish.httpx,'AsyncClient',forbidden)
     monkeypatch.setattr(realtime,'connect',forbidden)
@@ -32,25 +31,50 @@ def audio_gate(tmp_path,monkeypatch):
     return store,TestClient(server.app),dev,headers,calls
 
 
-@pytest.mark.parametrize('path,body',[
-    ('/api/device/fish-session',{'guest_language':'es','staff_language':'en','mode':'translation'}),
-    ('/api/device/session',{'session_id':'closed-translation','language':'es','staff_language':'en','mode':'translation'}),
-    ('/api/device/session',{'session_id':'closed-reception','language':'es','staff_language':'es','mode':'reception'}),
-])
-def test_public_voice_admission_refuses_before_any_upstream_or_reservation(audio_gate,path,body):
+def test_fish_session_admission_reaches_the_approved_mint(audio_gate,monkeypatch):
     store,client,_,headers,calls=audio_gate
-    assert client.post(path,json=body).status_code==401
-    response=client.post(path,headers=headers,json=body)
+    minted=[]
+    async def fake_mint(store_,dev,value):
+        minted.append((dev['id'],value.guest_language,value.staff_language,value.mode))
+        return {'status':'ok','session_id':'synthetic-session'}
+    monkeypatch.setattr(server,'mint',fake_mint)
+    assert client.post('/api/device/fish-session',json={'guest_language':'es','staff_language':'en','mode':'translation'}).status_code==401
+    response=client.post('/api/device/fish-session',headers=headers,json={'guest_language':'es','staff_language':'en','mode':'translation'})
+    assert response.status_code==200
+    assert response.json()['session_id']=='synthetic-session'
+    assert minted and minted[0][1:] == ('es','en','translation')
+
+
+def test_fish_session_requires_a_server_credential(audio_gate,monkeypatch):
+    store,client,_,headers,calls=audio_gate
+    monkeypatch.delenv('FISH_API_KEY')
+    async def fake_mint(*args,**kwargs):
+        raise AssertionError('mint must not run without a server credential')
+    monkeypatch.setattr(server,'mint',fake_mint)
+    response=client.post('/api/device/fish-session',headers=headers,json={'guest_language':'es','staff_language':'en','mode':'translation'})
     assert response.status_code==503
-    assert 'free-only' in response.json()['detail']
+    assert 'credential' in response.json()['detail']
+    assert not calls
+    assert not store.rows('SELECT * FROM fish_sessions')
+
+
+@pytest.mark.parametrize('body',[
+    {'session_id':'closed-translation','language':'es','staff_language':'en','mode':'translation'},
+    {'session_id':'closed-reception','language':'es','staff_language':'es','mode':'reception'},
+])
+def test_generic_relay_admission_stays_closed(audio_gate,body):
+    store,client,_,headers,calls=audio_gate
+    assert client.post('/api/device/session',json=body).status_code==401
+    response=client.post('/api/device/session',headers=headers,json=body)
+    assert response.status_code==503
     assert 'staff-led' in response.json()['detail']
-    assert 'no paid fallback' in response.json()['detail']
+    assert 'no fallback' in response.json()['detail']
     assert not calls and not server.tickets
     assert not store.rows('SELECT * FROM fish_sessions')
     assert not store.rows('SELECT * FROM sessions')
 
 
-def test_stale_audio_ticket_cannot_bypass_public_gate(audio_gate):
+def test_stale_audio_ticket_cannot_bypass_the_closed_relay(audio_gate):
     store,client,dev,_,calls=audio_gate
     server.tickets['stale-ticket']={
         'device':store.auth(dev['token'],'device'),'expires':time.time()+30,
@@ -63,7 +87,7 @@ def test_stale_audio_ticket_cannot_bypass_public_gate(audio_gate):
     assert not store.rows('SELECT * FROM sessions')
 
 
-def test_staff_led_operations_remain_operational_while_audio_is_closed(audio_gate):
+def test_staff_led_operations_remain_operational(audio_gate):
     store,client,_,headers,calls=audio_gate
     sid='staff-led'
     started=client.post('/api/device/operations/start',headers=headers,json={

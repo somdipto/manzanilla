@@ -1,3 +1,20 @@
+# 17.0.13 - Fish audio route enabled
+
+## Implemented and contract-tested
+
+- Root cause of "Audio unavailable": `AudioPolicy.LIVE_AUDIO_ENABLED` hard-blocked every native start path and the UI rendered the disabled button from `audio_available=false`; additionally, translation start required a `voice_route` preference that no code ever wrote. The Fish interpreter transport and the CI-injected build credential existed but were unreachable behind the gate.
+- The Fish interpreter is now the only live audio route. Translation start no longer depends on the removed `voice_route` preference, and there is no fallback to another provider.
+- `audio_available` is computed from real credential presence: a configured hotel service, a staff-saved device credential, or the CI-compiled build credential.
+- Removed the unused device-side Gemini route, the legacy managed relay client, and their orphaned helpers (`GeminiVoice`, `CloudVoice`, `CloudClient`, `HotelMic`, `TurnPlaybackOwner`).
+- Backend: the managed Fish session-mint endpoint is open and requires the service-side `FISH_API_KEY` (503 without it, no provider call). The legacy generic relay admission endpoint and websocket stay closed. Staff-led operational endpoints are unchanged.
+- Staff setup shows a single Fish override credential; stored keys remain encrypted on-device. No credential is committed to the repository.
+
+## Exercised verification
+
+- Backend: `.venv/bin/python -m pytest tests -q` (Python 3.12) - **111 passed**. Rewritten admission tests cover: managed Fish mint reachable with a server credential, 503 without one, legacy relay admission and websocket still closed, stale tickets refused, and staff-led operations intact.
+- Native: CI `Verify Orange` on this exact commit - `:hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug` **green in 3m0s**, plus the same 111 backend tests. Local sandbox gradle runs were interrupted by infrastructure timeouts, so CI ran the identical commands on the identical tree.
+- Not verified: physical-device speech, echo, latency and full-duplex behavior remain unproven; first live use is supervised validation, not acceptance.
+
 # 17.0.10 — staff-led support and audio remediation
 
 ## Implemented and contract-tested

@@ -33,7 +33,6 @@ class HotelActivity : Activity() {
     private val owner = SessionOwner()
     private val ui = Handler(Looper.getMainLooper())
     private val ringing = AtomicBoolean(false)
-    private val store by lazy { SecretStore(this) }
     private val fishStore by lazy { SecretStore(this, "fish") }
     private val updater by lazy { Updater(this) { status -> runOnUiThread { onUpdate(status) } } }
     private val updatePoll = object : Runnable {
@@ -43,14 +42,12 @@ class HotelActivity : Activity() {
             ui.postDelayed(this, 10 * 60_000L)
         }
     }
-    private val localProvider = lazy { GeminiVoice(this, { event -> runOnUiThread { forward(event) } }, store) }
-    private val local by localProvider
     private val fishProvider = lazy { FishVoice(this, { event -> runOnUiThread { forward(event) } }) { fishStore.load().orEmpty().ifBlank { BuildConfig.FISH_API_KEY } } }
     private val fish by fishProvider
     private val hotelConnection by lazy { HotelConnection(this) }
     private var gateway: HotelGateway? = null
     private val afterRelease = ArrayList<() -> Unit>()
-    private enum class Engine { FISH, GEMINI }
+    private enum class Engine { FISH }
     private var engine: Engine? = null
     private var night = false
     private var foreground = false
@@ -84,11 +81,14 @@ class HotelActivity : Activity() {
     private fun pushState() {
         val page = reception ?: return
         val ready = backendConfigured()
+        val audioReady = AudioPolicy.LIVE_AUDIO_ENABLED &&
+            (ready || fishStore.status() == SecretStore.Status.READY || BuildConfig.FISH_API_KEY.isNotBlank())
         page.push(JSONObject().put("type", "appearance").put("value", deck.getString("reception_appearance", "dark")))
         page.push(JSONObject().put("type", "night_mode").put("enabled", night))
         page.push(JSONObject().put("type", "reception_info").put("hotel_name", "Hotel reception")
             .put("sample_hotel", false).put("configured", ready)
-            .put("audio_available", AudioPolicy.LIVE_AUDIO_ENABLED).put("audio_gate", AudioPolicy.BLOCK_REASON).put("staff_language", "es"))
+            .put("audio_available", audioReady)
+            .put("audio_gate", if (audioReady) "" else AudioPolicy.BLOCK_REASON).put("staff_language", "es"))
         val guest = deck.getString("reception_guest_language", null)
         val staff = deck.getString("reception_staff_language", null)
         if (guest != null && staff != null) page.push(JSONObject().put("type", "language_preferences")
@@ -138,8 +138,6 @@ class HotelActivity : Activity() {
         audio(lease, "off")
         if (request.mode == "reception") {
             connect(lease)
-        } else if (!AudioPolicy.LIVE_AUDIO_ENABLED) {
-            stopSession("error", AudioPolicy.BLOCK_REASON)
         } else if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             pendingPermission = lease
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 5)
@@ -159,24 +157,15 @@ class HotelActivity : Activity() {
             audio(lease, "off")
             phase(lease, "ready")
             return
-        } else if (!AudioPolicy.LIVE_AUDIO_ENABLED) {
-            stopSession("error", AudioPolicy.BLOCK_REASON)
-            return
-        } else if (deck.getString("voice_route", "") == "hosted") {
+        } else {
+            // The only approved route is the Fish-hosted interpreter; never fall back to another provider.
             engine = Engine.FISH
             fish.start(request.guest, request.staff, request.mode, request.id, lease.generation)
-        } else if (deck.getString("voice_route", "") == "direct") {
-            engine = Engine.GEMINI
-            local.start(request.guest, request.staff, request.mode, request.id, lease.generation)
-        } else {
-            stopSession("error", "Live audio has no approved route. Use hotel assistance or contact staff.")
-            return
         }
         if (!current(lease)) return
         playGreeting(lease) {
             if (current(lease) && foreground) when (engine) {
                 Engine.FISH -> fish.greetingDone()
-                Engine.GEMINI -> local.greetingDone()
                 null -> Unit
             }
         }
@@ -206,7 +195,6 @@ class HotelActivity : Activity() {
         }
         when (selected) {
             Engine.FISH -> fish.stop(released)
-            Engine.GEMINI -> local.stop(true, released)
             null -> released()
         }
     }

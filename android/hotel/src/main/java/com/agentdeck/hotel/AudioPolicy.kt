@@ -1,9 +1,14 @@
 package com.agentdeck.hotel
 
-/** No live route has verified end-to-end free-only eligibility. Never fall back to another provider. */
+/**
+ * The live audio route is the Fish-hosted interpreter only.
+ * Never fall back to another provider. The release credential is injected into the
+ * APK at build time; a staff-saved credential overrides it on one device; a
+ * configured hotel service mints managed sessions instead.
+ */
 object AudioPolicy {
-    const val LIVE_AUDIO_ENABLED = false
-    const val BLOCK_REASON = "Live audio is awaiting verified free-only eligibility. Ask reception staff to use the on-screen requests and messages."
+    const val LIVE_AUDIO_ENABLED = true
+    const val BLOCK_REASON = "Live translation is unavailable. Ask staff to check the audio credential in Settings."
 
     /** Evaluate before permission/capture, credential loading, ticket minting or provider connect. */
     fun allowStart(blocked: (String) -> Unit): Boolean {

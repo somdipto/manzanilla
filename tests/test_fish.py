@@ -15,7 +15,6 @@ REQUEST={'guest_language':'es','staff_language':'en','mode':'translation'}
 def fish_api(tmp_path,monkeypatch):
     store=Store(str(tmp_path/'fish.db'));store.save_hotel(Hotel(id='a',name='Synthetic').model_dump())
     monkeypatch.setattr(server,'store',store)
-    monkeypatch.setattr(server,'LIVE_AUDIO_ENABLED',True)  # Offline provider components only.
     monkeypatch.setattr(fish,'provision_lock',asyncio.Lock())
     monkeypatch.setenv('FISH_API_KEY','SERVER-ONLY-TEST-KEY')
     monkeypatch.setenv('FISH_VOICE_ID','synthetic-voice')

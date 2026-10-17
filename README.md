@@ -68,7 +68,9 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 
 ## Status
 
-17.0.10 keeps hotel assistance usable with the microphone off: arrival guidance, hotel questions, taxi requests, confirmed staff messages and human-contact options. Missing hotel configuration stays unavailable. A saved inbox receipt is not staff acknowledgement. Live translation stays gated until a free-only audio route is verified. No provider account key is embedded in the APK.
+17.0.13 enables live translation through the Fish interpreter route. The release build compiles the CI-injected Fish credential; a staff-saved credential overrides it on one device; a configured hotel service mints managed sessions instead, which requires the service-side FISH_API_KEY. The unused device-side Gemini route and the legacy managed relay are removed; there is no provider fallback or automatic switching. Provider usage is billed to the owner's provider account. Physical-device echo, latency and full-duplex behavior remain unverified.
+
+17.0.10 keeps hotel assistance usable with the microphone off: arrival guidance, hotel questions, taxi requests, confirmed staff messages and human-contact options. Missing hotel configuration stays unavailable. A saved inbox receipt is not staff acknowledgement. Live translation runs through the owner-approved Fish route with the CI-injected credential.
 
 17.0.8 repairs update discovery: app resume no longer skips checks because of a persisted cooldown; offline/discovery errors are visible and retryable; a home-screen check control and foreground rechecks make updates reachable without restarting or reinstalling the app.
 

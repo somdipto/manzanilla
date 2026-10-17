@@ -22,13 +22,17 @@ edge_pending = {}
 active_devices = set()
 device_connections = {}
 
-# No current provider route has verified compliant free-only qualification.
-# This is not an environment opt-in; staff-led HTTP operations remain available.
-LIVE_AUDIO_ENABLED = False
-LIVE_AUDIO_BLOCK_REASON = 'Live audio is disabled: no verified compliant free-only provider route. Use staff-led reception actions or ask hotel staff; no paid fallback was started.'
+# The live audio route is the Fish interpreter; there is no fallback
+# to another provider. Managed session minting requires the server FISH_API_KEY.
+# The legacy generic relay route stays disabled; staff-led HTTP operations remain available.
+GENERIC_RELAY_ENABLED = False
+GENERIC_RELAY_BLOCK_REASON = 'This voice route is disabled: the approved interpreter route is the managed Fish session endpoint. Use staff-led reception actions or ask hotel staff; no fallback was started.'
 
-def require_live_audio():
-    if not LIVE_AUDIO_ENABLED: raise HTTPException(503,LIVE_AUDIO_BLOCK_REASON)
+def require_fish_audio():
+    if not os.getenv('FISH_API_KEY',''): raise HTTPException(503,'Interpreter unavailable: the hotel service has no audio credential configured.')
+
+def require_generic_relay():
+    if not GENERIC_RELAY_ENABLED: raise HTTPException(503,GENERIC_RELAY_BLOCK_REASON)
 
 def bearer(value): return value[7:] if value and value.startswith('Bearer ') else ''
 def admin(authorization: str = Header(default='')):
@@ -169,7 +173,7 @@ def operations_end(sid: str, authorization: str = Header(default='')):
 @app.post('/api/device/fish-session')
 async def fish_session(value: FishSession, authorization: str = Header(default='')):
     dev = device_auth(authorization)
-    require_live_audio()
+    require_fish_audio()
     return await mint(store,dev,value)
 
 @app.post('/api/device/fish-session/{session_id}/end')
@@ -179,7 +183,7 @@ async def fish_session_end(session_id: str, authorization: str = Header(default=
 @app.post('/api/device/session')
 def session(value: VoiceSession, authorization: str = Header(default='')):
     dev=device_auth(authorization)
-    require_live_audio()
+    require_generic_relay()
     if value.mode == 'translation' and value.language.casefold() == value.staff_language.casefold():
         raise HTTPException(422,'Choose two different interpreter languages')
     if store.rows('SELECT id FROM sessions WHERE id=?',(value.session_id,)):
@@ -250,8 +254,8 @@ async def edge(ws: WebSocket):
 async def voice(ws: WebSocket):
     # Ticket delivered in header, never query parameters/access logs.
     entry=tickets.pop(ws.headers.get('x-orange-ticket',''),None)
-    if not LIVE_AUDIO_ENABLED:
-        await ws.close(code=4403,reason='Live audio disabled; use staff-led reception actions')
+    if not GENERIC_RELAY_ENABLED:
+        await ws.close(code=4403,reason='This voice route is disabled; use the approved interpreter session endpoint')
         return
     if not entry or entry['expires']<time.time(): await ws.close(code=4401); return
     dev=entry['device']

@@ -16,7 +16,7 @@ Install the verified signed update in place; do not uninstall existing app data.
 
 Use Hotel assistance to select a language and open microphone-off support. Arrival guidance shows configured instructions only and never completes check-in. Questions use configured knowledge; missing answers direct guests to staff. Messages and taxi requests require exact review and confirmation before a durable inbox write. A receipt means saved in the staff inbox, not staff acknowledgement or a taxi booking. Human-contact options do not claim an answered call.
 
-Live audio remains disabled in both app and public backend endpoints while free-only eligibility is unverified. Do not enable it with credits, saved keys, environment switches or paid fallbacks. Retained local greeting playback is not a live-speech demonstration.
+Live translation uses the Fish interpreter route: the release build carries the CI-injected credential, and a configured hotel service must set FISH_API_KEY for managed session minting. There is no fallback provider; do not add one. Retained local greeting playback is not a live-speech demonstration. Physical-device echo, latency and full-duplex behavior remain unverified; validate them during supervised use.
 
 ## Before supervised use
 
