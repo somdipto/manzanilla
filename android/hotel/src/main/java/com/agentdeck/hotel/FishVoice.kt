@@ -6,7 +6,9 @@ import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.SystemClock
 import android.util.Log
+import io.livekit.android.AudioOptions
 import io.livekit.android.LiveKit
+import io.livekit.android.LiveKitOverrides
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
@@ -51,6 +53,7 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
         var endRequest: Request? = null
         val sinks = ArrayList<Pair<RemoteAudioTrack, AudioTrackSink>>()
         val captions = LiveKitCaptions()
+        val interpreter = InterpreterCaptions(owner.guest, owner.staff)
         var previousMode: Int? = null
         var previousSpeaker = false
         @Volatile var recording = false
@@ -97,7 +100,12 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
 
     private suspend fun connect(run: Run, session: Session) {
         if (!run.owner.active()) return
-        val live = LiveKit.create(ctx.applicationContext)
+        val live = LiveKit.create(ctx.applicationContext, overrides = LiveKitOverrides(audioOptions = AudioOptions(
+            javaAudioDeviceModuleCustomizer = { builder ->
+                builder.setUseHardwareAcousticEchoCanceler(true)
+                builder.setUseHardwareNoiseSuppressor(true)
+            }
+        )))
         if (!run.owner.use { run.room = live }) { live.release(); return }
         run.scope.launch {
             live.events.collect { event ->
@@ -134,9 +142,9 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
                     val text = StringBuilder()
                     reader.flow.collect { chunk ->
                         text.append(chunk)
-                        run.captions.replace(stream, text.toString(), false)?.let { run.owner.emit(it) }
+                        run.captions.replace(stream, text.toString(), false)?.let { run.interpreter.accept(it).forEach(run.owner::emit) }
                     }
-                    run.captions.replace(stream, text.toString(), true)?.let { run.owner.emit(it) }
+                    run.captions.replace(stream, text.toString(), true)?.let { run.interpreter.accept(it).forEach(run.owner::emit) }
                 } catch (_: CancellationException) { }
                 catch (_: Exception) { run.owner.emit(JSONObject().put("type", "notice").put("status", "unavailable").put("text", "A transcript segment was unavailable; audio may continue.")) }
             }
@@ -162,6 +170,18 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
         }
     }
 
+    private fun echoNotice(): String {
+        val supported = runCatching {
+            Class.forName("livekit.org.webrtc.audio.WebRtcAudioUtils")
+                .getMethod("isAcousticEchoCancelerSupported").invoke(null) as? Boolean
+        }.getOrNull()
+        return when (supported) {
+            true -> "This device reports hardware echo cancellation; real echo behavior still needs a physical conversation test."
+            false -> "This device does NOT report hardware echo cancellation; the speaker may feed back into the microphone. Keep volume moderate."
+            null -> "Audio echo-control capability is not reported by this SDK path; echo performance has not been physically verified."
+        }
+    }
+
     private fun capture(run: Run) {
         run.scope.launch {
             if (!run.owner.active()) return@launch
@@ -182,7 +202,7 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
                     run.recording = true
                     run.owner.emit(JSONObject().put("type", "audio_state").put("state", "recording"))
                     run.owner.emit(JSONObject().put("type", "notice").put("status", "unverified")
-                        .put("text", "Audio echo-control capability is not reported by this SDK path; echo performance has not been physically verified."))
+                        .put("text", echoNotice()))
                     run.owner.phase("listening")
                 }
             } catch (_: CancellationException) { }

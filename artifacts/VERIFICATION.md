@@ -158,3 +158,14 @@ Managed admission reserves 600 seconds per session, at most one outstanding leas
 # 17.0.14 - Aurora wave animation
 
 The reception background wave now drifts slowly (26-second ease-in-out loop). The change is one CSS rule on the existing aurora SVG: transform-only keyframes, so it runs on the GPU compositor with no repaints and no JavaScript. The existing global prefers-reduced-motion rule disables it automatically. Verified by rendering the shipped reception page in a real browser and frame-diffing 10 captures (motion confined to the wave region); layout, text and controls are pixel-identical otherwise.
+
+# 17.0.15 - Interpreter caption pairing, sides, and echo hardening
+
+Both speakers share one microphone, so the Fish wire protocol attributes all human transcription to the local participant and carries no language or translation-pair markers. The old pipeline labeled every human utterance "guest" and left translations as unlinked assistant bubbles; the receptionist's side effectively did not exist in the UI.
+
+- New InterpreterCaptions coordinator: offline two-language identification (Unicode script, distinctive letters, stopwords; all 64 picker languages), speaker side from the detected language, strict turn-order pairing of each human turn with the agent translation that follows it (one bubble: original above, translation below), a consistency flip when the agent's output language contradicts a low-confidence input classification, and echo suppression of input matching the app's own recent speech. Agent speech with no human turn surfaces as an honest "not a translation" bubble.
+- reception.js: bubbles keyed per utterance so a corrected side updates in place.
+- WebRTC configured explicitly for hardware echo cancellation and noise suppression; the session notice now reports the device's real capability (supported / not / unknown).
+- FishPlan rev 8: hardened pure-interpreter prompt (never answer your own echoed voice, silence for music/TV/noise), language-neutral stored prompt, speaking-language pin clamped to Fish's supported codes, and the per-session language pin removed (its 7-code allowlist would 422 sessions for 57 picker languages).
+
+Verified: 47/47 JVM unit tests (language ID across script/Latin/Cyrillic pairs, pairing, echo suppression, flip, honest assistant fallback). Caption flow previewed end-to-end in a real browser from the shipped WebView code. NOT verified: physical echo behavior, two-voice turn splitting, and barge-in on the tablet; those need a live device test.

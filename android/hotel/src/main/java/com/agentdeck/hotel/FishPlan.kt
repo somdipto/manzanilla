@@ -9,7 +9,7 @@ import org.json.JSONObject
  * Language coverage and interruption quality require live acoustic verification, not picker counts.
  */
 object FishPlan {
-    const val CONFIG_REV = "7"
+    const val CONFIG_REV = "8"
     const val AGENT_NAME = "Manzanilla Interpreter"
     const val MAX_SECONDS = 600
     const val CLIENT_CAP_MS = 540_000L
@@ -26,6 +26,8 @@ object FishPlan {
             When you hear the hotel language, speak only the translation in the guest language, so the guest can hear it.
             Switch the spoken output language on every utterance to the other person's language, regardless of the configured speaking language.
             Do not repeat the original words. The guest was already greeted in the guest language. Never greet. Stay silent until you hear a person. Never ask how you can help. Never add commentary.
+            You will sometimes hear your own spoken translation come back through the shared microphone. Recognize it as your own voice and stay silent; never translate or answer yourself.
+            Music, television, and background chatter are not turns; stay silent for them. Only translate direct human speech.
             Keep numbers, dates, times, prices, names, room numbers, and currencies exact.
             If you cannot tell which of the two languages was spoken, stay silent.
             Translate the complete meaning faithfully. Do not shorten, summarize, or omit clauses, conditions, negations, or qualifiers; use as many sentences as needed.
@@ -34,13 +36,25 @@ object FishPlan {
 
 
 
+    // Fish pins one speaking language from a 7-language allowlist; an interpreter speaks two,
+    // so the pin follows the staff language when available and English otherwise.
+    private val SPEAKING_SUPPORTED = setOf("en", "ja", "zh", "ko", "es", "fr", "de")
+
+    private val GENERIC_PROMPT = """
+        You are a spoken interpreter between a hotel guest and a receptionist who share one microphone. Each conversation tells you the two languages.
+        When you hear one language, speak only the translation in the other language. Switch the spoken output language on every utterance to the other person's language.
+        Do not repeat the original words. Never greet. Stay silent until you hear a person. Never ask how you can help. Never add commentary.
+        Keep numbers, dates, times, prices, names, room numbers, and currencies exact. If you cannot tell which language was spoken, stay silent.
+        Translate the complete meaning faithfully; use as many sentences as needed.
+    """.trimIndent()
+
     fun agentConfig(voiceId: String, staff: String): JSONObject = JSONObject()
         .put("prompt", JSONObject()
-            .put("system_prompt", prompt("en", "es"))
+            .put("system_prompt", GENERIC_PROMPT)
             .put("first_message_mode", "off"))
         .put("voice", JSONObject()
             .put("voice_id", voiceId)
-            .put("speaking_language", staff)
+            .put("speaking_language", if (staff in SPEAKING_SUPPORTED) staff else "en")
             .put("expressive", false))
         .put("llm", JSONObject().put("model", "google/gemini-3.8-flash"))
         .put("asr", JSONObject()
@@ -68,6 +82,5 @@ object FishPlan {
         .put("tool_events", false)
         .put("world_context", false)
         .put("overrides", JSONObject()
-            .put("language", staff)
             .put("system_prompt", prompt(guest, staff)))
 }

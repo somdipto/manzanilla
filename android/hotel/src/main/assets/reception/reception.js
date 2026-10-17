@@ -81,7 +81,7 @@
   const fine = (text) => `<p class="fine">${esc(text)}</p>`;
 
   const languageDir = language => !language ? 'auto' : /^(ar|he|fa|ur)(-|$)/.test(language) ? 'rtl' : 'ltr';
-  const captionLabel = entry => entry.kind === 'app_greeting' ? 'Welcome' : entry.side === 'assistant' ? state.mode === 'translation' ? 'Translation · unlinked' : 'Manzanilla · unlinked' : entry.side === 'guest' ? 'Guest' : 'Receptionist';
+  const captionLabel = entry => entry.kind === 'app_greeting' ? 'Welcome' : entry.side === 'assistant' ? 'Manzanilla (not a translation)' : entry.side === 'guest' ? 'Guest' : 'Receptionist';
   const captionLanguage = language => language ? langName(language) : 'Language not identified';
   const caption = entry => {
     if (state.mode === 'translation') {
@@ -524,12 +524,13 @@
     if (type === 'metrics') { state.metrics = String(event.text || ''); if (state.page === 'active') render(); return; }
     if (type === 'caption') {
       if (typeof event.utterance_id !== 'string' || !event.utterance_id || !['guest','staff','assistant'].includes(event.side) || !['original','text'].includes(event.field) || !['append','replace'].includes(event.operation) || typeof event.text !== 'string' || typeof event.final !== 'boolean') return;
-      const key = `${state.sessionId}:${event.side}:${event.utterance_id}`;
+      const key = `${state.sessionId}:${event.utterance_id}`;
       let entry = state.utterances.get(key);
       if (!entry) {
         entry = { id: key, side: event.side, from: '', to: '', original: '', text: '', final: { original: false, text: false } };
         state.utterances.set(key, entry);
       }
+      entry.side = event.side;
       if (entry.final[event.field] && (!event.final || event.operation === 'append')) return;
       entry[event.field] = event.operation === 'replace' ? event.text : entry[event.field] + event.text;
       entry.final[event.field] = event.final;
