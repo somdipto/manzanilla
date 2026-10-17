@@ -1,3 +1,26 @@
+# 17.0.16 - Hardcode audit of the translation path
+
+## What was hardcoded, what is dynamic now
+
+- `UnpairedCaptions.liveKit` labeled every human microphone segment with the fixed side "guest". This label is only an internal human/agent marker for the caption coordinator (real sides come from detected language per utterance), but the fixed label was exactly the kind of hardcoding that must not exist in the translation path. It now uses the neutral side "human"; `InterpreterCaptions.accept` routes "human" to the human pipeline and "assistant" to the agent pipeline and drops anything else instead of assuming guest.
+- The dead Gemini-era `TranslationCaptions` class (unused since the Fish interpreter became the only audio route) carried its own fixed guest/staff side logic. The class is deleted; the live `LiveKitCaptions` segment-revision tracker that shared the file moved to `LiveKitCaptions.kt`.
+- Benign fixed defaults remain only as picker initial state: `reception.js` starts with `language:'en', staff_language:'es'` and `HotelActivity` reception_info sends `staff_language:'es'` until the saved selection overrides it. Classification never reads these; they are placeholders the saved language selection replaces.
+
+## How side detection actually works now
+
+- Each utterance's language is detected from the speech itself. If the detected language matches the staff-selected language, the bubble renders on the receptionist side; if it matches the guest-selected language, on the guest side. Nothing is fixed to a person, a language, or a device role.
+- Original text and its translation pair strictly by turn order (each human utterance pairs with the following agent utterance), and the agent output's detected language cross-checks the pairing; a mismatch flips the bubble rather than rendering a wrong side.
+
+## Where side detection can be wrong
+
+- Very short or ambiguous utterances (names, loanwords, single words) can misdetect language, placing the bubble on the wrong side for that one utterance.
+- Close language pairs (Malay/Indonesian, Norwegian/Danish, Spanish/Catalan, Hindi/Marathi) are harder to distinguish; confidence margins reduce but do not eliminate flips.
+- A mistranslation whose output language reads as the wrong side can trigger an incorrect flip on that pair.
+
+## Verification
+
+- `:hotel:testDebugUnitTest` 47/47 green, including caption pairing and side mapping.
+
 # 17.0.13 - Fish audio route enabled
 
 ## Implemented and contract-tested

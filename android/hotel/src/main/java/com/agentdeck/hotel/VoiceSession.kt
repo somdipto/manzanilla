@@ -71,7 +71,7 @@ internal class VoiceSession(
  */
 internal object UnpairedCaptions {
     fun liveKit(identity: String, segment: String, stream: String, original: Boolean, text: String, final: Boolean): JSONObject =
-        caption("fish:${identity.length}:$identity:${segment.ifBlank { stream }}", if (original) "guest" else "assistant",
+        caption("fish:${identity.length}:$identity:${segment.ifBlank { stream }}", if (original) "human" else "assistant",
             "", "", if (original) "original" else "text", "replace", text, final)
 
     fun caption(id: String, side: String, from: String, to: String, field: String, operation: String, text: String, final: Boolean): JSONObject =

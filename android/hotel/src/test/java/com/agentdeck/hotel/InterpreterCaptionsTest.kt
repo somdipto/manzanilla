@@ -48,7 +48,7 @@ class InterpreterCaptionsTest {
 
     @Test fun guestTurnPairsWithTranslationInOneBubble() {
         val c = InterpreterCaptions(guest = "es", staff = "en")
-        val e1 = c.accept(raw("guest", "u1", "Hola, ¿tiene una habitación libre para esta noche?", true))
+        val e1 = c.accept(raw("human", "u1", "Hola, ¿tiene una habitación libre para esta noche?", true))
         assertEquals(1, e1.size)
         assertEquals("guest", e1[0].getString("side"))
         assertEquals("es", e1[0].getString("from"))
@@ -62,7 +62,7 @@ class InterpreterCaptionsTest {
 
     @Test fun staffTurnTakesReceptionSide() {
         val c = InterpreterCaptions(guest = "es", staff = "en")
-        val e1 = c.accept(raw("guest", "u1", "Yes, we have a double room available for you tonight.", true))
+        val e1 = c.accept(raw("human", "u1", "Yes, we have a double room available for you tonight.", true))
         assertEquals("staff", e1[0].getString("side"))
         assertEquals("en", e1[0].getString("from"))
         val e2 = c.accept(raw("assistant", "a1", "Sí, tenemos una habitación doble disponible para esta noche.", true))
@@ -72,11 +72,11 @@ class InterpreterCaptionsTest {
 
     @Test fun ownOutputEchoNeverBecomesABubble() {
         val c = InterpreterCaptions(guest = "es", staff = "en")
-        c.accept(raw("guest", "u1", "Hola, ¿tiene una habitación libre para esta noche?", true))
+        c.accept(raw("human", "u1", "Hola, ¿tiene una habitación libre para esta noche?", true))
         c.accept(raw("assistant", "a1", "Hello, do you have a room free for tonight?", true))
         // The microphone hears the app's own voice back; ASR returns it as new human input.
-        assertTrue(c.accept(raw("guest", "u2", "Hello, do you have a room free for tonight", true)).isEmpty())
-        assertTrue(c.accept(raw("guest", "u2", "Hello, do you have a room free for tonight", false)).isEmpty())
+        assertTrue(c.accept(raw("human", "u2", "Hello, do you have a room free for tonight", true)).isEmpty())
+        assertTrue(c.accept(raw("human", "u2", "Hello, do you have a room free for tonight", false)).isEmpty())
     }
 
     @Test fun agentSpeechWithoutHumanTurnIsHonestAssistantBubble() {
@@ -90,7 +90,7 @@ class InterpreterCaptionsTest {
     @Test fun contradictedLowMarginSideFlips() {
         val c = InterpreterCaptions(guest = "es", staff = "en")
         // Very short ambiguous input: margin is low, classified as guest/es by tie-break.
-        val e1 = c.accept(raw("guest", "u1", "No no no", true))
+        val e1 = c.accept(raw("human", "u1", "No no no", true))
         val side = e1[0].getString("side")
         // The agent's reply is plainly Spanish - the language we thought the speaker used.
         // A Spanish reply to a "Spanish" utterance means the speaker was actually staff (English): flip.
@@ -105,8 +105,8 @@ class InterpreterCaptionsTest {
 
     @Test fun unpairedHumanTurnKeepsOriginalOnly() {
         val c = InterpreterCaptions(guest = "es", staff = "en")
-        c.accept(raw("guest", "u1", "Hola, ¿tiene wifi la habitación?", true))
-        val events = c.accept(raw("guest", "u2", "¿Y el desayuno a qué hora empieza?", true))
+        c.accept(raw("human", "u1", "Hola, ¿tiene wifi la habitación?", true))
+        val events = c.accept(raw("human", "u2", "¿Y el desayuno a qué hora empieza?", true))
         assertEquals("u2", events[0].getString("utterance_id"))
         assertEquals("original", events[0].getString("field"))
     }

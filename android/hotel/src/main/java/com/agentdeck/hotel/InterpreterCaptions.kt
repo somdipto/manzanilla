@@ -185,7 +185,11 @@ internal class InterpreterCaptions(private val guest: String, private val staff:
         val text = caption.optString("text")
         val final = caption.optBoolean("final")
         if (id.isEmpty()) return emptyList()
-        return if (side == "assistant") agent(id, text, final) else human(id, text, final)
+        return when (side) {
+            "assistant" -> agent(id, text, final)
+            "human" -> human(id, text, final)
+            else -> emptyList()
+        }
     }
 
     private fun human(id: String, text: String, final: Boolean): List<JSONObject> {
