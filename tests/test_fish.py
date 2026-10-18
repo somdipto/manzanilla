@@ -376,3 +376,21 @@ def test_android_cache_identity_includes_full_config():
     from pathlib import Path
     source=(Path(__file__).resolve().parents[1]/'android/hotel/src/main/java/com/agentdeck/hotel/FishVoice.kt').read_text()
     assert 'digest("$apiKey:${FishPlan.agentConfig(voiceId, staff)}:${FishPlan.CONFIG_REV}".toByteArray())' in source
+
+
+def test_greetings_load_with_utf8_on_non_utf8_hosts():
+    import subprocess, sys
+    from pathlib import Path
+    root=Path(__file__).resolve().parents[1]
+    # Simulate Windows' legacy ANSI default without needing a Windows host.
+    script='''
+from pathlib import Path
+original=Path.open
+def legacy_open(self, mode='r', buffering=-1, encoding=None, errors=None, newline=None):
+    return original(self, mode, buffering, encoding or ('cp1252' if 'b' not in mode else None), errors, newline)
+Path.open=legacy_open
+from cloud.fish import GREETINGS
+assert len(GREETINGS)==52
+assert GREETINGS['bn'].isascii() is False
+'''
+    subprocess.run([sys.executable,'-c',script],cwd=root,check=True)

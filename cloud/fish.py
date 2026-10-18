@@ -10,7 +10,7 @@ from .models import Strict
 # https://docs.fish.audio/agents/deploy/authenticated-sessions
 BASE = 'https://api.fish.audio/v1/agent'
 CONFIG_REV = "9"
-GREETINGS = json.loads(Path(__file__).with_name("fish_greetings.json").read_text())
+GREETINGS = json.loads(Path(__file__).with_name("fish_greetings.json").read_text(encoding="utf-8"))
 MAX_DURATION = 600
 CREATION_SECONDS = 60
 MAX_JOIN_SECONDS = 3600
