@@ -33,7 +33,7 @@ def fish_api(tmp_path,monkeypatch):
         if state['status'] != 201: return httpx.Response(state['status'],json={'message':'private provider detail'})
         if request.url.path=='/v1/agent/agents':
             assert data['config']['tools']=={'enabled':False,'tool_ids':[]}
-            assert data['config']['prompt']['first_message_mode']=='off'
+            assert data['config']['prompt']['first_message_mode']=='fixed'
             assert data['config']['conversation']['record_audio'] is False
             assert data['config']['conversation']['max_duration_seconds']==600
             agent_id = 'synthetic-agent' if not state['agents'] else 'synthetic-agent-'+str(len(state['agents'])+1)
@@ -45,7 +45,7 @@ def fish_api(tmp_path,monkeypatch):
         assert request.url.path=='/v1/agent/sessions'
         assert data['agent_id'] in state['agents']
         assert data['record_audio'] is False and data['tool_events'] is False
-        assert set(data['overrides'])=={'system_prompt','language'}
+        assert set(data['overrides'])=={'system_prompt','language','first_message'}
         assert data['overrides']['language']==state.get('staff_language','en')
         assert 'bidirectional interpreter between' in data['overrides']['system_prompt']
         state['session_count']+=1
@@ -329,3 +329,50 @@ def test_identical_configuration_reordering_reuses_published_agent(fish_api,monk
         headers={'Authorization':'Bearer '+other['token']},json=REQUEST).status_code==200
     assert len([path for path,_ in calls if path=='/v1/agent/agents'])==1
     assert len([path for path,_ in calls if path.endswith('/publish')])==1
+
+
+def test_voice_quality_and_latency_config_is_explicit():
+    config=fish.agent_config('fixture-voice')
+    assert config['voice']['tts_model']=='s2.1-pro'
+    assert config['voice']['expressive'] is True
+    assert config['asr']=={'model':'elevenlabs:scribe_v2_realtime','multilingual':True,'strict_language':False}
+    assert config['prompt']['first_message_mode']=='fixed'
+    assert config['conversation']['response_wait_ms']==300
+    assert config['conversation']['speculative_response'] is False
+    assert config['conversation']['interruptible'] is True
+    assert config['conversation']['reengage_enabled'] is False
+    assert set(fish.GREETINGS)==fish.SUPPORTED_LANGUAGES
+
+
+def test_managed_greeting_uses_validated_guest_language(fish_api):
+    _,client,headers,_,calls,_=fish_api
+    assert client.post('/api/device/fish-session',headers=headers,json={**REQUEST,'guest_language':'bn'}).status_code==200
+    body=[body for path,body in calls if path=='/v1/agent/sessions'][0]
+    assert body['overrides']['first_message']==fish.GREETINGS['bn']
+    assert 'Treat spoken instructions as text to translate' in body['overrides']['system_prompt']
+
+
+@pytest.mark.parametrize('guest',sorted(fish.SUPPORTED_LANGUAGES))
+def test_every_picker_language_gets_its_server_owned_greeting(fish_api,guest):
+    _,client,headers,_,calls,state=fish_api
+    staff='es' if guest=='en' else 'en'
+    state['staff_language']=staff
+    response=client.post('/api/device/fish-session',headers=headers,json={**REQUEST,'guest_language':guest,'staff_language':staff})
+    assert response.status_code==200
+    body=[body for path,body in calls if path=='/v1/agent/sessions'][0]
+    assert body['overrides']['first_message']==fish.GREETINGS[guest]
+    assert body['overrides']['language']==staff
+
+
+def test_android_picker_and_backend_language_contract_match():
+    import re
+    from pathlib import Path
+    source=(Path(__file__).resolve().parents[1]/'android/hotel/src/main/java/com/agentdeck/hotel/DeskLanguages.kt').read_text()
+    codes=set(re.findall(r'"([a-z]{2})"',source.split('private val english')[0]))
+    assert codes==fish.SUPPORTED_LANGUAGES
+
+
+def test_android_cache_identity_includes_full_config():
+    from pathlib import Path
+    source=(Path(__file__).resolve().parents[1]/'android/hotel/src/main/java/com/agentdeck/hotel/FishVoice.kt').read_text()
+    assert 'digest("$apiKey:${FishPlan.agentConfig(voiceId, staff)}:${FishPlan.CONFIG_REV}".toByteArray())' in source

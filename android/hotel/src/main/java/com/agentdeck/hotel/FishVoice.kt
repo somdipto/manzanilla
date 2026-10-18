@@ -283,7 +283,7 @@ class FishVoice(private val ctx: Context, private val push: (JSONObject) -> Unit
     private fun ensureAgent(run: Run, apiKey: String, voiceId: String): String {
         val staff = run.owner.staff
         val scope = MessageDigest.getInstance("SHA-256")
-            .digest("$apiKey:$voiceId:$staff:${FishPlan.CONFIG_REV}".toByteArray())
+            .digest("$apiKey:${FishPlan.agentConfig(voiceId, staff)}:${FishPlan.CONFIG_REV}".toByteArray())
             .joinToString("") { "%02x".format(it.toInt() and 255) }
         val agentName = "${FishPlan.AGENT_NAME} ${FishPlan.CONFIG_REV} $staff ${scope.take(12)}"
         val known = if (meta.getString("scope", "") == scope) meta.getString("agent", "").orEmpty() else ""
