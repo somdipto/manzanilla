@@ -59,6 +59,10 @@ class HotelActivity : Activity() {
             if (destroyed) return
             if (owner.current != null && !owner.closing && SystemClock.elapsedRealtime() - lastActivity >= 120_000)
                 stopSession("timeout", "Conversation ended after two minutes without guest activity.")
+            if (owner.current == null && audioState != fish.localAudioState()) {
+                audioState = fish.localAudioState()
+                pushState()
+            }
             ui.postDelayed(this, 1_000)
         }
     }
@@ -77,6 +81,7 @@ class HotelActivity : Activity() {
     private fun pushState() {
         val page = reception ?: return
         val ready = backendConfigured()
+        if (owner.current == null) audioState = fish.localAudioState()
         val audioReady = AudioPolicy.LIVE_AUDIO_ENABLED &&
             (ready || fishStore.status() == SecretStore.Status.READY || BuildConfig.FISH_API_KEY.isNotBlank())
         page.push(JSONObject().put("type", "appearance").put("value", deck.getString("reception_appearance", "dark")))
@@ -84,6 +89,7 @@ class HotelActivity : Activity() {
         page.push(JSONObject().put("type", "reception_info").put("hotel_name", "Hotel reception")
             .put("sample_hotel", false).put("configured", ready)
             .put("audio_available", audioReady)
+            .put("local_audio_state", audioState)
             .put("audio_gate", if (audioReady) "" else AudioPolicy.BLOCK_REASON)
             .apply { java.util.Locale.getDefault().language.takeIf(DeskLanguages::has)?.let { put("staff_language", it) } })
         val guest = deck.getString("reception_guest_language", null)
@@ -128,6 +134,20 @@ class HotelActivity : Activity() {
     }
 
     private fun begin(request: SessionOwner.Request) {
+        val blocked = if (request.mode == "translation") fish.admissionIssue() else null
+        if (blocked != null) {
+            fish.retryCleanup()
+            // The WebView has proposed an ID but native admission has not acquired it.
+            // Reject that proposal explicitly; do not leave the screen stuck in Connecting.
+            audioState = fish.localAudioState()
+            val last = owner.lastReleasedLease
+            if (last != null && audioState == "off") owner.confirmLateRelease(last.request.id, last.generation)
+            reception?.push(JSONObject().put("type", "audio_state").put("state", audioState)
+                .put("session_id", request.id).put("generation", 0))
+            reception?.push(JSONObject().put("type", "reception_event").put("phase", "error").put("text", blocked)
+                .put("session_id", request.id).put("generation", 0))
+            return
+        }
         val lease = owner.acquire(request) ?: run { notice("Wait until the previous microphone release is confirmed before starting again."); return }
         lastActivity = SystemClock.elapsedRealtime()
         audioState = "off"
@@ -295,7 +315,8 @@ class HotelActivity : Activity() {
             "silence" -> if (owner.current != null) stopSession()
             "exit" -> stopSession(done = { finish() })
             "check_updates" -> updater.check()
-            "apply_update" -> if (owner.current == null) updater.installOffered() else notice("End the conversation before installing the update.")
+            "apply_update" -> if (owner.current == null) updater.installOffered()
+                else onUpdate("confirm:End the conversation before installing the update, then tap here again.")
         }
     }
 

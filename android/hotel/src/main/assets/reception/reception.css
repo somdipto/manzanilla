@@ -33,14 +33,15 @@
 .content[data-page="translation_languages"] .setup-start,.assist-go{min-height:48px;height:48px;width:100%;font-size:16px;padding:0 16px;border-radius:12px}
 .content[data-page="translation_languages"] .back,.content[data-page="languages"] .back{min-height:44px;height:44px;font-size:14px;padding:0 14px}
 
-html[data-translation="live"] .topbar,html[data-translation="live"] .footer,html[data-translation="live"] #check-updates{display:none}
+html[data-translation="live"] .topbar,html[data-translation="live"] .footer > :not(#privacy){display:none}
+html[data-translation="live"] .footer{justify-content:center;min-height:24px;padding:0;font-size:12px}
 html[data-translation="live"] .glass-desk{padding-bottom:0}
 .content[data-page="active"]:has(.pair-title){align-items:center;justify-content:flex-start;gap:8px;padding-top:18px}
 .pair-title{margin:0;text-align:center;font-size:18px;font-weight:500;letter-spacing:-.02em}
 .content[data-page="active"] .session-scroll:has(+ .voice-ball){width:min(100%,720px);align-self:center}
 .caption{min-width:0;max-width:78%;padding:8px 12px;border-radius:14px;background:var(--caption-guest);border:1px solid var(--rule)}
-.caption .said,.caption .translated{margin:0;font-size:16px;line-height:1.35}
-.caption .translated{margin-top:6px;padding-top:6px;border-top:1px solid var(--rule);color:var(--muted)}
+.caption .said,.caption .translated{margin:0;font-size:16px;line-height:1.35;white-space:pre-wrap;text-align:start}
+.caption .translated{color:var(--muted)}
 .caption-guest{align-self:flex-start}
 .caption-reception{align-self:flex-end;background:var(--caption-reception)}
 .voice-ball{position:relative;display:grid;place-items:center;width:64px;height:64px;margin:8px auto 10px;border-radius:50%;flex-shrink:0;color:#fff;background:radial-gradient(circle at 38% 32%, #e8fff8, #5ee0c8 36%, #1f8f98 72%, #0e4c58);box-shadow:0 0 calc(10px + var(--level,0) * 26px) calc(4px + var(--b1,var(--level,0)) * 14px) #3ddec466, 0 0 calc(18px + var(--b0,0) * 20px) #7ef0d233;transform:scale(calc(.9 + var(--level,0) * .22 + var(--b2,0) * .08))}

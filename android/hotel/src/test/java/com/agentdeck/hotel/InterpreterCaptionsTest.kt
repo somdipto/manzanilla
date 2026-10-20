@@ -4,139 +4,181 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 
-class LanguageIdTest {
-    private fun winner(text: String, a: String, b: String) = LanguageId.classify(text, a, b)
-
-    @Test fun scriptPairsAreDecisive() {
-        assertEquals("ar", winner("مساء الخير، هل لديكم غرفة؟", "en", "ar"))
-        assertEquals("en", winner("Good evening, do you have a room?", "en", "ar"))
-        assertEquals("ja", winner("今晩は、空き部屋はありますか", "ja", "es"))
-        assertEquals("zh", winner("晚上好，请问还有空房吗", "zh", "en"))
-        assertEquals("ko", winner("안녕하세요, 빈 방이 있나요", "ko", "en"))
-        assertEquals("hi", winner("नमस्ते, क्या आपके पास कोई कमरा खाली है", "hi", "en"))
-        assertEquals("ru", winner("Добрый вечер, у вас есть свободный номер?", "ru", "en"))
-        assertEquals("uk", winner("Добрий вечір, у вас є вільний номер?", "ru", "uk"))
-    }
-
-    @Test fun latinPairsUseLettersAndStopwords() {
-        assertEquals("es", winner("Hola, buenas noches. ¿Tiene una habitación libre para esta noche?", "es", "en"))
-        assertEquals("en", winner("Hello, good evening. Do you have a room free for tonight?", "es", "en"))
-        assertEquals("fr", winner("Bonsoir, avez-vous une chambre pour ce soir s'il vous plaît", "fr", "de"))
-        assertEquals("de", winner("Guten Abend, haben Sie ein Zimmer für heute Nacht bitte", "fr", "de"))
-        assertEquals("pt", winner("Boa noite, você tem um quarto para esta noite?", "pt", "it"))
-        assertEquals("it", winner("Buonasera, avete una camera per questa notte?", "pt", "it"))
-        assertEquals("tr", winner("İyi akşamlar, bu gece için boş odanız var mı?", "tr", "en"))
-        assertEquals("vi", winner("Chào buổi tối, bạn có phòng trống đêm nay không?", "vi", "en"))
-    }
-
-    @Test fun sameScriptCyrillicUsesDistinctiveLetters() {
-        assertEquals("uk", winner("Дякую, це дуже добре", "ru", "uk"))
-        assertEquals("ru", winner("Спасибо, это очень хорошо", "ru", "uk"))
-    }
-
-    @Test fun similarityMatchesNearIdenticalEchoes() {
-        val a = "Hello, good evening. Do you have a room free for tonight?"
-        val b = "Hello, good evening, do you have a room free for tonight"
-        assertTrue(LanguageId.similarity(a, b) >= 0.75)
-        assertTrue(LanguageId.similarity(a, "The pool opens at eight in the morning.") < 0.75)
-    }
-}
-
 class InterpreterCaptionsTest {
-    private fun raw(side: String, id: String, text: String, final: Boolean) =
+    private fun raw(side: String, id: String, text: String, final: Boolean = true) =
         UnpairedCaptions.caption(id, side, "", "", if (side == "assistant") "text" else "original", "replace", text, final)
 
-    @Test fun guestTurnPairsWithTranslationInOneBubble() {
-        val c = InterpreterCaptions(guest = "es", staff = "en")
-        val e1 = c.accept(raw("human", "u1", "Hola, ¿tiene una habitación libre para esta noche?", true))
-        assertEquals(1, e1.size)
-        assertEquals("guest", e1[0].getString("side"))
-        assertEquals("es", e1[0].getString("from"))
-        assertEquals("en", e1[0].getString("to"))
-        val e2 = c.accept(raw("assistant", "a1", "Hello, do you have a room free for tonight?", true))
-        val paired = e2.last()
-        assertEquals("u1", paired.getString("utterance_id"))
-        assertEquals("text", paired.getString("field"))
-        assertEquals("guest", paired.getString("side"))
-    }
-
-    @Test fun staffTurnTakesReceptionSide() {
-        val c = InterpreterCaptions(guest = "es", staff = "en")
-        val e1 = c.accept(raw("human", "u1", "Yes, we have a double room available for you tonight.", true))
-        assertEquals("staff", e1[0].getString("side"))
-        assertEquals("en", e1[0].getString("from"))
-        val e2 = c.accept(raw("assistant", "a1", "Sí, tenemos una habitación doble disponible para esta noche.", true))
-        assertEquals("u1", e2.last().getString("utterance_id"))
-        assertEquals("staff", e2.last().getString("side"))
-    }
-
-    @Test fun ownOutputEchoNeverBecomesABubble() {
-        val c = InterpreterCaptions(guest = "es", staff = "en")
-        c.accept(raw("human", "u1", "Hola, ¿tiene una habitación libre para esta noche?", true))
-        c.accept(raw("assistant", "a1", "Hello, do you have a room free for tonight?", true))
-        // The microphone hears the app's own voice back; ASR returns it as new human input.
-        assertTrue(c.accept(raw("human", "u2", "Hello, do you have a room free for tonight", true)).isEmpty())
-        assertTrue(c.accept(raw("human", "u2", "Hello, do you have a room free for tonight", false)).isEmpty())
-    }
-
-    @Test fun agentSpeechWithoutHumanTurnIsHonestAssistantBubble() {
-        val c = InterpreterCaptions(guest = "es", staff = "en")
-        val events = c.accept(raw("assistant", "a9", "How can I help you today?", true))
+    private fun assertCaption(events: List<JSONObject>, id: String, side: String, field: String,
+                              text: String, final: Boolean = true) {
         assertEquals(1, events.size)
-        assertEquals("assistant", events[0].getString("side"))
-        assertEquals("a9", events[0].getString("utterance_id"))
+        val event = events.single()
+        assertEquals("caption", event.getString("type"))
+        assertEquals(id, event.getString("utterance_id"))
+        assertEquals(side, event.getString("side"))
+        assertEquals(field, event.getString("field"))
+        assertEquals("replace", event.getString("operation"))
+        assertEquals(text, event.getString("text"))
+        assertEquals(final, event.getBoolean("final"))
+        assertEquals("", event.getString("from"))
+        assertEquals("", event.getString("to"))
+        assertEquals("unlinked", event.getString("association"))
+        assertEquals(if (side == "guest" || side == "staff") "selected" else "unknown",
+            event.getString("speaker_attribution"))
     }
 
-    @Test fun contradictedLowMarginSideFlips() {
-        val c = InterpreterCaptions(guest = "es", staff = "en")
-        // Very short ambiguous input: margin is low, classified as guest/es by tie-break.
-        val e1 = c.accept(raw("human", "u1", "No no no", true))
-        val side = e1[0].getString("side")
-        // The agent's reply is plainly Spanish - the language we thought the speaker used.
-        // A Spanish reply to a "Spanish" utterance means the speaker was actually staff (English): flip.
-        val e2 = c.accept(raw("assistant", "a1", "Sí, por supuesto, déjeme comprobarlo ahora mismo para usted.", true))
-        if (side == "guest") {
-            val correction = e2.firstOrNull { it.getString("field") == "original" }
-            assertNotNull(correction)
-            assertEquals("staff", correction!!.getString("side"))
+    @Test fun onePersonSpeakingTwiceDoesNotInventAlternatingSpeakers() {
+        val captions = InterpreterCaptions()
+        assertCaption(captions.accept(raw("human", "u1", "Hola, ¿tiene una habitación libre?")),
+            "u1", "human", "original", "Hola, ¿tiene una habitación libre?")
+        assertCaption(captions.accept(raw("human", "u2", "¿Y el desayuno a qué hora empieza?")),
+            "u2", "human", "original", "¿Y el desayuno a qué hora empieza?")
+    }
+
+    @Test fun ambiguousWordsAndDigitsRemainUnknownWithoutLanguageClaims() {
+        val captions = InterpreterCaptions()
+        assertCaption(captions.accept(raw("human", "u1", "No no no")), "u1", "human", "original", "No no no")
+        assertCaption(captions.accept(raw("human", "u2", "205")), "u2", "human", "original", "205")
+        assertCaption(captions.accept(raw("assistant", "a1", "Sí, por supuesto.")),
+            "a1", "assistant", "text", "Sí, por supuesto.")
+    }
+
+    @Test fun repeatingTranslatedWordsIsNotDeletedAsAnEcho() {
+        val captions = InterpreterCaptions()
+        val text = "Hello, do you have a room free for tonight?"
+        assertCaption(captions.accept(raw("human", "request", "Hola, ¿tiene una habitación libre para esta noche?")),
+            "request", "human", "original", "Hola, ¿tiene una habitación libre para esta noche?")
+        assertCaption(captions.accept(raw("assistant", "a1", text)), "a1", "assistant", "text", text)
+        assertCaption(captions.accept(raw("human", "u1", text, false)), "u1", "human", "original", text, false)
+        assertCaption(captions.accept(raw("human", "u1", text)), "u1", "human", "original", text)
+        assertCaption(captions.accept(raw("human", "u2", text)), "u2", "human", "original", text)
+    }
+
+    @Test fun multipleSegmentsOfAnUtteranceStayIndependentFromMultipleOutputSegments() {
+        val captions = InterpreterCaptions()
+        assertCaption(captions.accept(raw("human", "u1", "Quiero una habitación.")),
+            "u1", "human", "original", "Quiero una habitación.")
+        assertCaption(captions.accept(raw("human", "u2", "Para dos noches.")),
+            "u2", "human", "original", "Para dos noches.")
+        assertCaption(captions.accept(raw("assistant", "a1", "I would like a room")),
+            "a1", "assistant", "text", "I would like a room")
+        assertCaption(captions.accept(raw("assistant", "a2", "for two nights.")),
+            "a2", "assistant", "text", "for two nights.")
+    }
+
+    @Test fun missingOutputCannotConsumeTheNextOutputAsAFifoTranslation() {
+        val captions = InterpreterCaptions()
+        assertCaption(captions.accept(raw("human", "missing", "¿Hay wifi?")),
+            "missing", "human", "original", "¿Hay wifi?")
+        assertCaption(captions.accept(raw("human", "next", "¿A qué hora es el desayuno?")),
+            "next", "human", "original", "¿A qué hora es el desayuno?")
+        assertCaption(captions.accept(raw("assistant", "a2", "What time is breakfast?")),
+            "a2", "assistant", "text", "What time is breakfast?")
+    }
+
+    @Test fun interruptedOutputAndLaterSegmentsKeepTheirOwnIdentityAndFinality() {
+        val captions = InterpreterCaptions()
+        assertCaption(captions.accept(raw("human", "u1", "Necesito una habitación.")),
+            "u1", "human", "original", "Necesito una habitación.")
+        assertCaption(captions.accept(raw("assistant", "a1", "I need a", false)),
+            "a1", "assistant", "text", "I need a", false)
+        assertCaption(captions.accept(raw("human", "u2", "No, dos habitaciones.")),
+            "u2", "human", "original", "No, dos habitaciones.")
+        assertCaption(captions.accept(raw("assistant", "a2", "No, two rooms.")),
+            "a2", "assistant", "text", "No, two rooms.")
+        assertCaption(captions.accept(raw("assistant", "a1", "I need a room.")),
+            "a1", "assistant", "text", "I need a room.")
+    }
+
+    @Test fun greetingIsAssistantOutputEvenWhenAHumanCaptionHasArrived() {
+        val captions = InterpreterCaptions()
+        captions.forceSpeaker("guest")
+        assertCaption(captions.accept(raw("human", "u1", "Hola")), "u1", "guest", "original", "Hola")
+        assertCaption(captions.accept(raw("assistant", "greeting", "Welcome. How can I help?")),
+            "greeting", "assistant", "text", "Welcome. How can I help?")
+    }
+
+    @Test fun selectionSnapshotsNewHumanIdentityAndNeverReattributesRevisionsOrAssistant() {
+        val captions = InterpreterCaptions()
+        captions.forceSpeaker("staff")
+        captions.begin("u1")
+        captions.forceSpeaker("guest")
+        assertCaption(captions.accept(raw("human", "u1", "Hola", false)), "u1", "staff", "original", "Hola", false)
+        assertCaption(captions.accept(raw("human", "u2", "Hello", false)), "u2", "guest", "original", "Hello", false)
+        captions.forceSpeaker(null)
+        captions.begin("u1")
+        assertCaption(captions.accept(raw("human", "u1", "Hola, gracias.")),
+            "u1", "staff", "original", "Hola, gracias.")
+        assertCaption(captions.accept(raw("human", "u2", "Hello, thanks.")),
+            "u2", "guest", "original", "Hello, thanks.")
+        assertCaption(captions.accept(raw("human", "u3", "205")), "u3", "human", "original", "205")
+        captions.forceSpeaker("staff")
+        assertCaption(captions.accept(raw("assistant", "a1", "205")), "a1", "assistant", "text", "205")
+    }
+
+    @Test fun invalidPinClearsSelectionInsteadOfClaimingAnIdentity() {
+        val captions = InterpreterCaptions()
+        captions.forceSpeaker("staff")
+        captions.forceSpeaker("auto")
+        assertCaption(captions.accept(raw("human", "u1", "205")), "u1", "human", "original", "205")
+    }
+
+    @Test fun duplicateFinalDoesNotEmitAgainAndDifferentFinalRevisionRetainsIdentity() {
+        val captions = InterpreterCaptions()
+        for (side in listOf("human", "assistant")) {
+            val id = "$side-segment"
+            val field = if (side == "human") "original" else "text"
+            assertCaption(captions.accept(raw(side, id, "Room two", false)), id, side, field, "Room two", false)
+            assertCaption(captions.accept(raw(side, id, "Room 205.")), id, side, field, "Room 205.")
+            assertTrue(captions.accept(raw(side, id, "Room 205.")).isEmpty())
+            assertTrue(captions.accept(raw(side, id, "Room two", false)).isEmpty())
+            assertCaption(captions.accept(raw(side, id, "Room 205, please.")), id, side, field, "Room 205, please.")
         }
-        assertEquals("u1", e2.last().getString("utterance_id"))
     }
 
-    @Test fun unpairedHumanTurnKeepsOriginalOnly() {
-        val c = InterpreterCaptions(guest = "es", staff = "en")
-        c.accept(raw("human", "u1", "Hola, ¿tiene wifi la habitación?", true))
-        val events = c.accept(raw("human", "u2", "¿Y el desayuno a qué hora empieza?", true))
-        assertEquals("u2", events[0].getString("utterance_id"))
-        assertEquals("original", events[0].getString("field"))
+    @Test fun finalEmptyTextStillBlocksLateInterims() {
+        val captions = InterpreterCaptions()
+        assertCaption(captions.accept(raw("human", "u1", "")), "u1", "human", "original", "")
+        assertTrue(captions.accept(raw("human", "u1", "unfinished", false)).isEmpty())
+        assertTrue(captions.accept(raw("human", "u1", "")).isEmpty())
     }
 
-    @Test fun manualSpeakerPinOverridesLanguageEvidence() {
-        val c = InterpreterCaptions(guest = "es", staff = "en")
-        c.forceSpeaker("staff")
-        val e1 = c.accept(raw("human", "u1", "Hola, ¿tiene una habitación libre para esta noche?", true))
-        assertEquals("staff", e1[0].getString("side"))
-        assertEquals("es", e1[0].getString("from"))
-        // A pinned side is deliberate: the agent cross-check must not flip it back.
-        val e2 = c.accept(raw("assistant", "a1", "Hola, ¿tiene una habitación libre para esta noche?", true))
-        assertEquals("staff", e2.last().getString("side"))
+    @Test fun segmentMetadataIsNotEvictedDuringACappedSession() {
+        val captions = InterpreterCaptions()
+        captions.forceSpeaker("staff")
+        assertCaption(captions.accept(raw("human", "first", "First.")), "first", "staff", "original", "First.")
+        captions.forceSpeaker("guest")
+        repeat(10000) { captions.accept(raw("human", "u$it", "205")) }
+        assertTrue(captions.accept(raw("human", "first", "late", false)).isEmpty())
+        assertTrue(captions.accept(raw("human", "first", "First.")).isEmpty())
+        assertCaption(captions.accept(raw("human", "first", "First, corrected.")),
+            "first", "staff", "original", "First, corrected.")
     }
 
-    @Test fun clearingPinReturnsToLanguageDetection() {
-        val c = InterpreterCaptions(guest = "es", staff = "en")
-        c.forceSpeaker("staff")
-        c.forceSpeaker(null)
-        val e1 = c.accept(raw("human", "u1", "Hola, ¿tiene una habitación libre para esta noche?", true))
-        assertEquals("guest", e1[0].getString("side"))
+    @Test fun separateRunsDoNotRetainSelectionOrFinality() {
+        val first = InterpreterCaptions()
+        first.forceSpeaker("staff")
+        first.accept(raw("human", "u1", "Old final."))
+        val next = InterpreterCaptions()
+        assertCaption(next.accept(raw("human", "u1", "New interim", false)),
+            "u1", "human", "original", "New interim", false)
     }
 
-    @Test fun ambiguousTurnAlternatesFromPreviousSpeaker() {
-        val c = InterpreterCaptions(guest = "es", staff = "en")
-        val e1 = c.accept(raw("human", "u1", "Hola, ¿tiene una habitación libre para esta noche?", true))
-        assertEquals("guest", e1[0].getString("side"))
-        // No letters, no language evidence: the next speaker is usually the other person.
-        val e2 = c.accept(raw("human", "u2", "205", true))
-        assertEquals("staff", e2[0].getString("side"))
-        assertEquals("en", e2[0].getString("from"))
+    @Test fun providerFieldsRemainIndependentEvenIfInputAndOutputIdsCoincide() {
+        val captions = InterpreterCaptions()
+        captions.forceSpeaker("staff")
+        captions.begin("shared")
+        assertCaption(captions.accept(raw("human", "shared", "205")),
+            "shared", "staff", "original", "205")
+        assertCaption(captions.accept(raw("assistant", "shared", "205", false)),
+            "shared", "assistant", "text", "205", false)
+        assertCaption(captions.accept(raw("assistant", "shared", "205.")),
+            "shared", "assistant", "text", "205.")
+        assertTrue(captions.accept(raw("human", "shared", "late", false)).isEmpty())
+    }
+
+    @Test fun captionsWithoutAProviderIdentityOrKnownTransportSideAreIgnored() {
+        val captions = InterpreterCaptions()
+        assertTrue(captions.accept(raw("human", "", "Text")).isEmpty())
+        assertTrue(captions.accept(raw("guest", "u1", "Text")).isEmpty())
     }
 }

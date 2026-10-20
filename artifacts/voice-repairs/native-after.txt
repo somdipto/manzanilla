@@ -1,0 +1,35 @@
+CASE late=0 status=200
+INSTRUMENTATION_STATUS: stream=local_stop_ms=41 late_creation=false remote_status=200 remote_pending_at_stop=true
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=PASS late=false status=200
+
+INSTRUMENTATION_CODE: -1
+CASE late=1 status=200
+INSTRUMENTATION_STATUS: stream=local_stop_ms=19 late_creation=true remote_status=200 remote_pending_at_stop=true
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=PASS late=true status=200
+
+INSTRUMENTATION_CODE: -1
+CASE late=0 status=503
+INSTRUMENTATION_STATUS: stream=local_stop_ms=32 late_creation=false remote_status=503 remote_pending_at_stop=true
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=PASS late=false status=503
+
+INSTRUMENTATION_CODE: -1
+CASE late=0 status=202
+INSTRUMENTATION_STATUS: stream=local_stop_ms=48 late_creation=false remote_status=202 remote_pending_at_stop=true
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=PASS late=false status=202
+
+INSTRUMENTATION_CODE: -1
+CASE late=0 status=0
+INSTRUMENTATION_STATUS: stream=local_stop_ms=39 late_creation=false remote_status=0 remote_pending_at_stop=true
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=PASS late=false status=0
+
+INSTRUMENTATION_CODE: -1

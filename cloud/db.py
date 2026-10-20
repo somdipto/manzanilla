@@ -58,7 +58,7 @@ class Store:
         rows = self.rows('SELECT id,hotel,role FROM credentials WHERE hash=? AND role=?',
                          (hashlib.sha256(token.encode()).hexdigest(), role))
         return rows[0] if rows else None
-    def reserve_fish(self, dev, duration, hotel_cap, account_cap, creation_seconds, token_seconds):
+    def reserve_fish(self, dev, duration, hotel_cap, account_cap, creation_seconds, token_seconds, reservation=None):
         now = time.time()
         day = int(now // 86400) * 86400
         with self.lock:
@@ -71,10 +71,12 @@ class Store:
                 self.db.execute("UPDATE fish_sessions SET status='expired' WHERE expires<=? AND status='live'", (now,))
                 if self.db.execute("SELECT 1 FROM fish_sessions WHERE device=? AND status IN ('creating','live','uncertain','ending','revoked')", (dev['id'],)).fetchone():
                     raise ValueError('Interpreter session already outstanding')
+                if reservation and self.db.execute('SELECT 1 FROM fish_sessions WHERE id=?',(reservation,)).fetchone():
+                    raise ValueError('Interpreter creation request already used')
                 used = self.db.execute('SELECT COALESCE(SUM(reserved_seconds),0), COALESCE(SUM(CASE WHEN hotel=? THEN reserved_seconds ELSE 0 END),0) FROM fish_sessions WHERE created>=?', (dev['hotel'],day)).fetchone()
                 if used[0] + duration > account_cap or used[1] + duration > hotel_cap:
                     raise OverflowError('Interpreter daily duration budget exhausted')
-                ident = str(uuid.uuid4())
+                ident = reservation or str(uuid.uuid4())
                 # Only a validated live response establishes a trustworthy expiry. A
                 # lost creation response stays blocking until termination is confirmed.
                 self.db.execute('INSERT INTO fish_sessions(id,hotel,device,credential_hash,session_id,created,creation_deadline,expires,reserved_seconds,status) VALUES(?,?,?,?,?,?,?,?,?,?)',

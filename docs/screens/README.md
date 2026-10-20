@@ -1,11 +1,23 @@
 # Reception screens
 
-## Current working screens
+## 17.0.21 release-source fixtures
 
-Browser renders of the current source at a 6-inch landscape size, 837×471 CSS pixels. These are not a published APK and not a live hotel conversation.
+Current browser renderer at 844×390 CSS pixels. Session/caption/microphone events are synthetic; no provider audio, physical microphone or real hotel request is demonstrated.
 
 | Screen | Image |
 | --- | --- |
+| Home | [17.0.21-home-fixture.png](17.0.21-home-fixture.png) |
+| Independent translation language selectors | [17.0.21-languages-fixture.png](17.0.21-languages-fixture.png) |
+| Honest unlinked captions and visible microphone status | [17.0.21-translation-fixture.png](17.0.21-translation-fixture.png) |
+| Microphone-off hotel assistance | [17.0.21-assistance-fixture.png](17.0.21-assistance-fixture.png) |
+
+## Earlier working screens
+
+Earlier browser renders at 837×471 CSS pixels. These are not live hotel conversations.
+
+| Screen | Image |
+| --- | --- |
+| Earlier honest-caption fixture | [voice-repair-unlinked-fixture.png](voice-repair-unlinked-fixture.png), browser renderer; not a provider conversation |
 | Home | [current-home.png](current-home.png) |
 | Live translation language choice | [current-languages.png](current-languages.png) |
 | Hotel assistance language choice | [current-assistance.png](current-assistance.png) |

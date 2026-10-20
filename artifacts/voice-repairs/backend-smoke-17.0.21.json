@@ -1,0 +1,22 @@
+{
+  "kind": "real loopback HTTP; isolated DB and mock provider only",
+  "rejected_http": 503,
+  "not_created_receipt": true,
+  "recovery_http": 200,
+  "new_creation_http": 200,
+  "stale_cleanup_http": 200,
+  "newer_lease_unchanged": true,
+  "provider_lookup_required": false,
+  "final_leases": [
+    {"status": "ended", "session_id": null, "reserved_seconds": 600},
+    {"status": "ended", "session_id": "fixture-session", "reserved_seconds": 600}
+  ],
+  "provider_calls": [
+    "POST /v1/agent/agents",
+    "POST /v1/agent/agents/fixture-agent/publish",
+    "POST /v1/agent/sessions",
+    "POST /v1/agent/sessions",
+    "POST /v1/agent/sessions/fixture-session/end"
+  ],
+  "real_provider_calls": 0
+}

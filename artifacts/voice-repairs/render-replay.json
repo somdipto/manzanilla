@@ -1,0 +1,72 @@
+{
+  "kind": "desktop Chromium, identical synthetic caption replay; not acoustic latency",
+  "viewportCss": {
+    "width": 837,
+    "height": 471
+  },
+  "payload": "initial guest original final + 120 guest original IDs with five replace revisions each; 601 caption events; no inferred speech association",
+  "observation": "same childList/subtree MutationObserver in both arms; removed article counts read after timed batch; native bridge emulated",
+  "trials": [
+    {
+      "round": 0,
+      "before": {
+        "updates": 601,
+        "bubbles": 121,
+        "renderMs": 5476.79999999702,
+        "unchangedBubblePreserved": false,
+        "removedArticles": 36780,
+        "lastText": "Habitación 319, revisión 4."
+      },
+      "after": {
+        "updates": 601,
+        "bubbles": 121,
+        "renderMs": 1156,
+        "unchangedBubblePreserved": true,
+        "removedArticles": 0,
+        "lastText": "Habitación 319, revisión 4."
+      }
+    },
+    {
+      "round": 1,
+      "before": {
+        "updates": 601,
+        "bubbles": 121,
+        "renderMs": 5639.5,
+        "unchangedBubblePreserved": false,
+        "removedArticles": 36780,
+        "lastText": "Habitación 319, revisión 4."
+      },
+      "after": {
+        "updates": 601,
+        "bubbles": 121,
+        "renderMs": 1237.2999999970198,
+        "unchangedBubblePreserved": true,
+        "removedArticles": 0,
+        "lastText": "Habitación 319, revisión 4."
+      }
+    },
+    {
+      "round": 2,
+      "before": {
+        "updates": 601,
+        "bubbles": 121,
+        "renderMs": 3438.39999999851,
+        "unchangedBubblePreserved": false,
+        "removedArticles": 36780,
+        "lastText": "Habitación 319, revisión 4."
+      },
+      "after": {
+        "updates": 601,
+        "bubbles": 121,
+        "renderMs": 749.2999999970198,
+        "unchangedBubblePreserved": true,
+        "removedArticles": 0,
+        "lastText": "Habitación 319, revisión 4."
+      }
+    }
+  ],
+  "notes": [
+    "Three serial before/after pairs on the same host; background native builds/emulator may affect wall time.",
+    "No physical tablet, connected-provider traffic, audible speech, quality or statistical acoustic acceptance inferred."
+  ]
+}

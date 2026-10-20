@@ -22,7 +22,7 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
-      - run: bash gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug --no-daemon
+      - run: bash gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug :hotel:assembleDebugAndroidTest --no-daemon
         working-directory: android
       - uses: actions/upload-artifact@v4
         with:

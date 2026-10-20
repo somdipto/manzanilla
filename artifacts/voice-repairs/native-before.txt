@@ -1,0 +1,8 @@
+Baseline: b8bd44215c3b904826f17cd0cbb889c8ea306912, isolated source snapshot /tmp/manzanilla-repairs-baseline.
+Fixture: VoiceLifecycleFixture, pending loopback provider-end request; no microphone or provider connection opened.
+Command: adb -s emulator-5580 shell am instrument -w -r dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture
+
+Observed instrumentation output:
+INSTRUMENTATION_RESULT: stream=FAIL: IllegalStateException: local stop still waits for pending provider end
+
+INSTRUMENTATION_CODE: 0

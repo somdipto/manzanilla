@@ -20,6 +20,7 @@ android {
         applicationId = "dev.orange.hotel"
         minSdk = 26
         targetSdk = 34
+        testInstrumentationRunner = "com.agentdeck.hotel.VoiceLifecycleFixture"
         // Increment explicitly for every published APK; never derive identity from a CI run.
         versionCode = rootProject.file("VERSION_CODE").readText().trim().toInt().also {
             require(it > 34) { "Release candidates must supersede published code 34" }

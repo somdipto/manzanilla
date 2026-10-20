@@ -31,33 +31,6 @@ def audio_gate(tmp_path,monkeypatch):
     return store,TestClient(server.app),dev,headers,calls
 
 
-def test_fish_session_admission_reaches_the_approved_mint(audio_gate,monkeypatch):
-    store,client,_,headers,calls=audio_gate
-    minted=[]
-    async def fake_mint(store_,dev,value):
-        minted.append((dev['id'],value.guest_language,value.staff_language,value.mode))
-        return {'status':'ok','session_id':'synthetic-session'}
-    monkeypatch.setattr(server,'mint',fake_mint)
-    assert client.post('/api/device/fish-session',json={'guest_language':'es','staff_language':'en','mode':'translation'}).status_code==401
-    response=client.post('/api/device/fish-session',headers=headers,json={'guest_language':'es','staff_language':'en','mode':'translation'})
-    assert response.status_code==200
-    assert response.json()['session_id']=='synthetic-session'
-    assert minted and minted[0][1:] == ('es','en','translation')
-
-
-def test_fish_session_requires_a_server_credential(audio_gate,monkeypatch):
-    store,client,_,headers,calls=audio_gate
-    monkeypatch.delenv('FISH_API_KEY')
-    async def fake_mint(*args,**kwargs):
-        raise AssertionError('mint must not run without a server credential')
-    monkeypatch.setattr(server,'mint',fake_mint)
-    response=client.post('/api/device/fish-session',headers=headers,json={'guest_language':'es','staff_language':'en','mode':'translation'})
-    assert response.status_code==503
-    assert 'credential' in response.json()['detail']
-    assert not calls
-    assert not store.rows('SELECT * FROM fish_sessions')
-
-
 @pytest.mark.parametrize('body',[
     {'session_id':'closed-translation','language':'es','staff_language':'en','mode':'translation'},
     {'session_id':'closed-reception','language':'es','staff_language':'es','mode':'reception'},

@@ -86,4 +86,25 @@ class AudioTurnTimingTest {
         assertEquals(listOf("sdk_decoded_received_not_audible", "sdk_output_state_ended_received", "sdk_decoded_received_not_audible"), points.map { it.endpoint })
         assertEquals(listOf(1L, 1L, 2L), points.map { it.sequence })
     }
+
+    @Test fun silentDecodedFramesAreNotFirstNonSilentAudioAndInputClockRemainsIndependent() {
+        var clock = 100L
+        val points = ArrayList<AudioTurnTiming.Point>()
+        val timing = AudioTurnTiming({ clock }, points::add)
+        val pcm = java.nio.ByteBuffer.wrap(byteArrayOf(0, 0, 0, 0, 0, 4))
+        timing.sdkDecodedReceived(pcm, 4)
+        assertEquals(listOf("sdk_decoded_received_not_audible"), points.map { it.endpoint })
+        clock = 160L
+        timing.sdkDecodedReceived(pcm, 6)
+        repeat(10) { timing.sdkDecodedReceived(pcm, 6) }
+        assertEquals(0, pcm.position())
+        assertEquals(listOf("sdk_decoded_received_not_audible", "sdk_non_silent_decoded_received_not_audible"), points.map { it.endpoint })
+        assertEquals(160L, points.last().atMs)
+        assertNull(points.last().boundaryEstimateMs)
+        timing.interrupted()
+        clock = 200L
+        timing.sdkDecodedReceived(pcm, 6)
+        assertEquals(2L, points.last().sequence)
+        assertEquals(200L, points.last().atMs)
+    }
 }

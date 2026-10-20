@@ -55,7 +55,6 @@ internal class VoiceSession(
             check(state == State.STOPPING)
             state = State.CLOSED
             push(scoped(JSONObject().put("type", "audio_state").put("state", if (audioOff) "off" else "unknown")))
-            push(scoped(JSONObject().put("type", "energy").put("level", 0)))
             if (terminal != null) push(scoped(terminal))
             callbacks = stopped.toList()
             stopped.clear()

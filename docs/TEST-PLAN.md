@@ -95,3 +95,42 @@ Run `python -m pytest tests -q` from project root. README records the final coun
 | Update/rollback | Same signed APK for four hotels; config updates without APK; recovery build with higher versionCode. |
 
 Blocked on actual four-hotel PMS/CRM vendor data and credentials, OpenAI account/key, handset mic compatibility, SIM/SIP/native telephony provider, operator/taxi workflows, signing key, deployment host and PC service QA. Obtain those before claiming all six features work end-to-end. Signed APK, managed-device lockdown, retention/backup and per-hotel acceptance are release gates.
+
+## Voice repair reproduction (unreleased)
+
+Keep the remediation gates above. Never run these fixtures against the installed hotel app,
+guest data, or real provider credentials. The changes do not establish acoustic latency.
+
+The 17.0.21 candidate adds case selection to the native fixture
+(`-e case <failed-start|failed-start-uncertain|predispatch-recovery|predispatch-storage-failure|dispatched-recovery|settled-storage-retry|managed-rejection|pending-end>`,
+plus `-e status/-e late/-e notCreated` for the HTTP cases) on a clean isolated AVD. Backend behavior
+coverage now includes actual `POST /v1/agent/sessions` rejections carrying the
+`X-Manzanilla-Session-Creation: not-created` receipt, durable recovery without a provider lookup,
+pre-creation configuration failures, ambiguous/lost responses staying blocked, and unchanged reserved
+duration. Renderer coverage adds the visible microphone-status label. None of this measures speech.
+
+- Native/JVM: from `android`, run `./gradlew :hotel:testDebugUnitTest :hotel:assembleDebug :hotel:assembleDebugAndroidTest :hotel:lintDebug --no-daemon --max-workers=2` with JDK 17, the Android SDK, and **non-secret fixture** `FISH_API_KEY` / `FISH_VOICE_ID` environment overrides. Add `-PfeedUrl=http://127.0.0.1:9/disabled` only to the isolated fixture build; it enables cleartext local HTTP. Do not distribute that debug APK.
+- Fresh disposable AVD only: install `hotel/build/outputs/apk/debug/hotel-debug.apk` and `hotel/build/outputs/apk/androidTest/debug/hotel-debug-androidTest.apk`; run `adb -s <isolated-serial> shell am instrument -w -r [-e case ...] dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture`. Require `INSTRUMENTATION_CODE: -1` and its PASS output, not merely shell exit 0. The fixture runs actual `FishVoice.stop` against a pending loopback end request and a real delayed creation POST, repeated stop, failed/non-terminal end responses, timeout, stale producers, failed-start acknowledgement, restored predispatch/dispatched recovery, settled-storage retry and managed rejection/header boundaries. It does **not** open a microphone or join a provider room; actual capture/playback release, hardware routing and physical background/restart behavior remain device gates.
+- Browser: serve the repository root on loopback (`python3 -m http.server 8765 --bind 127.0.0.1`), open that origin in an isolated browser, then import `/tests/reception_caption_fixture.js` and call `runReceptionCaptionFixture()`. Its iframe installs an explicit fake native bridge before loading the real shipped renderer. It checks exact text/escaping, honest unknown/selected/unlinked attribution, revisions/finality, unchanged nodes, microphone-only orb updates, in-place phases, scrollback/follow, full-render index rebuilding, reset, stale sessions and visible unknown-release errors. No microphone or paid provider call is made.
+- Backend: `.venv/bin/python -m pytest tests -q` uses disposable databases and provider fixtures. Request recovery is `POST /api/device/fish-session-requests/{request_id}/end`, device-authenticated and fenced to the immutable device/hotel/request reservation. The native mint sends `request_id`; direct Fish creation uses a unique per-request `end_user_id`. A stale end cannot terminate a newer request. Received documented non-creating rejections settle their exact lease; empty provider lookup, unknown creation, non-terminal acknowledgement, changed credentials, or failed storage remain blocked; never clear the reservation by guessed expiry.
+- Offline detector: `python3 tools/voice_latency.py calibrate /tmp/manzanilla-cal.wav --offset .4 --report /tmp/manzanilla-cal.json`, then `python3 tools/voice_latency.py analyze /tmp/manzanilla-cal.wav --input-window 0 1.6 --output-window 0 1.6 --input-noise-window 0 .1 --output-noise-window 0 .1 --calibration /tmp/manzanilla-cal.json`. Repeat with `--offset -.1` to check overlap. These are known-offset **non-speech** signals, not translations.
+
+For real evaluation, use fixed synthetic speech and an isolated matching tablet. One calibrated
+stereo recorder must capture the played input reference and the tablet speaker on a common clock.
+Inspect leakage/noise/physical delay and listen to detected boundaries. Analyze startup, greeting,
+warmed turns, long utterances, interruptions and recovery separately; record first correct audible
+speech and complete-translation end. Monotonic `AudioTiming` markers and allowlisted WebRTC receipt
+statistics are diagnostic only; decoded and first-non-silent decoded audio are not audible speech.
+Do not invent provider ASR/LLM/TTS spans or align independent clocks without calibration.
+
+Retain the Day gates: p50 <1.2s, p95 <2s, >=95% successful conversations, >=99.5% critical-entity
+preservation, <1% self-echo, <2% failed/retried turns, and interruption <150ms where hardware supports it.
+Require >=100 distinct held-out synthetic utterances with repetitions and both directions for every
+evaluated language pair, including pauses/negation/corrections, names/numbers/dates/prices, recovery
+and duplicates. Bilingual human meaning/naturalness review and sample-size/uncertainty reporting
+remain required. The analyzer retains scheduled failures/timeouts (15s qualification score, not an
+acoustic timestamp) and blocks missing captures; successful-only percentiles are conditional diagnostics.
+Its descriptive summary does not replace the existing latency plan's confirmed comparison/quality gates.
+The historical $4 allowance is aggregate, not renewed: no paid trial without established remaining
+authorization and a conservative reservation.
+

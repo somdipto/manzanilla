@@ -2,7 +2,7 @@
 
 **Faster execution hardware for the hospitality industry.**
 
-Manzanilla Reception is a landscape Android app with an open-canvas reception home, navy appearance options and hands-free live translation. Reception and guest languages have independent selectors. A prerecorded guest-language greeting plays before the microphone opens. The English line is “Hey, hi, how are you doing?” Ordinary APKs contain no provider account key. Staff enter the hotel connection through authenticated setup, and it is encrypted on the device.
+Manzanilla Reception is a landscape Android app with an open-canvas reception home, navy appearance options and hands-free live translation. Reception and guest languages have independent selectors. Fish provides the configured opening greeting within its voice session; there is no local greeting-WAV capture gate. A configured hotel backend keeps its provider key server-side. **The current public release APK includes an extractable CI-injected provider key**; encrypted device storage does not protect a key compiled into an APK.
 
 <p align="center">
   <a href="https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Manzanilla%20Reception-2ea44f?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="56"></a>
@@ -20,7 +20,7 @@ All releases: https://github.com/somdipto/manzanilla/releases
 2. Open the downloaded file. If Android asks, allow "Install unknown apps" for the browser or file manager you used, then tap Install.
 3. Open **Manzanilla**. It starts straight on reception, without staff enrollment. Use the staff-setup gear for the hotel service.
 
-<p align="center"><img src="docs/screens/current-home.png" alt="Current reception home" width="720"></p>
+<p align="center"><img src="docs/screens/17.0.21-home-fixture.png" alt="17.0.21 reception home in an isolated browser fixture" width="720"></p>
 
 ## Update an existing installation
 
@@ -38,13 +38,21 @@ Publication uses the semantic version in `android/VERSION` and the explicit incr
   <img src="docs/screens/17.0.10-installed.png" alt="The app after the in-place update" width="720">
 </p>
 
-Android may require an "Update" confirmation for an app installed from a file; this is not a silent remote installation. Version 17.0.12 is the signed release that carries the screens below. Open the installed app and tap **Check updates**, or resume the app so it checks on its own.
+Android may require an "Update" confirmation for an app installed from a file; this is not a silent remote installation. Installed apps update from a newer signed GitHub Release, not from a source push or an Actions build artifact.
 
 ## Screens
 
-<p align="center"><img src="docs/screens/current-languages.png" alt="Live translation language choice" width="720"></p>
+17.0.21 release-source fixtures: exact original speech and assistant output remain explicitly unlinked; “Unspecified” does not guess who spoke. Microphone-off, recording and unknown states remain visible. These are synthetic browser captures, **not live speech or physical-device audio proof**.
 
-<p align="center"><img src="docs/screens/current-assistance.png" alt="Hotel assistance language choice" width="720"></p>
+<p align="center"><img src="docs/screens/17.0.21-translation-fixture.png" alt="17.0.21 synthetic unlinked captions, microphone-driven orb and visible microphone status" width="720"></p>
+
+Current language selection and microphone-off assistance:
+
+<p align="center"><img src="docs/screens/17.0.21-languages-fixture.png" alt="17.0.21 independent guest and receptionist language selectors" width="720"></p>
+
+<p align="center"><img src="docs/screens/17.0.21-assistance-fixture.png" alt="17.0.21 microphone-off hotel-assistance browser fixture" width="720"></p>
+
+Historical translation-state captures:
 
 <p align="center"><img src="docs/screens/current-translation-greeting.png" alt="Translation greeting with the green microphone orb" width="720"></p>
 
@@ -57,7 +65,6 @@ Every reception screen, original and current, is listed in [docs/screens](docs/s
 | Folder | What it is |
 | --- | --- |
 | `android/hotel` | The Manzanilla Reception app (landscape, microphone, auto-update) |
-| `android/app` | Earlier general-purpose controller app, kept for reference |
 | `cloud` | Backend for hotel setup, device sessions and voice calls |
 | `admin` | Small web dashboard for hotel setup |
 | `edge`, `infra`, `shared` | Supporting services and shared definitions |
@@ -68,6 +75,8 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 
 ## Status
 
+17.0.21 separates local audio release from paid-session cleanup, retains uncertain ownership, removes guessed caption associations, and updates individual caption bubbles instead of rebuilding the conversation. Startup failures now acknowledge the proposed session; restored reservations that never dispatched can recover without bypassing genuinely uncertain creation. Managed backends distinguish proven non-creation from lost responses. Refusing an update during a conversation keeps the update action retryable. The models, voice and endpointing settings are unchanged. The offline acoustic tool is `tools/voice_latency.py`; physical speech-to-speech latency and bilingual accuracy qualification remain blocked on an isolated matching tablet/capture setup and confirmed remaining spending authorization. See [verification](artifacts/VERIFICATION.md) and [reproduction instructions](docs/TEST-PLAN.md).
+
 17.0.13 enables live translation through the Fish interpreter route. The release build compiles the CI-injected Fish credential; a staff-saved credential overrides it on one device; a configured hotel service mints managed sessions instead, which requires the service-side FISH_API_KEY. The unused device-side Gemini route and the legacy managed relay are removed; there is no provider fallback or automatic switching. Provider usage is billed to the owner's provider account. Physical-device echo, latency and full-duplex behavior remain unverified.
 
 17.0.10 keeps hotel assistance usable with the microphone off: arrival guidance, hotel questions, taxi requests, confirmed staff messages and human-contact options. Missing hotel configuration stays unavailable. A saved inbox receipt is not staff acknowledgement. Live translation runs through the owner-approved Fish route with the CI-injected credential.
@@ -76,7 +85,7 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 
 17.0.7 refines the approved open-canvas reception design: compact language selectors show the selected language without repeated names or keypad numbers; conversation bubbles use neutral charcoal/gray surfaces in dark mode and warm gray in light mode. Starting translation plays the app's bundled guest-language welcome before microphone capture, with guest-language text above receptionist-language text in one divided reception-side bubble. This welcome is app-owned, not generated by the voice agent.
 
-Linked captions render guest-left/receptionist-right, with original speech above its opposite-language translation. **Current Fish/Gemini feeds do not supply reliable original/translation associations; their unlinked captions remain separate.** The renderer is verified with linked synthetic events, not claimed as solved live pairing. Hotel assistance still requires the configured backend and real hotel integrations.
+Linked synthetic captions render guest-left/receptionist-right, with original speech above its opposite-language translation. **Fish transcript segment IDs identify revisions, not reliable original/translation associations; live captions remain separate and explicitly unlinked.** Hotel assistance still requires the configured backend and real hotel integrations.
 
 Earlier verification: 31 Android JVM tests, Android lint, debug and signed release assembly passed locally. Isolated browser checks covered readable selectors at small landscape sizes, all 52 welcome language pairs, neutral-bubble contrast, stale events and greeting history across restart. A disposable native Android fixture exercised actual bundled welcome playback in English, Japanese and Arabic, player release, and immediate cancellation without opening a microphone or provider connection. All 52 bundled WAV files were validated. Muted emulator playback is not physical speaker or live full-duplex proof. Detailed evidence is in [artifacts/VERIFICATION.md](artifacts/VERIFICATION.md).
 

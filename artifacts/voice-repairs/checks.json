@@ -1,0 +1,157 @@
+{
+  "nativeJvm": {
+    "command": ":hotel:testDebugUnitTest",
+    "tests": 76,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "suites": [
+      {
+        "suite": "LiveKitCaptionsTest",
+        "tests": 13,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "SessionOwnerTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "FishSessionAdmissionTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "AudioPolicyTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "ReleaseVersionTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "CredentialStorageTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "FishPlanTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "InterpreterCaptionsTest",
+        "tests": 15,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "UpdateIdentityTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "AudioTurnTimingTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "suite": "VoiceSessionTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "android": {
+    "tasks": [
+      ":hotel:assembleDebug",
+      ":hotel:assembleDebugAndroidTest",
+      ":hotel:lintDebug"
+    ],
+    "result": "BUILD SUCCESSFUL",
+    "fixtureCredentialsOnly": true,
+    "releaseBuiltOrPublished": false
+  },
+  "python": {
+    "command": ".venv/bin/python -m pytest tests -q",
+    "passed": 223,
+    "warnings": 1
+  },
+  "calibration": [
+    {
+      "schema": "voice-latency-calibration-v1",
+      "passed": true,
+      "kind": "synthetic detector only, not physical capture calibration",
+      "recording_sha256": "13c73623141015518315d84f256ae9823b165f8f4658963221ec7eb3ea268893",
+      "expected": {
+        "input_end_s": 0.6,
+        "output_onset_s": 1,
+        "output_end_s": 1.4,
+        "offset_s": 0.4
+      },
+      "measured": {
+        "input_end_s": 0.6,
+        "output_onset_s": 1,
+        "output_end_s": 1.4,
+        "offset_s": 0.4
+      },
+      "uncertainty_s": 0.02,
+      "settings": {
+        "frame_ms": 10,
+        "min_active_ms": 20,
+        "threshold": 0.02
+      }
+    },
+    {
+      "schema": "voice-latency-calibration-v1",
+      "passed": true,
+      "kind": "synthetic detector only, not physical capture calibration",
+      "recording_sha256": "9250452a9fa2c80967d95c0515b4823a25b424f25713d2adb6a32f4c626c0373",
+      "expected": {
+        "input_end_s": 0.6,
+        "output_onset_s": 0.5,
+        "output_end_s": 0.9,
+        "offset_s": -0.1
+      },
+      "measured": {
+        "input_end_s": 0.6,
+        "output_onset_s": 0.5,
+        "output_end_s": 0.9,
+        "offset_s": -0.09999999999999998
+      },
+      "uncertainty_s": 0.02,
+      "settings": {
+        "frame_ms": 10,
+        "min_active_ms": 20,
+        "threshold": 0.02
+      }
+    }
+  ],
+  "limits": [
+    "Synthetic detector calibration is not physical acoustic calibration.",
+    "No paid provider call, matching physical tablet, live microphone/AEC/interruption qualification, bilingual held-out accuracy or speech latency measurement."
+  ]
+}

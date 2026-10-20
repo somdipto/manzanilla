@@ -10,7 +10,7 @@ from .models import Hotel, BookingLookup
 from .gateway import Gateway
 from .realtime import relay
 from .operations import Operations, Start, Action, Confirmation
-from .fish import FishSession, mint, end as end_fish, revoke_sessions
+from .fish import FishSession, mint, end as end_fish, end_request as end_fish_request, revoke_sessions, NOT_CREATED
 from .models import Strict
 from typing import Literal
 
@@ -27,9 +27,6 @@ device_connections = {}
 # The legacy generic relay route stays disabled; staff-led HTTP operations remain available.
 GENERIC_RELAY_ENABLED = False
 GENERIC_RELAY_BLOCK_REASON = 'This voice route is disabled: the approved interpreter route is the managed Fish session endpoint. Use staff-led reception actions or ask hotel staff; no fallback was started.'
-
-def require_fish_audio():
-    if not os.getenv('FISH_API_KEY',''): raise HTTPException(503,'Interpreter unavailable: the hotel service has no audio credential configured.')
 
 def require_generic_relay():
     if not GENERIC_RELAY_ENABLED: raise HTTPException(503,GENERIC_RELAY_BLOCK_REASON)
@@ -172,13 +169,19 @@ def operations_end(sid: str, authorization: str = Header(default='')):
 
 @app.post('/api/device/fish-session')
 async def fish_session(value: FishSession, authorization: str = Header(default='')):
-    dev = device_auth(authorization)
-    require_fish_audio()
+    try: dev = device_auth(authorization)
+    except HTTPException as exc:
+        exc.headers = NOT_CREATED
+        raise
     return await mint(store,dev,value)
 
 @app.post('/api/device/fish-session/{session_id}/end')
 async def fish_session_end(session_id: str, authorization: str = Header(default='')):
     return await end_fish(store,device_auth(authorization),session_id)
+
+@app.post('/api/device/fish-session-requests/{request_id}/end')
+async def fish_session_request_end(request_id: str, authorization: str = Header(default='')):
+    return await end_fish_request(store,device_auth(authorization),request_id)
 
 @app.post('/api/device/session')
 def session(value: VoiceSession, authorization: str = Header(default='')):

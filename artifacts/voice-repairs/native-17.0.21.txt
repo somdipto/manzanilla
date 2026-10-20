@@ -1,0 +1,74 @@
+CASE failed-start {}
+INSTRUMENTATION_RESULT: stream=PASS case=failed-start late=false status=200
+
+INSTRUMENTATION_CODE: -1
+CASE failed-start-uncertain {}
+INSTRUMENTATION_RESULT: stream=PASS case=failed-start-uncertain late=false status=200
+
+INSTRUMENTATION_CODE: -1
+CASE predispatch-recovery {}
+INSTRUMENTATION_RESULT: stream=PASS case=predispatch-recovery late=false status=200
+
+INSTRUMENTATION_CODE: -1
+CASE predispatch-storage-failure {}
+INSTRUMENTATION_RESULT: stream=PASS case=predispatch-storage-failure late=false status=200
+
+INSTRUMENTATION_CODE: -1
+CASE dispatched-recovery {}
+INSTRUMENTATION_RESULT: stream=PASS case=dispatched-recovery late=false status=200
+
+INSTRUMENTATION_CODE: -1
+CASE settled-storage-retry {}
+INSTRUMENTATION_RESULT: stream=PASS case=settled-storage-retry late=false status=200
+
+INSTRUMENTATION_CODE: -1
+CASE managed-rejection {"status": "503", "notCreated": "1"}
+INSTRUMENTATION_RESULT: stream=PASS case=managed-rejection late=false status=503
+
+INSTRUMENTATION_CODE: -1
+CASE managed-rejection {"status": "503", "notCreated": "0"}
+INSTRUMENTATION_RESULT: stream=PASS case=managed-rejection late=false status=503
+
+INSTRUMENTATION_CODE: -1
+CASE pending-end {"late": "0", "status": "200"}
+INSTRUMENTATION_STATUS: stream=local_stop_ms=40 late_creation=false remote_status=200 remote_pending_at_stop=true
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=PASS case=pending-end late=false status=200
+
+INSTRUMENTATION_CODE: -1
+CASE pending-end {"late": "1", "status": "200"}
+INSTRUMENTATION_STATUS: stream=local_stop_ms=13 late_creation=true remote_status=200 remote_pending_at_stop=true
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=PASS case=pending-end late=true status=200
+
+INSTRUMENTATION_CODE: -1
+CASE pending-end {"late": "0", "status": "503"}
+INSTRUMENTATION_STATUS: stream=local_stop_ms=40 late_creation=false remote_status=503 remote_pending_at_stop=true
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=PASS case=pending-end late=false status=503
+
+INSTRUMENTATION_CODE: -1
+CASE pending-end {"late": "1", "status": "503"}
+INSTRUMENTATION_STATUS: stream=local_stop_ms=13 late_creation=true remote_status=503 remote_pending_at_stop=true
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=PASS case=pending-end late=true status=503
+
+INSTRUMENTATION_CODE: -1
+CASE pending-end {"late": "0", "status": "202"}
+INSTRUMENTATION_STATUS: stream=local_stop_ms=47 late_creation=false remote_status=202 remote_pending_at_stop=true
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=PASS case=pending-end late=false status=202
+
+INSTRUMENTATION_CODE: -1
+CASE pending-end {"late": "0", "status": "0"}
+INSTRUMENTATION_STATUS: stream=local_stop_ms=69 late_creation=false remote_status=0 remote_pending_at_stop=true
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=PASS case=pending-end late=false status=0
+
+INSTRUMENTATION_CODE: -1

@@ -53,6 +53,37 @@ class SessionOwnerTest {
         assertTrue(owner.accepts(next.request.id, next.generation))
     }
 
+    @Test fun beginFailurePathResetsUnknownAudioSoTheNextLeaseCanStart() {
+        val owner = SessionOwner()
+        val lease = owner.acquire(request())!!
+        owner.beginClose()
+        val knownOff = owner.released(lease, knownOff = false)
+        assertTrue(knownOff)
+        assertTrue(owner.audioUnknown)
+        val last = owner.lastReleasedLease!!
+        assertTrue(owner.confirmLateRelease(last.request.id, last.generation))
+        assertFalse(owner.audioUnknown)
+        assertFalse(owner.confirmLateRelease(request("guest-b").id, 0))
+        val next = owner.acquire(request("guest-b"))
+        assertNotNull(next)
+        assertEquals(lease.generation + 1, next!!.generation)
+        // A later real lease event carries the real generation and still matches:
+        assertTrue(owner.accepts(next.request.id, next.generation))
+    }
+
+    @Test fun duplicateReleasedCallStaysIdempotent() {
+        val owner = SessionOwner()
+        val lease = owner.acquire(request())!!
+        owner.beginClose()
+        assertTrue(owner.released(lease, knownOff = true))
+        assertFalse(owner.released(lease, knownOff = true))
+        assertFalse(owner.audioUnknown)
+        val last = owner.lastReleasedLease!!
+        assertFalse(owner.confirmLateRelease(last.request.id, last.generation))
+        assertFalse(owner.audioUnknown)
+        assertNotNull(owner.acquire(request("guest-b")))
+    }
+
     @Test fun duplicateTerminalAcknowledgementDoesNotChangeOwnership() {
         val owner = SessionOwner()
         val lease = owner.acquire(request())!!

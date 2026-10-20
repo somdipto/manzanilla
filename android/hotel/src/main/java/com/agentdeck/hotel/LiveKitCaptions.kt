@@ -7,8 +7,12 @@ import org.json.JSONObject
  */
 internal class LiveKitCaptions {
     internal data class Stream(val key: String, val revision: Long, val identity: String, val segment: String,
-                               val streamId: String, val original: Boolean, val final: Boolean)
-    private data class Revision(val number: Long, val final: Boolean)
+                               val streamId: String, val original: Boolean, val final: Boolean) {
+        val utteranceId = "fish:$key"
+    }
+    private data class Revision(val number: Long, val final: Boolean,
+                                var complete: Boolean = false, var finalized: Boolean = false)
+    // Owned by one capped Fish run, retaining finality for every segment until that run ends.
     private val revisions = HashMap<String, Revision>()
 
     @Synchronized fun begin(identity: String, segment: String, streamId: String, original: Boolean, final: Boolean): Stream? {
@@ -16,11 +20,15 @@ internal class LiveKitCaptions {
         val old = revisions[key]
         if (old?.final == true && !final) return null
         val number = (old?.number ?: 0) + 1
-        revisions[key] = Revision(number, final)
+        revisions[key] = Revision(number, final, finalized = old?.finalized == true)
         return Stream(key, number, identity, segment, streamId, original, final)
     }
     @Synchronized fun replace(stream: Stream, text: String, complete: Boolean): JSONObject? {
-        if (revisions[stream.key]?.number != stream.revision) return null
+        val revision = revisions[stream.key] ?: return null
+        if (revision.number != stream.revision || revision.complete) return null
+        if (complete) revision.complete = true
+        if (revision.finalized && !(complete && stream.final)) return null
+        if (complete && stream.final) revision.finalized = true
         return UnpairedCaptions.liveKit(stream.identity, stream.segment, stream.streamId, stream.original, text, complete && stream.final)
     }
 }

@@ -1,0 +1,15 @@
+{
+  "fixture": "real loopback HTTP server with isolated database and synthetic provider transport; no provider network or guest data",
+  "lost_creation_http": 503,
+  "request_recovery_http": 200,
+  "new_request_http": 200,
+  "stale_old_request_end_http": 200,
+  "sessions_created": 2,
+  "provider_end_paths": ["/v1/agent/sessions/fixture-session-1/end"],
+  "leases_after_stale_cleanup": [
+    {"session_id": "fixture-session-1", "status": "ended", "reserved_seconds": 600},
+    {"session_id": "fixture-session-2", "status": "live", "reserved_seconds": 600}
+  ],
+  "newer_lease_unchanged_by_stale_cleanup": true,
+  "limits": "Synthetic paid-session ownership only; no real billing, microphone, playback, provider latency, or backend deployment is established."
+}

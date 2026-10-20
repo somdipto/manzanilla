@@ -1,5 +1,66 @@
 # Verification notes (newest first)
 
+# 17.0.21 — verified candidate for publication (2026-10-20)
+
+Scope: the voice-repair set below plus review-found admission corrections, published as the next
+diagnostic release after 17.0.20. Correctness evidence only; no speech measurement.
+
+## Corrections integrated for release
+
+1. Restored reservations with **no dispatch metadata** can clear safely; failed storage clearing
+   remains owned and retryable. Same-process predispatch setups cannot use that restored path.
+2. Failed native reservation persistence closes the proposed session with a scoped terminal error
+   instead of leaving Connecting; prior audio uncertainty stays `unknown`.
+3. The managed backend emits `X-Manzanilla-Session-Creation: not-created` only for provable
+   pre-dispatch failures and documented received `/sessions` rejections; a definite rejection
+   settles its exact lease while keeping reserved duration and request identity. Lost/ambiguous
+   responses, empty listings, malformed successes and post-dispatch revocation stay blocked.
+4. Direct Fish additionally recognizes documented 404/415 creation refusals.
+5. A durable clear failing after confirmed local+remote release can be retried by a later cleanup
+   attempt without disturbing a newer owner.
+6. Live-translation UI keeps the microphone status visible (off/recording/unknown) in both
+   appearances at 640×360/844×390; refusing an update during a conversation keeps the update
+   action retryable with an explicit reason.
+
+## Commands and actual results
+
+- `.venv/bin/python -m pytest tests -q`: **241 passed**, one retained Starlette/AnyIO deprecation
+  warning. Isolated databases and synthetic provider transport only.
+- Native fixture build `:hotel:testDebugUnitTest :hotel:assembleDebug :hotel:assembleDebugAndroidTest
+  :hotel:lintDebug --no-daemon --max-workers=2 -PfeedUrl=http://127.0.0.1:9/disabled` with non-secret
+  fixture overrides: **BUILD SUCCESSFUL**. JVM XML totals: **86 tests, 0 failures/errors/skips**
+  (FishSessionAdmissionTest 14/14). Lint: **0 errors, 19 warnings**.
+- Actual isolated AVD `manzanillaReview20261020` (`emulator-5582`) with the 17.0.21 debug and
+  androidTest APKs: **14/14 PASS** across `failed-start`, `failed-start-uncertain`,
+  `predispatch-recovery`, `predispatch-storage-failure`, `dispatched-recovery`,
+  `settled-storage-retry`, `managed-rejection` (header present and absent at 503) and `pending-end`
+  (200/503/202/timeout, direct and late creation). Local stop remained 13–69 ms with the remote reply
+  pending. Raw output: `artifacts/voice-repairs/native-17.0.21.txt`. No microphone opened.
+- Actual loopback HTTP fixture (isolated DB and mock provider transport, no real provider): creation
+  503 with the not-created receipt, exact-request recovery 200, new creation 200, then stale
+  old-request end 200 left the newer live lease unchanged, and the final end returned 200. Recovery
+  never needed a provider session lookup.
+- Chromium fixture on the real assets: `runReceptionCaptionFixture()` passed (601 updates, 121
+  bubbles, no console errors), including the visible microphone-status assertion. Mic on/off/unknown
+  stayed visible in dark and light at 640×360 and 844×390, with 48 px speaker targets and no
+  horizontal overflow.
+- `tools/voice_latency.py` calibrate/analyze (offsets +0.4 and −0.1): detector matched the synthetic
+  offsets within 20 ms reported uncertainty. These are non-speech calibration signals, not a latency
+  result.
+
+## 17.0.21 remaining gates and security
+
+- No physical tablet, calibrated stereo capture, held-out speech corpus or bilingual review was
+  available. No first-audible or complete-translation latency, accuracy, echo or interruption result
+  exists for 17.0.21. Provider stage timings remain unavailable.
+- No paid provider call was made. This publication does not renew the historical $4 aggregate
+  authorization.
+- The release APK still embeds the extractable CI-injected Fish key, acknowledged in README.
+  Credential rotation or removal remains a separate owner deployment decision. The second-round
+  independent review engines hit an external usage limit and were not rerun, so this record is the
+  final pre-publication evidence.
+
+
 ## 17.0.19 (2026-10-18) - Scribe everywhere, mic at ready, Fish-spoken greeting
 
 Root causes fixed (from the Oct 17 symptom-to-code diagnosis):
@@ -242,3 +303,93 @@ Both speakers share one microphone, so the Fish wire protocol attributes all hum
 - FishPlan rev 8: hardened pure-interpreter prompt (never answer your own echoed voice, silence for music/TV/noise), language-neutral stored prompt, speaking-language pin clamped to Fish's supported codes, and the per-session language pin removed (its 7-code allowlist would 422 sessions for 57 picker languages).
 
 Verified: 47/47 JVM unit tests (language ID across script/Latin/Cyrillic pairs, pairing, echo suppression, flip, honest assistant fallback). Caption flow previewed end-to-end in a real browser from the shipped WebView code. NOT verified: physical echo behavior, two-voice turn splitting, and barge-in on the tablet; those need a live device test.
+
+
+
+## Confirmed defects and repairs
+
+| Outcome | Confirmed cause | Changed implementation | Exercised evidence and limit |
+| --- | --- | --- | --- |
+| Local stopping/restarting | `FishVoice.detach` held its local callback until the provider-end HTTP call returned | `FishVoice.kt` releases local audio before remote cleanup; `FishSessionAdmission.kt` keeps the durable reservation until the end is acknowledged | The final fixture, one case per process on a cleared app, completed local callbacks with the remote reply still pending: 41ms normal, 19ms late creation, 32ms HTTP 503, 48ms HTTP 202, 39ms timeout. Each ended `INSTRUMENTATION_CODE: -1`. A pending or failed end kept the reservation; an acknowledged end released it. No microphone or provider room was opened |
+| Honest captions | Alternation guessed speakers/languages; FIFO manufactured associations; text similarity deleted genuine repeated source speech | `InterpreterCaptions.kt`, `LiveKitCaptions.kt`, corresponding tests and `reception.js`: independent unlinked input/output, exact text and stable segment identity, selection snapshot at announcement, duplicate/final/stale-reader fencing. Output without a source is “Assistant output,” not a certified translation | Old-source regression rejected invented human/output pairing and ambiguous-number attribution. Final native caption suites check exact IDs/text/attribution/finality; the actual browser renders unknown source and unlinked output separately, including genuine repetition, revisions, reset and stale generations |
+| Presentation efficiency | Unused nominal20Hz output energy/RMS work and whole-conversation caption/phase redraws | `FishVoice.kt`, `VoiceSession.kt`, `AudioTurnTiming.kt`, `reception.js/css`: no production energy events; no continuous output RMS; decoded/non-silent receipt remains diagnostic. Caption nodes update individually, translation phases update the existing microphone orb, full renders rebuild the node index | Same 601-event synthetic caption replay in desktop Chromium, three serial before/after pairs at837×471; median batch time 5476.8ms →1156.0ms, removed article nodes36780 →0,121 visible bubbles and exact final text retained. Existing bubbles survive. These are instrumented DOM measurements under host load, not acoustic latency or a connected native bridge traffic measurement |
+| Spoken response latency | Actual bottleneck is not established by captions or decoded receipts | `AudioTurnTiming.kt` and `FishVoice.kt` add run-scoped monotonic lifecycle/receipt markers and allowlisted WebRTC RTT/jitter/loss/playout-counter observations. `tools/voice_latency.py` supplies offline common-clock PCM detection, calibration, source emission and failure-aware scheduled-trial summaries | Known-offset non-speech fixtures detected +0.4s and −0.1s, with input/output end boundaries checked and20ms reported difference uncertainty. Unreviewed recordings produce no accepted translation-latency value. **Acoustic optimization and held-out bilingual quality: BLOCKED** |
+
+## Ownership and recovery review corrections
+
+Independent component review found three unsafe first-pass cases, all repaired:
+
+1. Cancelling a dispatched paid-creation call could lose its response/session ID. It now remains owned
+   under a75s overall/read bound, while local stop completes independently; the native late-creation
+   fixture holds a real loopback POST response until after local acknowledgement. Lost responses retain
+   an immutable per-request identity and a recoverable endpoint/query, not a blind new mint.
+2. A documented non-creating rejection (including managed budget429) must not create a permanent
+   unknown-paid reservation. Those statuses clear only after known local release. Ambiguous responses
+   remain fenced; HTTP202 is not termination proof.
+3. An uncertain old local release must not be reported as microphone-off when rejecting a proposed
+   session or recreating the UI. Separate local certainty is propagated; errors remain visible on the
+   minimal translation screen.
+
+4. A failed provider end pinned `FishVoice.current`, and `SessionOwner.acquire` blocked forever on
+   `audioUnknown`, so a 503/timeout left the guest stuck on Connecting with no way to retry. `endProvider`
+   now drops the run once local audio is off (the durable reservation still blocks a competing paid
+   session), and `begin()` clears the unknown flag through `confirmLateRelease` on the real lease before
+   rejecting the proposed start. A rejected proposal carries `generation: 0`, which cannot match a real
+   lease. `SessionOwnerTest` covers both the reset and that a second `released()` cannot reopen a settled
+   lease.
+
+A follow-on independent finding covered a backend crash leaving a `creating` lease permanently
+unrecoverable. `cloud/fish.py` now normalizes only that authenticated, overdue request before recovery;
+tests cover persisted provider IDs both present and absent, without reopening unexpired creation.
+`cloud/db.py` scopes immutable request reservations; `cloud/app.py` exposes device-authenticated
+`POST /api/device/fish-session-requests/{request_id}/end`. Provider lookup uses documented exact
+`end_user_id` filtering, including pending sessions; an empty/mismatched/nonunique result is uncertainty,
+not permission to start another paid session. A completed/failed exact provider record is terminal proof.
+No new database schema, provider model, voice, prompt, endpointing, AEC or interruption setting was added
+or changed. Never replay or mint a replacement merely because a response was lost.
+
+## Commands and actual results
+
+- `.venv/bin/python -m pytest tests -q`: **223 passed**, one retained Starlette/AnyIO deprecation warning,
+  40.73s. Disposable databases and synthetic provider transport only.
+- JDK17/AndroidSDK fixture build: `:hotel:testDebugUnitTest :hotel:assembleDebug :hotel:assembleDebugAndroidTest :hotel:lintDebug --no-daemon --max-workers=2 -PfeedUrl=http://127.0.0.1:9/disabled`, with non-secret fixture credential overrides: **BUILD SUCCESSFUL**. JVM XML totals: **76 tests,0 failures/errors/skips**. Lint completed with warnings; no dependency/SDK/updater cleanup was included.
+- Actual isolated `manzanillaRepairsIsolated` / `emulator-5580` installation and
+  `am instrument -w -r dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture`: **PASS**,
+  pending end success/failure/non-terminal acknowledgement/timeout, real delayed creation, repeated stop,
+  no competing paid start, closed-owner callback fencing. The fixture injects a run without media;
+  active capture/playback release and physical navigation/background/restart remain unverified.
+- Actual loopback HTTP server with an isolated database/provider transport: lost creation503 →
+  exact-request end200 → new request200 → stale old-request end200. Only the old provider session was
+  ended; the newer live lease was unchanged. Its synthetic lease was explicitly ended afterward.
+- Actual Chromium asset renderer, explicit isolated native-bridge fixture:
+  `runReceptionCaptionFixture()` checks exact escaped text, selected/unknown/unlinked labels,
+  revisions/finality, phases/orb in place, scroll-follow/scrollback, full-render index rebuilding, reset,
+  stale sessions, restored microphone uncertainty and visible restart errors. No browser errors observed.
+  Back remained pending until local audio-off and stopped events; a blocked rapid restart did not open
+  a microphone. Screenshot: `docs/screens/voice-repair-unlinked-fixture.png` (synthetic, unreleased).
+- `python3 tools/voice_latency.py calibrate ... --offset .4` and `--offset -.1`, plus actual `analyze`
+  CLI on the positive calibration: boundaries matched expected recorder-clock offsets. These sounds
+  are not speech. No accepted speech-latency or naturalness/accuracy result was produced.
+
+Raw observations: [before native](voice-repairs/native-before.txt),
+[after native](voice-repairs/native-after.txt), [renderer trials](voice-repairs/render-replay.json),
+[HTTP recovery](voice-repairs/backend-smoke.json), [completed checks/calibration](voice-repairs/checks.json).
+Reproduction and retained Day/quality gates: [TEST-PLAN](../docs/TEST-PLAN.md#voice-repair-reproduction-unreleased).
+
+## Remaining gates and security
+
+- Need an isolated matching physical tablet, calibrated common-clock stereo capture of played input and
+  actual speaker output, fixed synthetic held-out speech corpus, and bilingual meaning/entity/naturalness
+  review. No first-audible or complete-translation latency was measured, no p50/p95 speech result exists,
+  and no accuracy/AEC/barge-in/non-regression qualification passed.
+- Need confirmed **remaining** authorization within the historical aggregate$4 allowance and a
+  conservative cost reservation before paid work. No new allowance was assumed. Effective hosted
+  configuration/thinking and internal ASR/LLM/TTS stage timings remain uninspected/unavailable.
+- A genuinely unresolved creation stays blocked until an exact provider/backend record can be reconciled.
+  Missing lookup results, mismatched credentials, failed local release or storage failure must not be
+  cleared by elapsed time or staff retry that creates another session.
+- The historical public APK embeds an extractable provider key. This repair neither rotates/removes it
+  nor republishes it. Public distribution needs separate owner authorization and the release skill,
+  increasing signed identity, `Manzanilla-Reception.apk` and `release-metadata.json`; a push/build alone
+  would not update the installed app.
+

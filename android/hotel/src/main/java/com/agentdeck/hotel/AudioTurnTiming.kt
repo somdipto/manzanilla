@@ -1,6 +1,7 @@
 package com.agentdeck.hotel
 
 import java.util.ArrayDeque
+import java.nio.ByteBuffer
 
 /** Monotonic endpoint observations, NOT acoustic latency or input/output association.
  * Packet RMS / sampled SDK input level is only a speech-boundary estimate. Provider finals are separate.
@@ -17,8 +18,11 @@ internal class AudioTurnTiming(private val now: () -> Long, private val report: 
     private var output = 0L
     private var currentOutput = 0L
     private var received = false
+    private var nonSilent = false
     private val pending = ArrayDeque<Probe>()
 
+    /** Diagnostic receipt in this run's monotonic clock; never an inferred provider span. */
+    @Synchronized fun marker(endpoint: String) { report(Point(0, endpoint, now())) }
     @Synchronized fun inputLevel(level: Float, threshold: Float, at: Long = now()) {
         if (level > threshold) {
             if (!activeInput) {
@@ -38,7 +42,7 @@ internal class AudioTurnTiming(private val now: () -> Long, private val report: 
     }
 
     private fun beginOutput() {
-        if (currentOutput == 0L) { currentOutput = ++output; received = false }
+        if (currentOutput == 0L) { currentOutput = ++output; received = false; nonSilent = false }
     }
 
     @Synchronized fun rawReceived(firstFrame: Long) {
@@ -50,11 +54,26 @@ internal class AudioTurnTiming(private val now: () -> Long, private val report: 
     }
 
     /** Local SDK output-state grouping only; the SDK exposes no output-to-input association here. */
-    @Synchronized fun sdkDecodedReceived() {
+    @Synchronized fun sdkDecodedReceived(pcm: ByteBuffer? = null, sampleBytes: Int = 0) {
         beginOutput()
-        if (received) return
-        received = true
-        report(Point(currentOutput, "sdk_decoded_received_not_audible", now()))
+        if (!received) {
+            received = true
+            report(Point(currentOutput, "sdk_decoded_received_not_audible", now()))
+        }
+        // Stop inspecting PCM after the first threshold crossing. No per-packet RMS/bridge work.
+        if (nonSilent || pcm == null) return
+        val start = pcm.position()
+        val bytes = minOf(pcm.remaining(), sampleBytes)
+        var offset = 0
+        while (offset + 1 < bytes) {
+            val sample = ((pcm.get(start + offset).toInt() and 255) or (pcm.get(start + offset + 1).toInt() shl 8)).toShort().toInt()
+            if (sample > 655 || sample < -655) {
+                nonSilent = true
+                report(Point(currentOutput, "sdk_non_silent_decoded_received_not_audible", now()))
+                break
+            }
+            offset += 2
+        }
     }
 
     @Synchronized fun playbackHead(frames: Long) {

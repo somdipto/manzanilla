@@ -1,0 +1,96 @@
+[
+  {
+    "case": "failed-start",
+    "arguments": {},
+    "output": "INSTRUMENTATION_RESULT: stream=PASS case=failed-start late=false status=200\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "failed-start-uncertain",
+    "arguments": {},
+    "output": "INSTRUMENTATION_RESULT: stream=PASS case=failed-start-uncertain late=false status=200\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "predispatch-recovery",
+    "arguments": {},
+    "output": "INSTRUMENTATION_RESULT: stream=PASS case=predispatch-recovery late=false status=200\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "predispatch-storage-failure",
+    "arguments": {},
+    "output": "INSTRUMENTATION_RESULT: stream=PASS case=predispatch-storage-failure late=false status=200\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "dispatched-recovery",
+    "arguments": {},
+    "output": "INSTRUMENTATION_RESULT: stream=PASS case=dispatched-recovery late=false status=200\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "settled-storage-retry",
+    "arguments": {},
+    "output": "INSTRUMENTATION_RESULT: stream=PASS case=settled-storage-retry late=false status=200\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "managed-rejection",
+    "arguments": {
+      "status": "503",
+      "notCreated": "1"
+    },
+    "output": "INSTRUMENTATION_RESULT: stream=PASS case=managed-rejection late=false status=503\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "managed-rejection",
+    "arguments": {
+      "status": "503",
+      "notCreated": "0"
+    },
+    "output": "INSTRUMENTATION_RESULT: stream=PASS case=managed-rejection late=false status=503\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "pending-end",
+    "arguments": {
+      "late": "0",
+      "status": "200"
+    },
+    "output": "INSTRUMENTATION_STATUS: stream=local_stop_ms=40 late_creation=false remote_status=200 remote_pending_at_stop=true\n\nINSTRUMENTATION_STATUS_CODE: 0\nINSTRUMENTATION_RESULT: stream=PASS case=pending-end late=false status=200\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "pending-end",
+    "arguments": {
+      "late": "1",
+      "status": "200"
+    },
+    "output": "INSTRUMENTATION_STATUS: stream=local_stop_ms=13 late_creation=true remote_status=200 remote_pending_at_stop=true\n\nINSTRUMENTATION_STATUS_CODE: 0\nINSTRUMENTATION_RESULT: stream=PASS case=pending-end late=true status=200\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "pending-end",
+    "arguments": {
+      "late": "0",
+      "status": "503"
+    },
+    "output": "INSTRUMENTATION_STATUS: stream=local_stop_ms=40 late_creation=false remote_status=503 remote_pending_at_stop=true\n\nINSTRUMENTATION_STATUS_CODE: 0\nINSTRUMENTATION_RESULT: stream=PASS case=pending-end late=false status=503\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "pending-end",
+    "arguments": {
+      "late": "1",
+      "status": "503"
+    },
+    "output": "INSTRUMENTATION_STATUS: stream=local_stop_ms=13 late_creation=true remote_status=503 remote_pending_at_stop=true\n\nINSTRUMENTATION_STATUS_CODE: 0\nINSTRUMENTATION_RESULT: stream=PASS case=pending-end late=true status=503\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "pending-end",
+    "arguments": {
+      "late": "0",
+      "status": "202"
+    },
+    "output": "INSTRUMENTATION_STATUS: stream=local_stop_ms=47 late_creation=false remote_status=202 remote_pending_at_stop=true\n\nINSTRUMENTATION_STATUS_CODE: 0\nINSTRUMENTATION_RESULT: stream=PASS case=pending-end late=false status=202\n\nINSTRUMENTATION_CODE: -1\n"
+  },
+  {
+    "case": "pending-end",
+    "arguments": {
+      "late": "0",
+      "status": "0"
+    },
+    "output": "INSTRUMENTATION_STATUS: stream=local_stop_ms=69 late_creation=false remote_status=0 remote_pending_at_stop=true\n\nINSTRUMENTATION_STATUS_CODE: 0\nINSTRUMENTATION_RESULT: stream=PASS case=pending-end late=false status=0\n\nINSTRUMENTATION_CODE: -1\n"
+  }
+]

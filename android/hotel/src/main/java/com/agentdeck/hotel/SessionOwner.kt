@@ -33,6 +33,8 @@ class SessionOwner {
         return lease
     }
 
+    /** The last lease whose local release may still be unknown. */
+    val lastReleasedLease: Lease? get() = lastReleased
     fun released(lease: Lease, knownOff: Boolean): Boolean {
         if (current != lease || !closing) return false
         current = null
