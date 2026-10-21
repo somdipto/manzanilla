@@ -14,7 +14,8 @@ internal class InterpretationReports(private val guest: String, private val staf
         if (event.optString("type") != "client_tool.call" || event.optString("toolName") != FishPlan.CAPTION_TOOL ||
             event.opt("expectsResponse") != false) return null
         val id = event.opt("callId") as? String ?: return null
-        if (!id.matches(Regex("[A-Za-z0-9_-]{1,200}")) || id in seen) return null
+        // callId is opaque protocol data, not a URL path. Providers may include : / or .
+        if (id.isBlank() || id.length > 200 || id.any { it.isISOControl() } || id in seen) return null
         val params = event.optJSONObject("params") ?: return null
         val original = params.opt("original") as? String ?: return null
         val translation = params.opt("translation") as? String ?: return null
