@@ -71,14 +71,34 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   assert(bubbles().length === 1 && first.querySelector('.translated').textContent === 'Exact translation & output.', 'Assistant output lands at the bottom of the speaker bubble');
   assert(!doc.body.textContent.includes('Assistant output') && !doc.body.textContent.includes('AI ·'), 'No AI labeling appears inside bubbles');
   assert(!doc.querySelector('[data-speaker]') && !doc.body.textContent.includes('Unspecified'), 'No speaker picker remains');
-  caption('next', 'Yes, we have a double room free tonight.', { final: true });
+  caption('next', 'Sí, tenemos una habitación doble libre esta noche.', { final: true });
   const second = bubbles()[1];
-  assert(bubbles().length === 2 && second.classList.contains('caption-reception'), 'After a translated turn the next human turn flips to reception');
-  assert(second.querySelector('.said').textContent === 'Yes, we have a double room free tonight.' && !second.querySelector('.translated'), 'A new human turn starts without output');
-  caption('a2', 'Sí, tenemos una habitación doble libre esta noche.', { field: 'text', side: 'assistant', final: false });
-  assert(second.querySelector('.translated').textContent.includes('Sí, tenemos') && second.querySelector('.translated').classList.contains('live'), 'Streaming translation is marked in progress');
-  caption('a2', 'Sí, tenemos una habitación doble libre esta noche.', { field: 'text', side: 'assistant', final: true });
+  assert(bubbles().length === 2 && second.classList.contains('caption-reception'), 'A staff-language turn lands on the reception side');
+  assert(second.querySelector('.said').textContent === 'Sí, tenemos una habitación doble libre esta noche.' && !second.querySelector('.translated'), 'A new human turn starts without output');
+  caption('a2', 'Yes, we have a double room free tonight.', { field: 'text', side: 'assistant', final: false });
+  assert(second.querySelector('.translated').textContent.includes('Yes, we have') && second.querySelector('.translated').classList.contains('live'), 'Streaming translation is marked in progress');
+  caption('a2', 'Yes, we have a double room free tonight.', { field: 'text', side: 'assistant', final: true });
   assert(!second.querySelector('.translated').classList.contains('live'), 'Final translation settles');
+  caption('rep2', 'Sí, tenemos una habitación doble libre esta noche.', { final: true });
+  assert(bubbles().length === 3 && bubbles()[2].classList.contains('caption-reception'), 'A repeated receptionist phrase stays on the reception side');
+  caption('a3', 'Yes, we have a double room free tonight.', { field: 'text', side: 'assistant', final: true });
+  caption('rep3', 'Sí, tenemos una habitación doble libre esta noche.', { final: true });
+  assert(bubbles().length === 4 && bubbles()[3].classList.contains('caption-reception'), 'A third repeat still holds the reception side');
+  caption('a4', 'Yes, we have a double room free tonight.', { field: 'text', side: 'assistant', final: true });
+  caption('cont', '¿Desea una habitación con vistas al mar?', { final: true });
+  assert(bubbles().length === 5 && bubbles()[4].classList.contains('caption-reception'), 'The same speaker returning after a pause with new words does not flip sides');
+  caption('a5', 'Would you like a room with a sea view?', { field: 'text', side: 'assistant', final: true });
+  caption('guestq', 'How much is the room for one night?', { final: true });
+  assert(bubbles().length === 6 && bubbles()[5].classList.contains('caption-guest'), 'A guest-language turn after reception turns lands on the guest side');
+  caption('a6', '¿Cuánto cuesta la habitación por una noche?', { field: 'text', side: 'assistant', final: true });
+  caption('num', '204.', { final: true });
+  assert(bubbles().length === 7 && bubbles()[6].classList.contains('caption-reception'), 'With no language evidence the side alternates from the previous human turn');
+  caption('a7', 'Doscientos cuatro.', { field: 'text', side: 'assistant', final: true });
+  caption('stream', '34', { final: false });
+  assert(bubbles().length === 8 && bubbles()[7].classList.contains('caption-guest'), 'An ambiguous streaming start falls back to alternation');
+  caption('stream', '34 euros cuesta la habitación esta noche.', { final: true });
+  assert(bubbles()[7].classList.contains('caption-reception') && bubbles()[7].querySelector('.caption-side').textContent.includes('Receptionist'), 'A streaming turn reclassifies bubble position and label as evidence arrives');
+  caption('a8', 'The room costs 34 euros tonight.', { field: 'text', side: 'assistant', final: true });
   const mic = doc.querySelector('.voice-ball');
   assert(mic && mic.dataset.action === 'mute' && mic.tagName === 'BUTTON', 'The dock is a single tappable microphone');
   assert(mic.dataset.hearing === 'true' && mic.getAttribute('aria-pressed') === 'false', 'Live capture shows red');
@@ -108,13 +128,14 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   assert(scroller.scrollTop === 0, 'Scrollback is retained on new captions');
   receive({ type: 'connection', connected: true });
   const rebuilt = doc.querySelectorAll('.caption');
-  assert(rebuilt.length === 3 && doc.querySelector('.session-scroll').scrollTop === 0, 'Full render retains turns and scrollback');
+  assert(rebuilt.length === 9 && doc.querySelector('.session-scroll').scrollTop === 0, 'Full render retains turns and scrollback');
   caption('first', exact + '\nFinal correction', { final: true });
   assert(rebuilt[0] === doc.querySelectorAll('.caption')[0] && rebuilt[0].querySelector('.said').textContent.includes('Final correction'), 'Full render rebuilds the turn index for later revisions');
   const oldScope = scope;
   receive({ type: 'visibility', visible: false });
   receive({ ...oldScope, type: 'audio_state', state: 'off' });
   assert(!doc.querySelector('.caption'), 'Session reset clears visible history');
+  receive({ type: 'language_preferences', language: 'ru', staff_language: 'es' });
   scope = begin();
   receive({ ...oldScope, type: 'caption', utterance_id: 'stale', field: 'original', side: 'human', association: 'unlinked', operation: 'replace', final: true, text: 'Must not appear' });
   assert(bubbles().length === 0, 'Previous session captions are fenced');
@@ -122,12 +143,37 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   const greeting = bubbles()[0];
   assert(bubbles().length === 1 && greeting.classList.contains('caption-reception'), 'The greeting opens on the reception side');
   assert(greeting.querySelector('.said').textContent === '¡Hola! Bienvenido.' && !greeting.querySelector('.translated'), 'The greeting reads as spoken words, not as a translation');
-  caption('fresh', 'New session');
-  assert(bubbles().length === 2 && bubbles()[1].querySelector('.said').textContent === 'New session' && bubbles()[1].classList.contains('caption-guest'), 'The first human turn after the greeting is the guest side');
+  caption('fresh', 'Здравствуйте, нужна комната на двоих.');
+  assert(bubbles().length === 2 && bubbles()[1].querySelector('.said').textContent === 'Здравствуйте, нужна комната на двоих.' && bubbles()[1].classList.contains('caption-guest'), 'A Cyrillic guest turn lands on the guest side with a Latin staff language');
+  caption('fresh-t', 'Hello, we need a room for two.', { field: 'text', side: 'assistant', final: true });
+  caption('fresh2', 'Por supuesto, ¿para cuántas noches?', { final: true });
+  assert(bubbles().length === 3 && bubbles()[2].classList.contains('caption-reception'), 'A Latin staff turn lands on the reception side with a Cyrillic guest language');
   receive({ ...scope, type: 'audio_state', state: 'unknown' });
   receive({ ...scope, type: 'reception_event', phase: 'error', text: 'Previous local release is unconfirmed. No new microphone was opened.' });
   assert(!doc.getElementById('notices').hidden && doc.getElementById('notices').textContent.includes('Previous local release is unconfirmed'), 'Blocked restart errors remain visible on the minimal translation screen');
   const privacy = doc.getElementById('privacy');
   assert(privacy.checkVisibility() && privacy.textContent.includes('Mic state unknown'), 'Unknown release remains visibly labeled on the translation screen');
-  return { frame, updates: 601, replayMs, assertions: 'Turn merge, alternation, greeting, escaping, finality, no AI labels, mic mute toggle, mic-only updates, scrolling, full render and stale session/reset' };
+  const pairCases = [
+    ['fr', 'de', 'La chambre est prête, monsieur.', 'Das Zimmer ist fertig, mein Herr.'],
+    ['ru', 'uk', 'Где лифт, пожалуйста?', 'Ліфт є наприкінці коридору.'],
+    ['ar', 'fa', 'أين المصعد من فضلك؟', 'آسانسور در انتهای راهرو است.'],
+    ['hi', 'mr', 'लिफ्ट कहां है कृपया?', 'लिफ्ट दालनाच्या शेवटी आहे.'],
+    ['zh', 'ja', '请问电梯在哪里？', 'エレベーターは廊下の奥にあります。'],
+    ['ko', 'es', '엘리베이터가 어디에 있나요?', 'El ascensor está al final del pasillo.'],
+    ['th', 'de', 'ลิฟต์อยู่ที่ไหนคะ?', 'Der Aufzug ist am Ende des Ganges.']
+  ];
+  for (const [guestLang, staffLang, guestLine, staffLine] of pairCases) {
+    receive({ type: 'visibility', visible: false });
+    receive({ ...scope, type: 'audio_state', state: 'off' });
+    assert(!doc.querySelector('.caption'), `History clears before the ${guestLang}/${staffLang} pair`);
+    receive({ type: 'language_preferences', language: guestLang, staff_language: staffLang });
+    scope = begin();
+    caption('pg', guestLine, { final: true });
+    assert(bubbles().length === 1 && bubbles()[0].classList.contains('caption-guest'), `${guestLang} guest speech lands left in the ${guestLang}/${staffLang} pair`);
+    caption('pg-t', 'translation', { field: 'text', side: 'assistant', final: true });
+    caption('ps', staffLine, { final: true });
+    assert(bubbles().length === 2 && bubbles()[1].classList.contains('caption-reception'), `${staffLang} staff speech lands right in the ${guestLang}/${staffLang} pair`);
+  }
+  win.__lastScope = scope;
+  return { frame, updates: 636, replayMs, assertions: 'Turn merge, language-matched sides, repeat backstop, pause-resume continuity, no-evidence alternation, distinct-script pair, greeting, escaping, finality, no AI labels, mic mute toggle, mic-only updates, scrolling, full render and stale session/reset' };
 }

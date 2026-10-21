@@ -87,6 +87,94 @@
   const fine = (text) => `<p class="fine">${esc(text)}</p>`;
 
   const languageDir = language => !language ? 'auto' : /^(ar|he|fa|ur)(-|$)/.test(language) ? 'rtl' : 'ltr';
+  // Speaker sides follow the two selected languages, never a fixed one: text matching the
+  // receptionist's selected language lands right, the guest's left. Evidence order: a repeated
+  // recent turn keeps its side; a distinct script decides exactly; common words separate
+  // same-script languages; with no evidence at all, alternate. The side is recomputed while a
+  // turn is still open, so an ambiguous start corrects itself as more words arrive.
+  const SCRIPT_OF = { ar:'arab', fa:'arab', ur:'arab', he:'hebr', zh:'hani', ja:'jpan', ko:'kore', ru:'cyrl', uk:'cyrl', bg:'cyrl', sr:'cyrl', kk:'cyrl', hi:'deva', mr:'deva', ne:'deva', bn:'beng', ta:'taml', te:'telu', kn:'knda', gu:'gujr', pa:'guru', el:'grek', th:'thai', hy:'armn', ka:'geor' };
+  const SCRIPT_RE = { arab:/\p{Script=Arabic}/u, hebr:/\p{Script=Hebrew}/u, hani:/\p{Script=Han}/u, jpan:/[\p{Script=Hiragana}\p{Script=Katakana}]/u, kore:/\p{Script=Hangul}/u, cyrl:/\p{Script=Cyrillic}/u, deva:/\p{Script=Devanagari}/u, beng:/\p{Script=Bengali}/u, taml:/\p{Script=Tamil}/u, telu:/\p{Script=Telugu}/u, knda:/\p{Script=Kannada}/u, gujr:/\p{Script=Gujarati}/u, guru:/\p{Script=Gurmukhi}/u, grek:/\p{Script=Greek}/u, thai:/\p{Script=Thai}/u, armn:/\p{Script=Armenian}/u, geor:/\p{Script=Georgian}/u, latn:/\p{Script=Latin}/u };
+  const WORDS = {
+    es:'el la de que y en un una es son por con para como esta este pero mas si hola gracias si quiero necesito hay donde cuanto vale bueno',
+    en:'the and is are you i we it this that have has do does not no yes please thank thanks where when how what can could would will my your me for with on in to of a an okay ok',
+    ca:'el la de que i en un una es son per amb pero mes si hola gracies vull necessito on quant com no els les del',
+    fr:'le la de et les des en un une est sont pour avec mais plus si bonjour merci oui je vous nous il elle ne pas que qui dans sur au aux ce cette ou combien',
+    de:'der die das und ist sind ich sie wir es mit fur auf nicht nein ja bitte danke wo wie viel haben habe konnen kann mochte ein eine den dem zu von in im',
+    it:'il la di e che un una e sono per con ma piu se ciao grazie si voglio ho hai non dove quanto questo questa come del della nel',
+    pt:'o a de e que um uma e sao para com mas mais se ola obrigado sim quero preciso nao onde quanto como este esta do da no na',
+    nl:'de het een en is zijn ik u we jij niet ja nee alsjeblieft dank waar hoe veel met voor op in van te dit dat wil wilt',
+    ro:'de si in un o este sunt cu pentru dar mai daca buna multumesc da nu vreau unde cat cum acest aceasta care la pe ce',
+    sv:'och att det som en ett ar jag du vi inte ja nej tack var hur mycket med for pa i till den de har vill kan',
+    pl:'i w na z to jest sa sie nie tak prosze dziekuje gdzie jak ile chce potrzebuje ale czy ten ta do od po dla',
+    cs:'a v na se to je jsou si ne ano prosim dekuji kde jak kolik chci potrebuji ale ten do od po pro s z jsem jste',
+    da:'og at det som en et er jeg du vi ikke ja nej tak hvor hvorfor meget med for pa i til den de har vil kan',
+    fi:'ja etta se on ovat olen ei kyllä kiitos missa miten paljon kanssa varten mutta tama mina sina me haluan tarvitsen joka niin kun',
+    hu:'es a az egy van vannak nem igen koszonom kerem hol mennyi szeretnek de ez hogy is meg aki ami',
+    hr:'i u na je su se ne da molim hvala gdje kako koliko zelim trebam ali ovaj koji za od do s sa',
+    sk:'a v na sa to je su nie ano prosim dakujem kde ako kolko chcem potrebujem ale tento ktory do od po pre s z',
+    id:'dan yang di ke dari ini itu saya anda kami tidak ya terima kasih dimana bagaimana berapa mau ingin perlu dengan untuk ada bisa adalah',
+    vi:'và của là có không tôi bạn chúng này được xin cảm ơn vâng ở đâu bao nhiêu muốn cần với cho một các những rất',
+    ms:'dan yang di ke dari ini itu saya anda kami tidak ya terima kasih mana bagaimana berapa hendak perlu dengan untuk ada boleh adalah',
+    tl:'at ang ng sa na ay hindi oo salamat po sino saan paano magkano gusto kailangan ko mo namin para may ito iyon mga',
+    et:'ja et see on ei jah aitäh kus kuidas palju tahan vajan aga ka seda mida kes mis võin palun',
+    lv:'un ka tas ir nē jā paldies kur kā cik gribu vajag bet ar par no uz to šis lūdzu varu',
+    lt:'ir kad tai yra ne taip ačiū kur kaip kiek noriu reikia bet su ant iš į šis prašau galiu',
+    af:'en die is van ek jy ons nie ja asseblief dankie waar hoe veel wil het met vir op in te hierdie dit',
+    no:'og at det som en et er jeg du vi ikke ja nei takk hvor hvordan mye med for pa i til den har vil kan',
+    tr:'ve bir bu için ile de da mi mı evet hayır lütfen teşekkür nerede nasıl ne kadar istiyorum var yok ben sen biz çok şu o',
+    ru:'и в на с что это я вы мы не да спасибо пожалуйста где как сколько хочу нужно есть нет он она они для по из у о же бы',
+    uk:'і в на з що це я ви ми не так дякую будь ласка де як скільки хочу треба є ні він вона вони для по до у про',
+    bg:'и в на с че това аз вие ние не да благодаря моля къде как колко искам трябва има няма той тя те за по от е са',
+    sr:'и у на са да то ја ви ми не хвала молим где како колико желим треба има нема он она они за по од је су',
+    kk:'және мен сіз біз бұл иә жоқ рахмет қайда қанша керек бар ол үшін бір өте көп',
+    ar:'في من على إلى هذا هذه أنا أنت نحن لا نعم شكرا أين كيف كم أريد هناك ليس هو هي هم ما مع عن كل الذي',
+    fa:'در از به این آن من شما ما نه بله ممنون کجا چطور چقدر میخواهم هست نیست او آنها با برای که را یک خیلی',
+    ur:'میں سے پر کو یہ وہ ہم آپ نہیں جی شکریہ کہاں کیسے کتنا چاہتا ہے ہیں کا کی کے اور ایک بہت لئے',
+    hi:'के का की में है हैं और यह वह मैं आप हम नहीं हां धन्यवाद कहां कैसे कितना चाहिए को से पर एक बहुत जी हूं क्या',
+    mr:'चा ची चे मध्ये आहे आहेत आणि हा ही मी आपण आम्ही नाही होय धन्यवाद कुठे कसा किती हवा हवी ला वर एक खूप काय',
+    ne:'को का की मा छ छन् र यो त्यो म तपाईं हामी होइन हो धन्यवाद कहाँ कस्तो कति चाहिन्छ लाई बाट एक धेरै के गर्नु',
+    ja:'です ます は が を に の で と も から まで ありがとう はい いいえ どこ いくら お願い したい これ それ あれ この その',
+    zh:'的 了 我 你 他 她 我们 是 在 有 没有 不 好 谢谢 请问 哪里 多少 想 要 这 那 这个 和 都 很 吗 呢 吧 请 可以'
+  };
+  // Latin-range diacritics are stripped so accented and unaccented transcripts score alike;
+  // other scripts keep their marks, which carry meaning.
+  const stripMarks = text => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const normalizeSpeech = text => stripMarks(text.toLowerCase()).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const turnSpoken = turn => [...turn.segments.values()].map(segment => segment.text).join(' ');
+  const isCjk = word => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(word);
+  const wordsFor = code => [...new Set((WORDS[code] || '').split(' ').filter(Boolean).map(stripMarks))];
+  function classifySpeech(text) {
+    const guest = state.language, staff = state.staff_language;
+    const g = SCRIPT_OF[guest] || 'latn', s = SCRIPT_OF[staff] || 'latn';
+    if (g !== s) {
+      const gm = SCRIPT_RE[g].test(text), sm = SCRIPT_RE[s].test(text);
+      if (gm !== sm) return gm ? 'guest' : 'staff';
+      if (gm && sm) return null; // mixed scripts: no safe call
+    }
+    const gw = wordsFor(guest), sw = wordsFor(staff);
+    if (!gw.length || !sw.length) return null;
+    const norm = normalizeSpeech(text), tokens = new Set(norm.split(' '));
+    let gs = 0, ss = 0;
+    for (const word of gw) if (tokens.has(word) || (isCjk(word) && norm.includes(word))) gs++;
+    for (const word of sw) if (tokens.has(word) || (isCjk(word) && norm.includes(word))) ss++;
+    return gs > ss ? 'guest' : ss > gs ? 'staff' : null;
+  }
+  function resolveHumanSide(text, excludeId) {
+    const norm = normalizeSpeech(text);
+    if (norm.length >= 6) {
+      for (const prior of [...state.turns].reverse()) {
+        if (prior.kind !== 'human' || prior.id === excludeId) continue;
+        const said = normalizeSpeech(turnSpoken(prior));
+        if (said && (said === norm || said.startsWith(norm) || norm.startsWith(said))) return prior.side;
+      }
+    }
+    return classifySpeech(text);
+  }
+  function maybeReclassify(turn) {
+    if (turn.kind !== 'human' || turn.translations.size > 0) return;
+    const side = resolveHumanSide(turnSpoken(turn), turn.id);
+    if (side) turn.side = side;
+  }
   const captionSpeaker = entry => entry.side === 'guest' ? 'Guest' : entry.side === 'staff' ? 'Receptionist' : 'speaker unknown';
   const captionParts = entry => ['original','text'].filter(field => entry[field] !== '').map(field => {
     const output = entry.side === 'assistant' ? 'Assistant output' : field === 'original' ? 'Original' : entry.association === 'unlinked' ? 'Provider output' : 'Translation';
@@ -99,8 +187,8 @@
   const caption = entry => `<article class="${captionClass(entry)}" data-caption-key="${esc(entry.id)}" aria-atomic="true">${captionBody(entry)}</article>`;
   // Translation mode: one bubble per speaker turn. Provider segment IDs never link an
   // utterance to its translation, so assistant output attaches to the most recent human
-  // turn by arrival order; a run of human segments without output stays one turn. With a
-  // shared microphone the true speaker is unknown, so unlabeled turns alternate sides.
+  // turn by arrival order; a run of human segments without output stays one turn. Turn sides
+  // come from the language evidence above, not from fixed speaker guesses.
   const turnLabel = turn => turn.side === 'guest' ? `Guest · ${langName(state.language)}` : `Receptionist · ${langName(state.staff_language)}`;
   const turnHtml = turn => {
     const said = [...turn.segments.values()].map(segment => segment.text).join('\n');
@@ -126,6 +214,7 @@
       turn.node.setAttribute('aria-atomic', 'true');
       transcript.appendChild(turn.node);
     }
+    turn.node.className = `caption caption-${turn.side === 'guest' ? 'guest' : 'reception'}`;
     turn.node.innerHTML = turnHtml(turn);
     if (follow) scroller.scrollTop = scroller.scrollHeight;
   }
@@ -138,6 +227,7 @@
       if (segment.final && (!event.final || segment.text === event.text)) return;
       segment.text = event.operation === 'replace' ? event.text : segment.text + event.text;
       segment.final = segment.final || event.final;
+      if (!assistant) maybeReclassify(found.turn);
       updateTurn(found.turn);
       if (!assistant && event.text.trim()) activity();
       return;
@@ -154,8 +244,10 @@
     if (!turn || turn.kind !== 'human' || turn.translations.size > 0) {
       const lastHuman = [...state.turns].reverse().find(entry => entry.kind === 'human');
       const side = event.side === 'guest' || event.side === 'staff' ? event.side
-        : lastHuman && lastHuman.side === 'guest' ? 'staff' : 'guest';
+        : resolveHumanSide(event.text, -1)
+        || (lastHuman ? (lastHuman.side === 'guest' ? 'staff' : 'guest') : 'guest');
       turn = addTurn('human', side);
+      maybeReclassify(turn);
     }
     turn.segments.set(event.utterance_id, { text: event.text, final: event.final });
     state.turnBySegment.set(event.utterance_id, { turn, field });
