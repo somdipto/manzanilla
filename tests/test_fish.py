@@ -445,7 +445,8 @@ def test_voice_quality_and_latency_config_is_explicit():
     assert config['asr']=={'model':'elevenlabs:scribe_v2_realtime','multilingual':True,'strict_language':False}
     assert config['prompt']['first_message_mode']=='fixed'
     assert config['conversation']['response_wait_ms']==300
-    assert config['conversation']['speculative_response'] is False
+    assert config['conversation']['response_max_wait_ms']==600
+    assert config['conversation']['speculative_response'] is True
     assert config['conversation']['interruptible'] is True
     assert config['conversation']['reengage_enabled'] is False
     assert set(fish.GREETINGS)==fish.SUPPORTED_LANGUAGES

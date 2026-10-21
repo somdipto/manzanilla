@@ -9,7 +9,7 @@ from .models import Strict
 
 # https://docs.fish.audio/agents/deploy/authenticated-sessions
 BASE = 'https://api.fish.audio/v1/agent'
-CONFIG_REV = "9"
+CONFIG_REV = "11"
 GREETINGS = json.loads(Path(__file__).with_name("fish_greetings.json").read_text(encoding="utf-8"))
 MAX_DURATION = 600
 CREATION_SECONDS = 60
@@ -135,7 +135,8 @@ def agent_config(voice):
         'knowledge_base':{'enabled':False,'knowledge_source_ids':[]},
         'conversation':{'max_duration_seconds':MAX_DURATION,'record_audio':False,'reengage_enabled':False,
                         'interruptible':True,'interruption_sensitivity':'balanced',
-                        'response_wait_ms':300,'speculative_response':False}}
+                        'response_wait_ms':300,'response_max_wait_ms':600,
+                        'speculative_response':True}}
 
 async def mint(store, dev, value):
     try:

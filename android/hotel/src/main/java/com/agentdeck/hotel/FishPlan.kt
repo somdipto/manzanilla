@@ -12,7 +12,7 @@ object FishPlan {
     // The agent and its sessions follow the device's own timezone, never a fixed hotel location.
     fun deviceTimezone(): String = java.util.TimeZone.getDefault().id
 
-    const val CONFIG_REV = "10"
+    const val CONFIG_REV = "11"
     const val AGENT_NAME = "Manzanilla Interpreter"
     const val MAX_SECONDS = 600
     const val CLIENT_CAP_MS = 540_000L
@@ -83,9 +83,11 @@ object FishPlan {
             // Documented minimum: removes 150 ms of configured wait, not measured latency.
             .put("response_wait_ms", 300)
             .put("reengage_enabled", false)
-            // Left unset so Fish keeps its automatic ceiling (wait + 0.5 s).
-            // Kept off: an observed duplicate response followed provider-error recovery with this on.
-            .put("speculative_response", false))
+            // Caps the "caller may still be speaking" extension at +300 ms (automatic was +500 ms).
+            .put("response_max_wait_ms", 600)
+            // Drafts the reply during the response wait; Fish discards the draft if speech continues.
+            // Watch for the duplicate-response regression from 17.0.20 (provider-error recovery path).
+            .put("speculative_response", true))
     }
 
     fun sessionBody(agentId: String, guest: String, staff: String, greet: String): JSONObject {
