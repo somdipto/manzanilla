@@ -142,6 +142,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         if (!DeskLanguages.has(guest) || !DeskLanguages.has(staff) || guest == staff) {
             terminate(run, "error", "Choose two different languages for translation."); return
         }
+        run.timing.marker("requested_asr_${FishPlan.recognitionModel(guest, staff)}")
         if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             terminate(run, "error", "Microphone permission is needed for translation."); return
         }
@@ -196,6 +197,11 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             javaAudioDeviceModuleCustomizer = { builder ->
                 builder.setUseHardwareAcousticEchoCanceler(true)
                 builder.setUseHardwareNoiseSuppressor(true)
+                // WebRTC's Java audio device defaults to normal-latency playout. Request
+                // Android's supported low-latency path (API 26+, also our minSdk) while
+                // retaining echo cancellation, noise suppression and adaptive buffering.
+                builder.setUseLowLatency(true)
+                run.timing.marker("android_low_latency_playout_requested")
             }
         )))
         if (!run.owner.use { run.room = live }) { live.release(); return }
@@ -206,7 +212,10 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
                     is RoomEvent.DataReceived -> if (event.topic == "agent-event") onAgent(run, event.data)
                     is RoomEvent.ParticipantAttributesChanged -> when (event.changedAttributes["lk.agent.state"]) {
                         "speaking" -> run.owner.phase("speaking")
-                        "thinking" -> run.owner.phase("thinking")
+                        "thinking" -> {
+                            run.timing.marker("provider_thinking_state_received")
+                            run.owner.phase("thinking")
+                        }
                         "listening", "idle" -> {
                             run.timing.outputComplete(sdkState = true)
                             if (run.recording) run.owner.phase("listening")
@@ -335,6 +344,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         when (event.optString("type")) {
             // Observed live: recovered=true precedes successful continued speech.
             "error" -> if (event.optBoolean("recovered")) {
+                run.timing.marker("provider_recovered_error_received")
                 run.owner.emit(JSONObject().put("type", "notice").put("status", "recovering")
                     .put("text", "The voice service recovered from a temporary interruption."))
             } else terminate(run, "error", "Translation service failed. Please start a new conversation or contact reception.")
@@ -496,6 +506,9 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         // Own termination even when the returned transport ticket is malformed.
         val id = json.getString("session_id")
         check(id.matches(Regex("[A-Za-z0-9_-]+"))) { "Invalid session identity" }
+        // Correlate local monotonic observations with provider history without logging tokens,
+        // credentials or guest speech. A session id is not a transport credential.
+        Log.i("AudioTiming", "endpoint=provider_session_identity session_id=${run.owner.id} generation=${run.owner.generation} provider_session_id=$id receipt_ms=${SystemClock.elapsedRealtime()}")
         run.endRequest = Request.Builder().url("$sessionBase/$id/end")
             .header("Authorization", "Bearer $credential")
             .post("{}".toRequestBody("application/json".toMediaType())).build()
