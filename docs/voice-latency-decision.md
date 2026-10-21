@@ -1,5 +1,13 @@
 # Live-translation latency: decision (17.0.22)
 
+> Historical decision, superseded by 17.0.23's speculation settings and the
+> [17.0.25 latency investigation](voice-latency-fix.md). Two claims below are
+> incorrect for the hosted route: Scribe's partial-transcript speed is not
+> Fish's documented ~0.9 s finalization interval, and the documented history
+> message schema does not provide a per-message `latency_ms` stage breakdown.
+> `tool_result.latency_ms` measures tool execution. The Pro/Free TTS comparison
+> does not establish which synthesis infrastructure a managed agent uses.
+
 Scope: the guest-facing speech-to-speech delay on the tablet (end of one person's speech to first audible translation for the other). This document records the researched options and the decision. Local measurement continues with tools/voice_latency.py plus provider session records; end-to-end audible numbers come only from the tablet.
 
 ## What the evidence says

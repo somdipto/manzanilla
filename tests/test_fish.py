@@ -49,7 +49,7 @@ def fish_api(tmp_path,monkeypatch):
         assert request.url.path=='/v1/agent/sessions'
         assert data['agent_id'] in state['agents']
         assert data['record_audio'] is False and data['tool_events'] is False
-        assert set(data['overrides'])=={'system_prompt','language','first_message'}
+        assert set(data['overrides'])=={'system_prompt','language','first_message','asr'}
         assert data['overrides']['language']==state.get('staff_language','en')
         assert 'bidirectional interpreter between' in data['overrides']['system_prompt']
         if state.get('session_status',201) != 201:
@@ -441,15 +441,52 @@ def test_identical_configuration_reordering_reuses_published_agent(fish_api,monk
 def test_voice_quality_and_latency_config_is_explicit():
     config=fish.agent_config('fixture-voice')
     assert config['voice']['tts_model']=='s2.1-pro'
-    assert config['voice']['expressive'] is True
+    assert config['voice']['expressive'] is False
     assert config['asr']=={'model':'elevenlabs:scribe_v2_realtime','multilingual':True,'strict_language':False}
     assert config['prompt']['first_message_mode']=='fixed'
     assert config['conversation']['response_wait_ms']==300
     assert config['conversation']['response_max_wait_ms']==600
     assert config['conversation']['speculative_response'] is True
     assert config['conversation']['interruptible'] is True
+    assert config['conversation']['echo_guard']=={'web_voice':False}
     assert config['conversation']['reengage_enabled'] is False
     assert set(fish.GREETINGS)==fish.SUPPORTED_LANGUAGES
+
+
+def test_fast_recognition_requires_both_languages_in_hosted_switching_set():
+    switching={'en','es','fr','de','hi','ru','pt','ja','it','nl'}
+    for guest in fish.SUPPORTED_LANGUAGES:
+        for staff in fish.SUPPORTED_LANGUAGES - {guest}:
+            expected='deepgram:nova-3' if {guest,staff} <= switching else 'elevenlabs:scribe_v2_realtime'
+            assert fish.recognition_model(guest,staff)==expected, (guest,staff)
+    for guest,staff in [('xx','en'),('en','xx'),('en','en')]:
+        with pytest.raises(ValueError): fish.recognition_model(guest,staff)
+
+
+def test_language_changes_select_recognizer_per_session_without_republishing(fish_api,monkeypatch):
+    _,client,headers,_,calls,state=fish_api
+    # Synthetic provider only. Production's conservative duration reservations stay unchanged.
+    monkeypatch.setenv('FISH_HOTEL_DAILY_SECONDS','12000')
+    monkeypatch.setenv('FISH_ACCOUNT_DAILY_SECONDS','12000')
+    for guest,staff,model in [
+        ('es','de','deepgram:nova-3'),('de','es','deepgram:nova-3'),
+        ('zh','es','elevenlabs:scribe_v2_realtime'),('es','zh','elevenlabs:scribe_v2_realtime'),
+        ('ja','es','deepgram:nova-3'),('es','ja','deepgram:nova-3'),
+        ('ko','en','elevenlabs:scribe_v2_realtime'),('ar','fr','elevenlabs:scribe_v2_realtime'),
+    ]:
+        state['staff_language']=staff
+        result=client.post('/api/device/fish-session',headers=headers,
+                           json={**REQUEST,'guest_language':guest,'staff_language':staff})
+        assert result.status_code==200
+        session=[body for path,body in calls if path=='/v1/agent/sessions'][-1]
+        assert session['overrides']['asr']=={'model':model}
+        assert session['metadata']=={'manzanilla_config_rev':fish.CONFIG_REV,'guest_language':guest,
+            'staff_language':staff,'asr_model':model,'llm_model':'google/gemini-3.8-flash','tts_model':'s2.1-pro'}
+        assert client.post('/api/device/fish-session/'+result.json()['session_id']+'/end',headers=headers).status_code==200
+    assert len([path for path,_ in calls if path=='/v1/agent/agents'])==1
+    config=next(body['config'] for path,body in calls if path=='/v1/agent/agents')
+    assert config['asr']['multilingual'] is True and config['asr']['strict_language'] is False
+    assert len([path for path,_ in calls if path.endswith('/publish')])==1
 
 
 def test_managed_greeting_uses_validated_guest_language(fish_api):

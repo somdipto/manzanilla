@@ -12,11 +12,27 @@ object FishPlan {
     // The agent and its sessions follow the device's own timezone, never a fixed hotel location.
     fun deviceTimezone(): String = java.util.TimeZone.getDefault().id
 
-    const val CONFIG_REV = "11"
+    const val CONFIG_REV = "12"
     const val AGENT_NAME = "Manzanilla Interpreter"
     const val MAX_SECONDS = 600
     const val CLIENT_CAP_MS = 540_000L
     const val DEFAULT_VOICE = "802e3bc2b27e49c2995d23ef70e6ac89"
+    const val LLM_MODEL = "google/gemini-3.8-flash"
+    const val TTS_MODEL = "s2.1-pro"
+    const val BROAD_ASR = "elevenlabs:scribe_v2_realtime"
+    const val FAST_ASR = "deepgram:nova-3"
+
+    // Fish's hosted Nova route supports mid-call switching only in this set.
+    // Monolingual Nova coverage is broader; it is NOT sufficient for an interpreter.
+    // https://docs.fish.audio/agents/build/voice-language#speech-recognition-model
+    private val FAST_SWITCHING_LANGUAGES = setOf("en", "es", "fr", "de", "hi", "ru", "pt", "ja", "it", "nl")
+
+    fun recognitionModel(guest: String, staff: String): String {
+        require(DeskLanguages.has(guest) && DeskLanguages.has(staff) && guest != staff) {
+            "Choose two different supported languages"
+        }
+        return if (guest in FAST_SWITCHING_LANGUAGES && staff in FAST_SWITCHING_LANGUAGES) FAST_ASR else BROAD_ASR
+    }
 
     fun prompt(guest: String, staff: String): String {
         val g = DeskLanguages.english(guest)
@@ -42,9 +58,9 @@ object FishPlan {
 
 
     // The staff language uses the same 52-language allowlist as the picker.
-    // Accuracy over speed for an interpreter: Scribe v2 Realtime (4.3% WER, ~99 languages) beats
-    // Nova-3 (5.3% WER, 10-language switching) in independent benchmarks; the ~0.5 s saved per turn
-    // is not worth the extra mistranslations. https://benchmarks.coval.ai/benchmarks/word-error-rate
+    // Scribe remains the broad-language default. Each session chooses recognition for BOTH
+    // selected languages. Fish documents finalization at ~0.9 s for Scribe vs ~0.4 s for Nova;
+    // partial-transcript benchmarks do not describe this hosted end-of-turn interval.
     private val GENERIC_PROMPT = """
         You are a spoken interpreter between a hotel guest and a receptionist who share one microphone. Each conversation tells you the two languages.
         When you hear one language, speak only the translation in the other language. Switch the spoken output language on every utterance to the other person's language.
@@ -65,11 +81,13 @@ object FishPlan {
         .put("voice", JSONObject()
             .put("voice_id", voiceId)
             .put("speaking_language", staff)
-            .put("tts_model", "s2.1-pro")
-            .put("expressive", true))
-        .put("llm", JSONObject().put("model", "google/gemini-3.8-flash"))
+            .put("tts_model", TTS_MODEL)
+            // Expressive mode injects emotion cues, pauses and fillers; a faithful interpreter
+            // needs plain delivery. This does not establish a measured TTFA improvement.
+            .put("expressive", false))
+        .put("llm", JSONObject().put("model", LLM_MODEL))
         .put("asr", JSONObject()
-            .put("model", "elevenlabs:scribe_v2_realtime")
+            .put("model", BROAD_ASR)
             .put("multilingual", true)
             .put("strict_language", false))
         .put("tools", JSONObject().put("enabled", false).put("tool_ids", JSONArray()))
@@ -80,6 +98,9 @@ object FishPlan {
             .put("timezone", deviceTimezone())
             .put("interruptible", true)
             .put("interruption_sensitivity", "balanced")
+            // The default web/app guard drops caller speech during the first 3 s of agent
+            // speech. Keep native WebRTC AEC/NS; remove the provider's opening mute window.
+            .put("echo_guard", JSONObject().put("web_voice", false))
             // Documented minimum: removes 150 ms of configured wait, not measured latency.
             .put("response_wait_ms", 300)
             .put("reengage_enabled", false)
@@ -98,9 +119,16 @@ object FishPlan {
         .put("record_audio", false)
         .put("tool_events", false)
         .put("world_context", false)
+        .put("metadata", JSONObject()
+            .put("manzanilla_config_rev", CONFIG_REV)
+            .put("guest_language", guest).put("staff_language", staff)
+            .put("asr_model", recognitionModel(guest, staff))
+            .put("llm_model", LLM_MODEL).put("tts_model", TTS_MODEL))
         .put("overrides", JSONObject()
             .put("system_prompt", prompt(guest, staff))
             .put("language", staff)
+            // Documented nested per-session override; no legacy asr_model field.
+            .put("asr", JSONObject().put("model", recognitionModel(guest, staff)))
             .apply { if (greet.isNotBlank()) put("first_message", greet) })
     }
 }

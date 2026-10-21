@@ -75,6 +75,16 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 
 ## Status
 
+**17.0.25 latency candidate (unreleased):** per-session recognition now uses
+Nova-3 only when both selected languages support Fish's hosted multilingual
+switching; all other pairs retain Scribe. Expressive delivery and the provider's
+three-second opening speech-drop guard are disabled, and Android requests
+WebRTC's low-latency playback mode with echo cancellation/noise suppression kept.
+Gemini 3.8 Flash, Fish S2.1 Pro and the reception screens stay in place.
+[Research, changes and device verification](docs/voice-latency-fix.md).
+Physical speech-to-speech improvement is not yet measured; this source change
+does not update installed devices until a signed release is published.
+
 17.0.21 separates local audio release from paid-session cleanup, retains uncertain ownership, removes guessed caption associations, and updates individual caption bubbles instead of rebuilding the conversation. Startup failures now acknowledge the proposed session; restored reservations that never dispatched can recover without bypassing genuinely uncertain creation. Managed backends distinguish proven non-creation from lost responses. Refusing an update during a conversation keeps the update action retryable. The models, voice and endpointing settings are unchanged. The offline acoustic tool is `tools/voice_latency.py`; physical speech-to-speech latency and bilingual accuracy qualification remain blocked on an isolated matching tablet/capture setup and confirmed remaining spending authorization. See [verification](artifacts/VERIFICATION.md) and [reproduction instructions](docs/TEST-PLAN.md).
 
 17.0.13 enables live translation through the Fish interpreter route. The release build compiles the CI-injected Fish credential; a staff-saved credential overrides it on one device; a configured hotel service mints managed sessions instead, which requires the service-side FISH_API_KEY. The unused device-side Gemini route and the legacy managed relay are removed; there is no provider fallback or automatic switching. Provider usage is billed to the owner's provider account. Physical-device echo, latency and full-duplex behavior remain unverified.
