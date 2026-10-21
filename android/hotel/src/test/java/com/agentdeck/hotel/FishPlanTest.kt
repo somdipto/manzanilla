@@ -2,8 +2,32 @@ package com.agentdeck.hotel
 
 import org.junit.Assert.*
 import org.junit.Test
+import org.json.JSONObject
 
 class FishPlanTest {
+    @Test fun existingCaptionToolMustMatchTheDisplayOnlyContract() {
+        val expected = JSONObject("""{"name":"caption","expects_response":false,"arguments":[{"name":"source_language","description":"Selected code"}]}""")
+        val actual = JSONObject(expected.toString()).put("tool_id", "provider-id")
+        assertTrue(FishPlan.captionToolMatches(expected, actual))
+        actual.put("expects_response", true)
+        assertFalse(FishPlan.captionToolMatches(expected, actual))
+        actual.put("expects_response", false).getJSONArray("arguments").getJSONObject(0).put("name", "hotel_action")
+        assertFalse(FishPlan.captionToolMatches(expected, actual))
+    }
+    @Test fun captionToolIsTheOnlyAllowedToolAndPromptReportsEveryUtterance() {
+        val config = FishPlan.agentConfig("synthetic", "de", "caption-tool")
+        assertTrue(config.getJSONObject("tools").getBoolean("enabled"))
+        assertEquals("[\"caption-tool\"]", config.getJSONObject("tools").getJSONArray("tool_ids").toString())
+        assertEquals("language-v1", FishPlan.CAPTION_PROTOCOL)
+        assertNotEquals("12", FishPlan.CONFIG_REV)
+        val prompt = FishPlan.prompt("fr", "de")
+        assertTrue(prompt.contains("French (fr)"))
+        assertTrue(prompt.contains("German (de)"))
+        assertTrue(prompt.contains(FishPlan.CAPTION_TOOL))
+        assertTrue(prompt.contains("source_language und"))
+        assertTrue(prompt.contains("BEFORE speaking"))
+        assertTrue(prompt.contains("never perform hotel or device actions"))
+    }
     @Test fun conversationConfigRefreshesLegacyCacheAndUsesDocumentedVoiceSettings() {
         assertNotEquals("11", FishPlan.CONFIG_REV)
         val config = FishPlan.agentConfig("synthetic-voice", "bn")
