@@ -69,11 +69,9 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         var previousMode: Int? = null
         var previousSpeaker = false
         @Volatile var recording = false
+        @Volatile var muted = false
     }
     @Volatile private var current: Run? = null
-
-    /** Selection identifies only new human caption segments; null leaves the speaker unspecified. */
-    fun speaker(side: String?) { current?.interpreter?.forceSpeaker(side) }
 
     fun admissionIssue(): String? = admission.reason() ?: if (current != null) "The previous conversation cleanup is still finishing." else null
     fun localAudioState(): String = admission.localAudioState()
@@ -171,6 +169,23 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         }
     }
 
+    /** Guest-controlled microphone gate. Muting never releases capture or touches session ownership. */
+    fun setMuted(muted: Boolean) {
+        val run = current ?: return
+        run.scope.launch {
+            val live = run.room ?: return@launch
+            if (!run.owner.active() || run.muted == muted) return@launch
+            try {
+                check(live.localParticipant.setMicrophoneEnabled(!muted))
+                if (!run.owner.use { run.muted = muted }) return@launch
+                run.timing.marker(if (muted) "microphone_muted" else "microphone_unmuted")
+                run.owner.emit(JSONObject().put("type", "audio_state").put("state", if (muted) "muted" else "recording"))
+            } catch (_: CancellationException) { }
+            catch (_: Throwable) { run.owner.emit(JSONObject().put("type", "notice").put("status", "unavailable")
+                .put("text", "The microphone state did not change. Try again or stop the conversation.")) }
+        }
+    }
+
     fun stop(onStopped: () -> Unit = {}) { val run = current; if (run == null) onStopped() else detach(run, null, onStopped) }
     fun release() = stop()
 
@@ -219,7 +234,6 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             val mine = fromIdentity.value == live.localParticipant.identity?.value
             val stream = run.captions.begin(fromIdentity.value, attrs["lk.segment_id"].orEmpty(), reader.info.id,
                 mine, attrs["lk.transcription_final"] == "true") ?: return@registerTextStreamHandler
-            if (mine) run.interpreter.begin(stream.utteranceId)
             if (mine && stream.final) run.timing.providerInputFinal()
             run.scope.launch(Dispatchers.IO) {
                 if (!run.owner.active()) return@launch
@@ -241,7 +255,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         run.scope.launch {
             while (run.owner.active()) {
                 val now = SystemClock.elapsedRealtime()
-                if (run.recording) {
+                if (run.recording && !run.muted) {
                     val level = live.localParticipant.audioLevel
                     run.timing.inputLevel(level, 0.03f, now)
                     run.owner.emit(JSONObject().put("type", "mic_level").put("level", level))
@@ -293,11 +307,11 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
                 val live = run.room ?: return@launch
                 if (!run.owner.active()) return@launch
                 run.timing.marker("microphone_enable_requested")
-                check(live.localParticipant.setMicrophoneEnabled(true))
+                check(live.localParticipant.setMicrophoneEnabled(!run.muted))
                 run.owner.use {
                     run.recording = true
                     run.timing.marker("microphone_enabled")
-                    run.owner.emit(JSONObject().put("type", "audio_state").put("state", "recording"))
+                    run.owner.emit(JSONObject().put("type", "audio_state").put("state", if (run.muted) "muted" else "recording"))
                     run.owner.phase("listening")
                 }
             } catch (_: CancellationException) { }

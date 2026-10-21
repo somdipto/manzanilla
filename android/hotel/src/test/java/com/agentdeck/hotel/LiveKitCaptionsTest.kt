@@ -12,7 +12,6 @@ class LiveKitCaptionsTest {
         fun begin(segment: String, original: Boolean = true, final: Boolean = false,
                   identity: String = if (original) "mic" else "agent", stream: String = segment): LiveKitCaptions.Stream? {
             val revision = streams.begin(identity, segment, stream, original, final) ?: return null
-            if (original) captions.begin(revision.utteranceId)
             return revision
         }
 
@@ -78,34 +77,29 @@ class LiveKitCaptionsTest {
         assertCaption(feed.read(corrected, "Room 206.", true), "fish:3:mic:u1", "human", "original", "Room 206.", true)
     }
 
-    @Test fun pinIsCapturedAtStreamAnnouncementNotFirstTextOrFinalCompletion() {
+    @Test fun humanStreamsStayProviderReportedAcrossRevisions() {
         val feed = Feed()
-        feed.captions.forceSpeaker("staff")
         val first = feed.begin("u1")!!
-        feed.captions.forceSpeaker("guest")
         val second = feed.begin("u2", final = true)!!
         val firstFinal = feed.begin("u1", final = true)!!
-        feed.captions.forceSpeaker(null)
-        assertCaption(feed.read(second, "Hola.", true), "fish:3:mic:u2", "guest", "original", "Hola.", true)
-        assertCaption(feed.read(firstFinal, "Hello.", true), "fish:3:mic:u1", "staff", "original", "Hello.", true)
+        assertCaption(feed.read(second, "Hola.", true), "fish:3:mic:u2", "human", "original", "Hola.", true)
+        assertCaption(feed.read(firstFinal, "Hello.", true), "fish:3:mic:u1", "human", "original", "Hello.", true)
         assertTrue(feed.read(first, "Hello", true).isEmpty())
         val third = feed.begin("u3", final = true)!!
         assertCaption(feed.read(third, "205", true), "fish:3:mic:u3", "human", "original", "205", true)
     }
 
-    @Test fun unselectedStreamRemainsUnknownWhenPinChangesBeforeFirstText() {
+    @Test fun humanStreamAnnouncedFinalStillReadsAsHuman() {
         val feed = Feed()
         val stream = feed.begin("u1", final = true)!!
-        feed.captions.forceSpeaker("staff")
         assertCaption(feed.read(stream, "205", true), "fish:3:mic:u1", "human", "original", "205", true)
     }
 
     @Test fun sameSegmentNameOnDifferentParticipantsNeverPairsOrSharesFinality() {
         val feed = Feed()
-        feed.captions.forceSpeaker("guest")
         val human = feed.begin("shared", final = true)!!
+        assertCaption(feed.read(human, "Hola.", true), "fish:3:mic:shared", "human", "original", "Hola.", true)
         val assistant = feed.begin("shared", original = false)!!
-        assertCaption(feed.read(human, "Hola.", true), "fish:3:mic:shared", "guest", "original", "Hola.", true)
         assertCaption(feed.read(assistant, "Welcome", false), "fish:5:agent:shared", "assistant", "text", "Welcome", false)
         val assistantFinal = feed.begin("shared", original = false, final = true)!!
         assertCaption(feed.read(assistantFinal, "Welcome.", true), "fish:5:agent:shared", "assistant", "text", "Welcome.", true)

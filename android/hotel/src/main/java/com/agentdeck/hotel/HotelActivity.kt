@@ -114,7 +114,7 @@ class HotelActivity : Activity() {
         if (!owner.accepts(message.optString("session_id"), message.optInt("generation", -1), type == "audio_state")) return
         if (type == "audio_state") {
             val value = message.optString("state")
-            if (value != "off" && value != "recording" && value != "unknown") return
+            if (value != "off" && value != "recording" && value != "unknown" && value != "muted") return
             audioState = if (owner.closing && value == "recording") "unknown" else value
             reception?.push(message.put("state", audioState))
             return
@@ -261,7 +261,7 @@ class HotelActivity : Activity() {
         when (action) {
             "stop", "message", "confirm", "checkin", "operator", "taxi", "question" ->
                 if (!owner.accepts(message.optString("session_id"), message.optInt("generation", -1), duringClose = true)) return
-            "silence", "activity", "speaker" -> if (owner.current != null &&
+            "silence", "activity", "mute" -> if (owner.current != null &&
                 !owner.accepts(message.optString("session_id"), message.optInt("generation", -1))) return
         }
         when (action) {
@@ -308,10 +308,8 @@ class HotelActivity : Activity() {
                 gateway?.action(it, message.optString("action"), message.optJSONObject("arguments") ?: JSONObject())
             }
             "activity" -> lastActivity = SystemClock.elapsedRealtime()
-            "speaker" -> if (owner.current != null) {
-                val side = message.optString("side")
-                fish.speaker(if (side == "guest" || side == "staff") side else null)
-            }
+            "mute" -> owner.current?.takeIf { current(it) && it.request.mode == "translation" }
+                ?.let { fish.setMuted(message.optBoolean("muted")) }
             "silence" -> if (owner.current != null) stopSession()
             "exit" -> stopSession(done = { finish() })
             "check_updates" -> updater.check()

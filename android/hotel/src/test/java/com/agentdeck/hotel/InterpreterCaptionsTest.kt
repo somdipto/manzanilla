@@ -22,8 +22,7 @@ class InterpreterCaptionsTest {
         assertEquals("", event.getString("from"))
         assertEquals("", event.getString("to"))
         assertEquals("unlinked", event.getString("association"))
-        assertEquals(if (side == "guest" || side == "staff") "selected" else "unknown",
-            event.getString("speaker_attribution"))
+        assertEquals("unknown", event.getString("speaker_attribution"))
     }
 
     @Test fun onePersonSpeakingTwiceDoesNotInventAlternatingSpeakers() {
@@ -91,35 +90,9 @@ class InterpreterCaptionsTest {
 
     @Test fun greetingIsAssistantOutputEvenWhenAHumanCaptionHasArrived() {
         val captions = InterpreterCaptions()
-        captions.forceSpeaker("guest")
-        assertCaption(captions.accept(raw("human", "u1", "Hola")), "u1", "guest", "original", "Hola")
+        assertCaption(captions.accept(raw("human", "u1", "Hola")), "u1", "human", "original", "Hola")
         assertCaption(captions.accept(raw("assistant", "greeting", "Welcome. How can I help?")),
             "greeting", "assistant", "text", "Welcome. How can I help?")
-    }
-
-    @Test fun selectionSnapshotsNewHumanIdentityAndNeverReattributesRevisionsOrAssistant() {
-        val captions = InterpreterCaptions()
-        captions.forceSpeaker("staff")
-        captions.begin("u1")
-        captions.forceSpeaker("guest")
-        assertCaption(captions.accept(raw("human", "u1", "Hola", false)), "u1", "staff", "original", "Hola", false)
-        assertCaption(captions.accept(raw("human", "u2", "Hello", false)), "u2", "guest", "original", "Hello", false)
-        captions.forceSpeaker(null)
-        captions.begin("u1")
-        assertCaption(captions.accept(raw("human", "u1", "Hola, gracias.")),
-            "u1", "staff", "original", "Hola, gracias.")
-        assertCaption(captions.accept(raw("human", "u2", "Hello, thanks.")),
-            "u2", "guest", "original", "Hello, thanks.")
-        assertCaption(captions.accept(raw("human", "u3", "205")), "u3", "human", "original", "205")
-        captions.forceSpeaker("staff")
-        assertCaption(captions.accept(raw("assistant", "a1", "205")), "a1", "assistant", "text", "205")
-    }
-
-    @Test fun invalidPinClearsSelectionInsteadOfClaimingAnIdentity() {
-        val captions = InterpreterCaptions()
-        captions.forceSpeaker("staff")
-        captions.forceSpeaker("auto")
-        assertCaption(captions.accept(raw("human", "u1", "205")), "u1", "human", "original", "205")
     }
 
     @Test fun duplicateFinalDoesNotEmitAgainAndDifferentFinalRevisionRetainsIdentity() {
@@ -144,19 +117,16 @@ class InterpreterCaptionsTest {
 
     @Test fun segmentMetadataIsNotEvictedDuringACappedSession() {
         val captions = InterpreterCaptions()
-        captions.forceSpeaker("staff")
-        assertCaption(captions.accept(raw("human", "first", "First.")), "first", "staff", "original", "First.")
-        captions.forceSpeaker("guest")
+        assertCaption(captions.accept(raw("human", "first", "First.")), "first", "human", "original", "First.")
         repeat(10000) { captions.accept(raw("human", "u$it", "205")) }
         assertTrue(captions.accept(raw("human", "first", "late", false)).isEmpty())
         assertTrue(captions.accept(raw("human", "first", "First.")).isEmpty())
         assertCaption(captions.accept(raw("human", "first", "First, corrected.")),
-            "first", "staff", "original", "First, corrected.")
+            "first", "human", "original", "First, corrected.")
     }
 
-    @Test fun separateRunsDoNotRetainSelectionOrFinality() {
+    @Test fun separateRunsDoNotRetainFinality() {
         val first = InterpreterCaptions()
-        first.forceSpeaker("staff")
         first.accept(raw("human", "u1", "Old final."))
         val next = InterpreterCaptions()
         assertCaption(next.accept(raw("human", "u1", "New interim", false)),
@@ -165,10 +135,8 @@ class InterpreterCaptionsTest {
 
     @Test fun providerFieldsRemainIndependentEvenIfInputAndOutputIdsCoincide() {
         val captions = InterpreterCaptions()
-        captions.forceSpeaker("staff")
-        captions.begin("shared")
         assertCaption(captions.accept(raw("human", "shared", "205")),
-            "shared", "staff", "original", "205")
+            "shared", "human", "original", "205")
         assertCaption(captions.accept(raw("assistant", "shared", "205", false)),
             "shared", "assistant", "text", "205", false)
         assertCaption(captions.accept(raw("assistant", "shared", "205.")),

@@ -55,9 +55,10 @@
   const localeLanguage = (navigator.language || '').slice(0, 2).toLowerCase();
   const firstLanguage = Object.keys(languages)[0];
   const initialGuest = Object.hasOwn(languages, localeLanguage) ? localeLanguage : firstLanguage;
-  const state = { page: 'idle', mode: 'translation', night: false, language: initialGuest, staff_language: initialGuest, demo: !native, connected: false, audioAvailable: false, audioGate: 'Translation audio is unavailable in this build. Ask staff to check Settings.', audio: 'off', active: false, phase: '', sessionId: '', generation: null, closed: true, terminated: true, error: '', metrics: '', utterances: new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: '', pendingPage: '', micLevel: 0, speaker: 'auto' };
+  const state = { page: 'idle', mode: 'translation', night: false, language: initialGuest, staff_language: initialGuest, demo: !native, connected: false, audioAvailable: false, audioGate: 'Translation audio is unavailable in this build. Ask staff to check Settings.', audio: 'off', active: false, phase: '', sessionId: '', generation: null, closed: true, terminated: true, error: '', metrics: '', utterances: new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: '', pendingPage: '', micLevel: 0, turns: [], turnBySegment: new Map() };
   let queuedShortcut = '';
   const captionNodes = new Map();
+  let turnSequence = 0;
   const selected = { language: false, staff_language: false };
   let defaultReceived = false;
   let preferencesRestored = false;
@@ -69,7 +70,8 @@
     bed: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 18v3m18-3v3M3 11V5h18v6M2 18v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5H2Zm4-7V8h5v3m2 0V8h5v3"/></svg>',
     car: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="m4 9 2-5h12l2 5M3 18v3m18-3v3M2 18v-6l2-3h16l2 3v6H2Zm3-5h2m10 0h2"/></svg>',
     message: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 3h18v14H8l-5 4V3Zm4 5h10M7 12h7"/></svg>',
-    mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/></svg>'
+    mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/></svg>',
+    micOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8M3 3l18 18"/></svg>'
   };
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const t = () => copy[state.language] || copy.en;
@@ -95,7 +97,78 @@
   const captionClass = entry => `caption caption-${entry.side === 'guest' || entry.side === 'human' ? 'guest' : 'reception'}`;
   const captionBody = entry => captionParts(entry).map((part,index) => `<div class="caption-part${index ? ' caption-divider' : ''}" data-field="${part.field}" data-final="${entry.final[part.field]}"><span class="caption-language">${esc(part.label)}</span><p class="${state.mode === 'translation' ? part.field === 'original' ? 'said' : 'translated' : `caption-${part.field}`}" lang="${esc(part.language || 'und')}" dir="${languageDir(part.language)}">${esc(part.text)}</p></div>`).join('');
   const caption = entry => `<article class="${captionClass(entry)}" data-caption-key="${esc(entry.id)}" aria-atomic="true">${captionBody(entry)}</article>`;
-  const conversation = () => state.utterances.size ? [...state.utterances.values()].map(caption).join('') : `<div class="empty-transcript">${esc(state.mode === 'translation' ? t().begin : 'Choose a service or type a message. The microphone stays off.')}</div>`;
+  // Translation mode: one bubble per speaker turn. Provider segment IDs never link an
+  // utterance to its translation, so assistant output attaches to the most recent human
+  // turn by arrival order; a run of human segments without output stays one turn. With a
+  // shared microphone the true speaker is unknown, so unlabeled turns alternate sides.
+  const turnLabel = turn => turn.side === 'guest' ? `Guest · ${langName(state.language)}` : `Receptionist · ${langName(state.staff_language)}`;
+  const turnHtml = turn => {
+    const said = [...turn.segments.values()].map(segment => segment.text).join('\n');
+    const translated = [...turn.translations.values()].map(segment => segment.text).join('\n');
+    const streaming = [...turn.translations.values()].some(segment => !segment.final);
+    return `<span class="caption-side">${esc(turnLabel(turn))}</span><p class="said" dir="auto">${esc(said || translated)}</p>${said && translated ? `<p class="translated${streaming ? ' live' : ''}" dir="auto">${esc(translated)}</p>` : ''}`;
+  };
+  function addTurn(kind, side) {
+    const turn = { id: ++turnSequence, kind, side, segments: new Map(), translations: new Map(), node: null };
+    state.turns.push(turn);
+    return turn;
+  }
+  function updateTurn(turn) {
+    const transcript = content.querySelector('.conversation');
+    if (!transcript) return;
+    const scroller = transcript.closest('.session-scroll');
+    const follow = scroller && scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop < 60;
+    if (!turn.node || !turn.node.isConnected) {
+      transcript.querySelector('.empty-transcript')?.remove();
+      turn.node = document.createElement('article');
+      turn.node.className = `caption caption-${turn.side === 'guest' ? 'guest' : 'reception'}`;
+      turn.node.dataset.turnId = turn.id;
+      turn.node.setAttribute('aria-atomic', 'true');
+      transcript.appendChild(turn.node);
+    }
+    turn.node.innerHTML = turnHtml(turn);
+    if (follow) scroller.scrollTop = scroller.scrollHeight;
+  }
+  function receiveTranslationCaption(event) {
+    const assistant = event.side === 'assistant';
+    const field = assistant ? 'translations' : 'segments';
+    const found = state.turnBySegment.get(event.utterance_id);
+    if (found && found.field === field) {
+      const segment = found.turn[field].get(event.utterance_id);
+      if (segment.final && (!event.final || segment.text === event.text)) return;
+      segment.text = event.operation === 'replace' ? event.text : segment.text + event.text;
+      segment.final = segment.final || event.final;
+      updateTurn(found.turn);
+      if (!assistant && event.text.trim()) activity();
+      return;
+    }
+    if (assistant) {
+      let turn = state.turns.at(-1);
+      if (!turn || turn.kind !== 'human') turn = addTurn('assistant', 'staff');
+      turn.translations.set(event.utterance_id, { text: event.text, final: event.final });
+      state.turnBySegment.set(event.utterance_id, { turn, field });
+      updateTurn(turn);
+      return;
+    }
+    let turn = state.turns.at(-1);
+    if (!turn || turn.kind !== 'human' || turn.translations.size > 0) {
+      const lastHuman = [...state.turns].reverse().find(entry => entry.kind === 'human');
+      const side = event.side === 'guest' || event.side === 'staff' ? event.side
+        : lastHuman && lastHuman.side === 'guest' ? 'staff' : 'guest';
+      turn = addTurn('human', side);
+    }
+    turn.segments.set(event.utterance_id, { text: event.text, final: event.final });
+    state.turnBySegment.set(event.utterance_id, { turn, field });
+    updateTurn(turn);
+    if (event.text.trim()) activity();
+  }
+  const conversation = () => {
+    if (state.mode === 'translation') {
+      if (!state.turns.length) return `<div class="empty-transcript">${esc(t().begin)}</div>`;
+      return state.turns.map(turn => `<article class="caption caption-${turn.side === 'guest' ? 'guest' : 'reception'}" data-turn-id="${turn.id}" aria-atomic="true">${turnHtml(turn)}</article>`).join('');
+    }
+    return state.utterances.size ? [...state.utterances.values()].map(caption).join('') : `<div class="empty-transcript">${esc('Choose a service or type a message. The microphone stays off.')}</div>`;
+  };
   function updateCaption(entry) {
     const transcript = content.querySelector('.conversation');
     if (!transcript) return;
@@ -115,19 +188,29 @@
     if (follow) scroller.scrollTop = scroller.scrollHeight;
   }
   const phaseLabel = () => ({ connecting: t().connect, ready: 'Staff-led support', greeting: 'Welcome', thinking: 'Translating', speaking: t().speaking, listening: 'Live', ending: 'Stopping', stopped: 'Stopped' })[state.phase] || t().reception;
-  const sessionAudioText = () => ({ off:'Mic off', recording:'Mic on', stopping:'Releasing mic', unknown:'Mic state unknown · ask staff' })[state.audio];
+  const sessionAudioText = () => ({ off:'Mic off', recording:'Mic on', muted:'Mic muted', stopping:'Releasing mic', unknown:'Mic state unknown · ask staff' })[state.audio];
   const sessionDock = () => {
     if (state.mode === 'translation') {
       const bands = state.micLevel > 0 ? state.bands || [state.micLevel, state.micLevel, state.micLevel] : [0, 0, 0];
-      const pick = (id, label) => `<button type="button" class="speaker-opt" data-speaker="${id}" aria-pressed="${state.speaker === id}" title="Applies only to new human speech; never changes existing captions or assistant output">${label}</button>`;
-      const speakerPick = `<div class="speaker-pick" role="group" aria-label="Label new human speech only; existing captions and assistant output are unchanged">${pick('auto','Unspecified')}${pick('guest','Guest')}${pick('staff','Receptionist')}</div>`;
-      return `<div class="voice-ball" data-hearing="${state.phase === 'listening' && state.audio === 'recording'}" role="meter" aria-label="Voice" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(state.micLevel * 100)}" style="--level:${state.micLevel};--b0:${bands[0]};--b1:${bands[1]};--b2:${bands[2]}">${icons.mic}</div>${speakerPick}`;
+      const muted = state.audio === 'muted';
+      const label = muted ? 'Unmute the microphone' : 'Mute the microphone';
+      return `<button type="button" class="voice-ball" data-action="mute" data-hearing="${state.audio === 'recording'}" aria-pressed="${muted}" aria-label="${label}" style="--level:${state.micLevel};--b0:${bands[0]};--b1:${bands[1]};--b2:${bands[2]}">${muted ? icons.micOff : icons.mic}</button>`;
     }
     const stopped = state.closed || state.terminated;
     const restart = state.terminated && !state.active && state.audio === 'off';
     const indicator = `<div class="session-icon" role="img" aria-label="Staff-led support">${icons.bell}</div>`;
     return `<div class="session-actions" data-stopped="${stopped}"><div class="session-control">${indicator}<div class="session-control-copy"><strong>${esc(stopped ? state.phase === 'ending' ? 'Stopping…' : 'Stopped' : phaseLabel())}</strong><span>${esc(sessionAudioText())}</span></div></div>${!stopped ? action('message', 'Message staff', 'secondary', ['connecting','greeting'].includes(state.phase)) : ''}${action(restart ? 'restart' : 'stop', restart ? 'Restart' : stopped ? 'Releasing…' : 'Stop', 'stop', stopped && !restart)}</div>`;
   };
+
+  function syncMic() {
+    const button = content.querySelector('.voice-ball');
+    if (!button) return;
+    const muted = state.audio === 'muted';
+    button.dataset.hearing = String(state.audio === 'recording');
+    button.setAttribute('aria-pressed', String(muted));
+    button.setAttribute('aria-label', muted ? 'Unmute the microphone' : 'Mute the microphone');
+    button.innerHTML = muted ? icons.micOff : icons.mic;
+  }
 
   function renderNotices() {
     const target = document.getElementById('notices');
@@ -181,6 +264,7 @@
     captionNodes.clear();
     content.innerHTML = (html[state.page] || html.idle)();
     content.querySelectorAll('[data-caption-key]').forEach(node => captionNodes.set(node.dataset.captionKey, node));
+    state.turns.forEach(turn => { turn.node = content.querySelector(`[data-turn-id="${turn.id}"]`); });
     content.scrollTop = scrollTop;
     [...content.querySelectorAll('.session-scroll,.draft,.language-list')].forEach((element,index) => {
       const previous = scrolls[index];
@@ -221,6 +305,9 @@
   function clearGuest() {
     state.utterances.clear();
     captionNodes.clear();
+    state.turns = [];
+    state.turnBySegment.clear();
+    turnSequence = 0;
     const transcript = content.querySelector('.conversation');
     if (transcript) transcript.innerHTML = conversation();
     state.draft = null;
@@ -254,7 +341,6 @@
     state.closed = false;
     state.terminated = false;
     state.active = true;
-    state.speaker = 'auto';
     state.phase = 'connecting';
     state.error = '';
     page('active');
@@ -342,6 +428,12 @@
         break;
       }
       case 'start': start(); break;
+      case 'mute':
+        if (state.mode === 'translation' && state.active && !state.closed && ['recording','muted'].includes(state.audio)) {
+          activity();
+          send('mute', { muted: state.audio !== 'muted' });
+        }
+        break;
       case 'restart': if (state.terminated && state.audio === 'off') start(true); break;
       case 'stop': stop(); break;
       case 'back': goBack(); break;
@@ -365,14 +457,6 @@
     }
   }
   content.addEventListener('click', event => { const button = event.target.closest('[data-action]'); if (button && !button.disabled) perform(button.dataset.action); });
-  content.addEventListener('click', event => {
-    const button = event.target.closest('[data-speaker]');
-    if (!button || state.mode !== 'translation' || !state.active) return;
-    activity();
-    state.speaker = button.dataset.speaker;
-    send('speaker', { side: state.speaker === 'auto' ? '' : state.speaker });
-    content.querySelectorAll('[data-speaker]').forEach(option => option.setAttribute('aria-pressed', String(option.dataset.speaker === state.speaker)));
-  });
   content.addEventListener('focusin', event => {
     const side = event.target.dataset.languageSide;
     if (!['language','staff_language'].includes(side)) return;
@@ -518,11 +602,21 @@
     if (type === 'update_status') { offerUpdate(String(event.version || ''), String(event.text || 'Updating…'), String(event.phase || ''), event.percent); return; }
     if (!matchesSession(event)) return;
     if (type === 'audio_state') {
-      if (!['off','recording','stopping','unknown'].includes(event.state)) return;
+      if (!['off','recording','stopping','unknown','muted'].includes(event.state)) return;
       if (state.closed && !['off','unknown'].includes(event.state)) return;
       state.audio = event.state;
       if (state.audio !== 'recording') state.micLevel = 0;
-      if (!finishNavigation()) render();
+      if (!finishNavigation()) {
+        if (state.page === 'active' && state.mode === 'translation') {
+          // A mic toggle only changes the dock and privacy line; rebuilding the
+          // transcript would flicker and drop streaming captions mid-utterance.
+          const privacy = document.getElementById('privacy');
+          if (privacy) privacy.innerHTML = `<span class="mic-dot${state.audio === 'recording' ? ' mic-live' : ''}"></span>${esc(sessionAudioText())}`;
+          syncMic();
+        } else {
+          render();
+        }
+      }
       return;
     }
     if (state.terminated) return;
@@ -536,7 +630,6 @@
       const meter = content.querySelector('.voice-ball');
       meter?.style.setProperty('--level', String(level));
       (state.bands || []).forEach((band, index) => meter?.style.setProperty('--b' + index, String(band)));
-      meter?.setAttribute('aria-valuenow', String(Math.round(level * 100)));
       return;
     }
     if (type === 'notice') {
@@ -547,6 +640,7 @@
     if (type === 'metrics') { state.metrics = String(event.text || ''); if (state.page === 'active') render(); return; }
     if (type === 'caption') {
       if (typeof event.utterance_id !== 'string' || !event.utterance_id || !['human','guest','staff','assistant'].includes(event.side) || !['original','text'].includes(event.field) || !['append','replace'].includes(event.operation) || typeof event.text !== 'string' || typeof event.final !== 'boolean') return;
+      if (state.mode === 'translation') { receiveTranslationCaption(event); return; }
       // Unlinked provider IDs identify revisions of one field, never a translation pair.
       const unlinked = event.association === 'unlinked';
       const key = JSON.stringify([state.sessionId, event.utterance_id, unlinked ? event.field : null]);
@@ -600,7 +694,7 @@
       state.draft = null;
       state.operation = null;
       state.phase = 'ending';
-      if (state.audio === 'recording') state.audio = 'stopping';
+      if (state.audio === 'recording' || state.audio === 'muted') state.audio = 'stopping';
       page('active'); return;
     }
     if (phase === 'confirming') {
@@ -612,10 +706,7 @@
     }
     if (!['connecting','ready','greeting','listening','thinking','speaking'].includes(phase)) return;
     state.phase = phase;
-    if (state.mode === 'translation' && state.page === 'active') {
-      content.querySelector('.voice-ball')?.setAttribute('data-hearing', String(phase === 'listening' && state.audio === 'recording'));
-      return;
-    }
+    if (state.mode === 'translation' && state.page === 'active') { syncMic(); return; }
     // Captions and provider phases must not displace a guest's review or typed form.
     if (state.page === 'confirming' && state.draft?.draft_id.startsWith('voice:') && state.confirmed && phase === 'listening') {
       state.draft = null; state.confirmed = false; state.page = 'active';

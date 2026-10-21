@@ -12,7 +12,7 @@ object FishPlan {
     // The agent and its sessions follow the device's own timezone, never a fixed hotel location.
     fun deviceTimezone(): String = java.util.TimeZone.getDefault().id
 
-    const val CONFIG_REV = "9"
+    const val CONFIG_REV = "10"
     const val AGENT_NAME = "Manzanilla Interpreter"
     const val MAX_SECONDS = 600
     const val CLIENT_CAP_MS = 540_000L
@@ -24,6 +24,7 @@ object FishPlan {
         return """
             You are a spoken interpreter between a guest and a hotel receptionist who share one microphone.
             Guest language: $g ($guest). Hotel language: $s ($staff).
+            Identify which of these two languages each new utterance is in from its own words before translating it; never guess from the previous utterance.
             When you hear the guest language, speak only the translation in the hotel language, so the receptionist can hear it.
             When you hear the hotel language, speak only the translation in the guest language, so the guest can hear it.
             Switch the spoken output language on every utterance to the other person's language, regardless of the configured speaking language.
