@@ -65,7 +65,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         @Volatile var creationRecovery: Request? = null
         val sinks = ArrayList<Pair<RemoteAudioTrack, AudioTrackSink>>()
         val captions = LiveKitCaptions()
-        val interpreter = InterpreterCaptions()
+        val reports = InterpretationReports(owner.guest, owner.staff)
         var previousMode: Int? = null
         var previousSpeaker = false
         @Volatile var recording = false
@@ -248,11 +248,18 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
                 if (!run.owner.active()) return@launch
                 try {
                     val text = StringBuilder()
+                    var activitySent = false
                     reader.flow.collect { chunk ->
                         text.append(chunk)
-                        run.captions.replace(stream, text.toString(), false)?.let { run.interpreter.accept(it).forEach(run.owner::emit) }
+                        if (mine && !activitySent && chunk.isNotBlank()) {
+                            activitySent = true
+                            run.owner.emit(JSONObject().put("type", "input_activity"))
+                        }
+                        // Raw streams have no source-language or translation relationship.
+                        // Caption reports below carry the model's complete, identified turn.
+                        run.captions.replace(stream, text.toString(), false)
                     }
-                    run.captions.replace(stream, text.toString(), true)?.let { run.interpreter.accept(it).forEach(run.owner::emit) }
+                    run.captions.replace(stream, text.toString(), true)
                 } catch (_: CancellationException) { }
                 catch (_: Exception) { run.owner.emit(JSONObject().put("type", "notice").put("status", "unavailable").put("text", "A transcript segment was unavailable; audio may continue.")) }
             }
@@ -349,8 +356,21 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
                     .put("text", "The voice service recovered from a temporary interruption."))
             } else terminate(run, "error", "Translation service failed. Please start a new conversation or contact reception.")
             "session.ended" -> terminate(run, if (event.optString("reason") == "conversation_timeout") "timeout" else "stopped", "Conversation ended.")
-            // An interpreter is never authorized to execute hotel or client tools.
-            "client_tool.call" -> terminate(run, "error", "This translation service requested an unsupported action. Contact reception.")
+            "client_tool.call" -> if (event.optString("toolName") == FishPlan.CAPTION_TOOL) {
+                if (event.opt("expectsResponse") != false) {
+                    terminate(run, "error", "Translation caption configuration is incompatible. Ask reception to check the service.")
+                    return
+                }
+                val duplicate = run.reports.hasSeen(event.optString("callId"))
+                val caption = run.reports.accept(event)
+                if (caption != null) {
+                    run.timing.marker("model_language_caption_received")
+                    run.owner.emit(caption)
+                } else if (!duplicate) {
+                    run.owner.emit(JSONObject().put("type", "notice").put("status", "unavailable")
+                        .put("text", "Captions were unavailable for one utterance. Audio may continue."))
+                }
+            } else terminate(run, "error", "This translation service requested an unsupported action. Contact reception.")
         }
     }
 
@@ -466,24 +486,48 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
     private fun managedSession(run: Run, base: String, token: String, guest: String, staff: String): Session {
         val body = JSONObject().put("guest_language", guest).put("staff_language", staff).put("mode", "translation")
             .put("request_id", run.reservation)
+            .put("caption_protocol", FishPlan.CAPTION_PROTOCOL)
         val request = Request.Builder().url("$base/api/device/fish-session").header("Authorization", "Bearer $token")
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
         return parseSession(run, execute(run, request, createsSession = true), "$base/api/device/fish-session", token)
     }
     private fun ensureAgent(run: Run, apiKey: String, voiceId: String): String {
         val staff = run.owner.staff
+        val definition = ctx.assets.open("fish-caption-tool.json").bufferedReader().use { JSONObject(it.readText()) }
+        check(definition.getString("name") == FishPlan.CAPTION_TOOL)
         val scope = MessageDigest.getInstance("SHA-256")
-            .digest("$apiKey:${FishPlan.agentConfig(voiceId, staff)}:${FishPlan.CONFIG_REV}".toByteArray())
+            .digest("$apiKey:${FishPlan.agentConfig(voiceId, staff)}:$definition:${FishPlan.REPORT_POLICY}:${FishPlan.CONFIG_REV}".toByteArray())
             .joinToString("") { "%02x".format(it.toInt() and 255) }
         val agentName = "${FishPlan.AGENT_NAME} ${FishPlan.CONFIG_REV} $staff ${scope.take(12)}"
         val known = if (meta.getString("scope", "") == scope) meta.getString("agent", "").orEmpty() else ""
-        val id = known.ifBlank { findAgent(run, apiKey, agentName) ?: createAgent(run, apiKey, voiceId, staff, agentName) }
+        val id = known.ifBlank { findAgent(run, apiKey, agentName) ?: kotlin.run {
+            val toolId = ensureCaptionTool(run, apiKey, definition)
+            createAgent(run, apiKey, voiceId, staff, agentName, toolId)
+        } }
         if (known.isBlank()) {
-            call(run, apiKey, "PATCH", "/v1/agent/agents/$id/config", FishPlan.agentConfig(voiceId, staff))
+            // The scoped agent was created with its complete, immutable tool configuration.
+            // Republishing after an interrupted setup must not clear its caption tool.
             call(run, apiKey, "POST", "/v1/agent/agents/$id/publish", null)
             if (run.owner.active()) meta.edit().remove("rev").putString("agent", id).putString("scope", scope).apply()
         }
         return id
+    }
+    private fun ensureCaptionTool(run: Run, apiKey: String, definition: JSONObject): String {
+        val query = URLEncoder.encode(FishPlan.CAPTION_TOOL, "UTF-8")
+        val listing = call(run, apiKey, "GET", "/v1/agent/tools?search=$query&page_size=100", null)
+        val tools = listing.getJSONArray("tools")
+        for (index in 0 until tools.length()) {
+            val summary = tools.getJSONObject(index)
+            if (summary.optString("name") != FishPlan.CAPTION_TOOL) continue
+            val id = summary.getString("tool_id")
+            check(id.matches(Regex("[A-Za-z0-9_-]{1,200}")))
+            check(FishPlan.captionToolMatches(definition, call(run, apiKey, "GET", "/v1/agent/tools/$id", null)))
+            return id
+        }
+        check(!listing.optBoolean("has_more")) { "Caption tool search is incomplete" }
+        return call(run, apiKey, "POST", "/v1/agent/tools", definition).getString("tool_id").also {
+            check(it.matches(Regex("[A-Za-z0-9_-]{1,200}")))
+        }
     }
     private fun findAgent(run: Run, apiKey: String, name: String): String? {
         val query = URLEncoder.encode(name, "UTF-8")
@@ -494,9 +538,9 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         }
         return null
     }
-    private fun createAgent(run: Run, apiKey: String, voiceId: String, staff: String, name: String): String =
+    private fun createAgent(run: Run, apiKey: String, voiceId: String, staff: String, name: String, toolId: String): String =
         call(run, apiKey, "POST", "/v1/agent/agents", JSONObject().put("name", name)
-            .put("description", "Hotel interpreter").put("config", FishPlan.agentConfig(voiceId, staff))).getString("agent_id")
+            .put("description", "Hotel interpreter").put("config", FishPlan.agentConfig(voiceId, staff, toolId))).getString("agent_id")
 
     private fun createSession(run: Run, apiKey: String, id: String, guest: String, staff: String): Session =
         parseSession(run, call(run, apiKey, "POST", "/v1/agent/sessions", FishPlan.sessionBody(id, guest, staff, run.greet)

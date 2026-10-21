@@ -35,8 +35,18 @@ def fish_api(tmp_path,monkeypatch):
             return httpx.Response(200,json={'sessions':[row for row in rows if row['end_user_id']==request.url.params['end_user_id']],
                                             'has_more':False})
         if state['status'] != 201: return httpx.Response(state['status'],json={'message':'private provider detail'})
+        if request.url.path=='/v1/agent/tools' and request.method=='GET':
+            return httpx.Response(200,json={'tools':[{'tool_id':'synthetic-caption-tool','name':fish.CAPTION_TOOL['name']}] if state.get('tools') else []})
+        if request.url.path=='/v1/agent/tools/synthetic-caption-tool' and request.method=='GET':
+            return httpx.Response(200,json=state.get('tool_definition',fish.CAPTION_TOOL))
+        if request.url.path=='/v1/agent/tools':
+            assert data == fish.CAPTION_TOOL
+            if state.get('tool_status',201) != 201: return httpx.Response(state['tool_status'])
+            state.setdefault('tools',[]).append(data)
+            return httpx.Response(201,json={'tool_id':'synthetic-caption-tool'})
         if request.url.path=='/v1/agent/agents':
-            assert data['config']['tools']=={'enabled':False,'tool_ids':[]}
+            tools = data['config']['tools']
+            assert tools == ({'enabled':True,'tool_ids':['synthetic-caption-tool']} if tools['enabled'] else {'enabled':False,'tool_ids':[]})
             assert data['config']['prompt']['first_message_mode']=='fixed'
             assert data['config']['conversation']['record_audio'] is False
             assert data['config']['conversation']['max_duration_seconds']==600
@@ -461,6 +471,78 @@ def test_fast_recognition_requires_both_languages_in_hosted_switching_set():
             assert fish.recognition_model(guest,staff)==expected, (guest,staff)
     for guest,staff in [('xx','en'),('en','xx'),('en','en')]:
         with pytest.raises(ValueError): fish.recognition_model(guest,staff)
+
+
+def test_upgraded_clients_get_one_caption_tool_and_an_immutable_cached_agent(fish_api):
+    _,client,headers,_,calls,state=fish_api
+    request={**REQUEST,'caption_protocol':'language-v1'}
+    for _ in range(2):
+        result=client.post('/api/device/fish-session',headers=headers,json=request)
+        assert result.status_code==200
+        assert client.post('/api/device/fish-session/'+result.json()['session_id']+'/end',headers=headers).status_code==200
+    assert len(state['tools'])==1
+    assert len(state['agents'])==1
+    config=next(iter(state['agents'].values()))
+    assert config['tools']=={'enabled':True,'tool_ids':['synthetic-caption-tool']}
+    assert fish.REPORT_POLICY in config['prompt']['system_prompt']
+    sessions=[body for path,body in calls if path=='/v1/agent/sessions']
+    for session in sessions:
+        prompt=session['overrides']['system_prompt']
+        assert 'guest language es' in prompt and 'receptionist language en' in prompt
+        assert 'source_language' in prompt and 'und' in prompt
+        assert 'never alternate' in prompt and 'never perform hotel or device actions' in prompt
+        assert session['tool_events'] is False  # client_tool.call is independent of lifecycle events
+
+
+def test_legacy_clients_keep_a_separate_agent_without_caption_tool_calls(fish_api):
+    _,client,headers,_,_,state=fish_api
+    for request in [{**REQUEST,'caption_protocol':'language-v1'},REQUEST]:
+        result=client.post('/api/device/fish-session',headers=headers,json=request)
+        assert result.status_code==200
+        assert client.post('/api/device/fish-session/'+result.json()['session_id']+'/end',headers=headers).status_code==200
+    assert len(state['agents'])==2
+    assert [config['tools']['enabled'] for config in state['agents'].values()]==[True,False]
+
+
+def test_failed_caption_tool_setup_never_creates_a_paid_session(fish_api):
+    store,client,headers,_,calls,state=fish_api
+    state['tool_status']=503
+    response=client.post('/api/device/fish-session',headers=headers,json={**REQUEST,'caption_protocol':'language-v1'})
+    assert response.status_code==503
+    assert response.headers['X-Manzanilla-Session-Creation']=='not-created'
+    assert [path for path,_ in calls]==['/v1/agent/tools','/v1/agent/tools']
+    assert store.rows('SELECT status FROM fish_sessions')==[{'status':'ended'}]
+
+
+def test_unrecognized_caption_protocol_is_rejected_before_provisioning(fish_api):
+    _,client,headers,_,calls,_=fish_api
+    assert client.post('/api/device/fish-session',headers=headers,json={**REQUEST,'caption_protocol':'guessed'}).status_code==422
+    assert calls==[]
+
+
+def test_caption_tool_is_reused_without_editing_published_agents(fish_api,monkeypatch):
+    _,client,headers,_,calls,state=fish_api
+    request={**REQUEST,'caption_protocol':'language-v1'}
+    for voice in ['voice-one','voice-two']:
+        monkeypatch.setenv('FISH_VOICE_ID',voice)
+        result=client.post('/api/device/fish-session',headers=headers,json=request)
+        assert result.status_code==200
+        assert client.post('/api/device/fish-session/'+result.json()['session_id']+'/end',headers=headers).status_code==200
+    assert len(state['tools'])==1
+    assert len(state['agents'])==2
+    assert [config['voice']['voice_id'] for config in state['agents'].values()]==['voice-one','voice-two']
+    assert ('/v1/agent/tools/synthetic-caption-tool',None) in calls
+
+
+def test_modified_existing_caption_tool_is_not_silently_reused_or_overwritten(fish_api):
+    _,client,headers,_,calls,state=fish_api
+    state['tools']=[fish.CAPTION_TOOL]
+    state['tool_definition']={**fish.CAPTION_TOOL,'expects_response':True}
+    result=client.post('/api/device/fish-session',headers=headers,json={**REQUEST,'caption_protocol':'language-v1'})
+    assert result.status_code==503
+    assert result.headers['X-Manzanilla-Session-Creation']=='not-created'
+    assert [path for path,_ in calls]==['/v1/agent/tools','/v1/agent/tools/synthetic-caption-tool']
+    assert state['agents']=={}
 
 
 def test_language_changes_select_recognizer_per_session_without_republishing(fish_api,monkeypatch):

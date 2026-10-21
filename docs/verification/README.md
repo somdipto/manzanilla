@@ -4,6 +4,42 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.26 language-side candidate
+
+Base: merged main `bf9e36b` (includes latency PR #3). Source version 17.0.26,
+code 56; config revision 13. No signed release, live provider mutation or paid
+session was made during verification.
+
+Completed in this isolated workspace on 2026-10-21:
+
+- Full Python suite: **257 passed**, one existing AnyIO deprecation warning.
+- Node language-ledger suite: **14 passed**, including all **2,652 ordered picker
+  pairs** with both directions, repeats and uncertain-language continuity.
+- Focused Kotlin/JVM compilation and tests: **17 passed** for FishPlan,
+  InterpretationReports and VoiceSession. Kotlin 1.9.22/JDK 17, real JSON/JUnit
+  dependencies; these are the actual production classes, not rewritten fixtures.
+- Real Chromium 133 browser fixture: **passed** at 837 × 471; model-language
+  placement, physical sides, repeated speech, late labels, finality, escaping,
+  scrolling, microphone state and session fencing. A 120-report DOM replay took
+  approximately **31 ms**. This is renderer time, not audio latency.
+- Current synthetic screenshot: [French/German fixture](../screens/17.0.26-language-fixture.png),
+  captured at 837 × 520 to show the three complete bubbles. No microphone,
+  real guest conversation or physical device was involved.
+- Caption tool and tool-enabled agent-creation bodies: **validated** against
+  Fish's official current OpenAPI contract using JSON Schema.
+- Full Android Gradle build/lint and the complete JVM suite: delegated to the
+  normal GitHub Actions checks on the PR. The local workspace has no Android SDK.
+- Physical-device bilingual accuracy, report coverage and added first-audio
+  latency: **not run**. See [the acceptance gates](../language-bubble-fix.md).
+
+```sh
+python -m pytest tests -q
+node --test tests/reception_language_turns.test.cjs
+# In an isolated browser, import tests/reception_caption_fixture.js and run its fixture.
+cd android
+bash gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug :hotel:assembleDebugAndroidTest --no-daemon
+```
+
 ## 17.0.25 latency candidate
 
 Base: 17.0.24, `8b7c006b53598f275b73c171a6d44b5f646f923d`.
