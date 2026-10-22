@@ -44,6 +44,12 @@ Android may require an "Update" confirmation for an app installed from a file; t
 
 ## Screens
 
+17.0.29 candidate: an **isolated, simulated HTTP402 refusal** displayed through
+the native Android10/WebView74 bridge. This demonstrates the repair reference;
+it is not a diagnosis of the reported device's account or a live translation.
+
+<p align="center"><img src="docs/screens/17.0.29-startup-reference-fixture.png" alt="17.0.29 simulated billing refusal with a visible safe reference and microphone off" width="720"></p>
+
 17.0.28 candidate on an actual Android10 emulator with stock WebView74.
 Key-free functional checks; no live conversation or latency measurement.
 
@@ -102,6 +108,13 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 
 ## Status
 
+**17.0.29 translation-startup candidate (unreleased):** startup reports the failed
+operation and a safe repair reference instead of treating every provisioning
+failure as an internet problem. A definitively rejected cached agent is replaced
+once; uncertain creation is never retried. Managed services distinguish provider
+access, hotel-device access and daily allowance failures. See
+[diagnosis, repair behavior and delivery limits](docs/translation-startup-fix.md).
+
 **17.0.27 translation/reception candidate (unreleased):** translation text is
 requested before caption generation, Android audio diagnostics run off the media
 callback, and unused raw transcript copying is removed. Fixed the APK's blocked
@@ -110,10 +123,10 @@ appearance, and note review/edit/retry/cancel behavior. Managed `language-v2`
 retains separate legacy v1/tool-free contracts; deploy the backend before the APK.
 [Investigation, architecture, device-test needs and limitations](docs/realtime-reception-fix.md).
 
-The latest public APK checked on 2026-10-22 is **17.0.24**. The 17.0.25 recognition
-and playout improvements and newer source fixes are not installed by pulling or
-merging source. A signed GitHub Release is required. No physical speech-latency
-improvement or sub-second result is claimed for this candidate.
+The latest public APK checked on 2026-10-22 is **17.0.28**. It includes the earlier
+recognition, reception and Android-startup changes. The 17.0.29 startup repair
+above is a source candidate; installed devices require a signed GitHub Release.
+No physical speech-latency improvement or sub-second result is claimed.
 
 
 **17.0.26 language-side candidate (unreleased):** the interpretation model sends

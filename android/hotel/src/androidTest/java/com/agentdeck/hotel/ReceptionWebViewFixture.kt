@@ -178,6 +178,23 @@ internal object ReceptionWebViewFixture {
             check(start.optString("language") == "fr" && start.optString("staff_language") == "en")
             check(UUID.fromString(start.getString("session_id")).toString() == start.getString("session_id"))
             check(evaluate("document.documentElement.dataset.page") == "\"active\"")
+            val notice = FishStartupFailure.describe(FishStartupFailure.Stage.CAPTION_CREATE,
+                FishStartupFailure.http(FishStartupFailure.Stage.CAPTION_CREATE, 402), false)
+            instrumentation.runOnMainSync {
+                page.push(JSONObject().put("type", "audio_state").put("state", "off")
+                    .put("session_id", start.getString("session_id")).put("generation", 71))
+                page.push(JSONObject().put("type", "reception_event").put("phase", "error").put("text", notice.text)
+                    .put("session_id", start.getString("session_id")).put("generation", 71))
+            }
+            check(evaluate("document.body.innerText.indexOf('${notice.reference}') >= 0") == "true") {
+                "startup failure reference was lost at the native/WebView boundary"
+            }
+            check(evaluate("document.documentElement.dataset.captureActive") == "\"false\"")
+            instrumentation.uiAutomation.takeScreenshot()?.let { screenshot ->
+                val image = java.io.File(instrumentation.targetContext.getExternalFilesDir(null), "startup-reference-fixture.png")
+                image.outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                screenshot.recycle()
+            }
         } finally {
             instrumentation.runOnMainSync { page.dispose(); activity.finish() }
         }

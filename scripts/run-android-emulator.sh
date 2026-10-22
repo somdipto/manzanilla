@@ -17,7 +17,7 @@ adb shell dumpsys webviewupdate > "$evidence/webview.txt"
 adb shell cmd package set-home-activity com.android.launcher3/.Launcher
 adb logcat -c
 trap 'adb logcat -d > "$evidence/logcat.txt"' EXIT
-for fixture in reception-bridge microphone-permission microphone-permission-denied microphone-permission-background; do
+for fixture in reception-bridge microphone-permission microphone-permission-denied microphone-permission-background translation-startup; do
   # Reset only this disposable, key-free test app between independent scenarios.
   adb shell pm clear dev.orange.hotel
   timeout 180s adb shell am instrument -w -r -e case "$fixture" \
@@ -25,4 +25,7 @@ for fixture in reception-bridge microphone-permission microphone-permission-deni
   # adb itself returns zero even when an instrumentation assertion fails.
   grep -q "PASS case=$fixture " "$evidence/$fixture.txt"
   grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$fixture.txt"
+  if test "$fixture" = reception-bridge; then
+    adb pull /sdcard/Android/data/dev.orange.hotel/files/startup-reference-fixture.png "$evidence/"
+  fi
 done
