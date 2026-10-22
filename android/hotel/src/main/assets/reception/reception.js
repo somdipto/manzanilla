@@ -86,6 +86,13 @@
   };
   const action = (name, label, className = 'primary', disabled = false) => `<button type="button" class="${className}" data-action="${name}" ${disabled ? 'disabled' : ''}>${label}</button>`;
   const fine = (text) => `<p class="fine">${esc(text)}</p>`;
+  const operationField = (field, index) => {
+    const limit = Number.isInteger(field.max_length) && field.max_length > 0 ? field.max_length
+      : ({ original_request:4000, guest_name:100, room_number:20, destination:300, pickup_time:100, query:300 })[field.name] || 300;
+    const attrs = `id="operation-field-${index}" name="${esc(field.name)}" maxlength="${limit}" ${field.required ? 'required' : ''} ${state.operation.pending ? 'disabled' : ''} autocomplete="off" dir="auto"`;
+    const value = esc(state.operation.values[field.name] || '');
+    return `<label for="operation-field-${index}">${esc(field.label)}${field.required ? ' *' : ''}${field.name === 'original_request' ? `<textarea ${attrs}>${value}</textarea>` : `<input ${attrs} value="${value}">`}</label>`;
+  };
 
   const languageDir = language => !language ? 'auto' : /^(ar|he|fa|ur)(-|$)/.test(language) ? 'rtl' : 'ltr';
   const captionSpeaker = entry => entry.side === 'guest' ? 'Guest' : entry.side === 'staff' ? 'Receptionist' : 'speaker unknown';
@@ -199,27 +206,28 @@
     document.documentElement.dataset.page = state.page;
     document.documentElement.dataset.captureActive = String(state.active);
     const nightToggle = document.getElementById('night-toggle');
-    nightToggle.textContent = state.night ? 'Night reception on' : 'Night reception';
+    nightToggle.textContent = state.night ? 'After-hours on' : 'After-hours reception';
+    nightToggle.setAttribute('aria-label', state.night ? 'Turn off after-hours reception' : 'Turn on after-hours reception');
     nightToggle.ariaPressed = String(state.night);
     nightToggle.hidden = state.page !== 'idle';
     document.getElementById('settings').hidden = !native || !['idle','error'].includes(state.page);
     document.getElementById('check-updates').hidden = !native || state.page !== 'idle';
     content.dataset.page = state.page;
-    document.getElementById('mode-title').textContent = 'Reception';
+    document.getElementById('mode-title').textContent = state.night ? 'After-hours reception' : 'Reception';
     document.getElementById('connection-text').textContent = state.connected ? 'Hotel connected' : 'Hotel setup needed';
     document.getElementById('hotel-label').textContent = state.hotel || 'Hotel reception';
     document.getElementById('privacy').innerHTML = `<span class="mic-dot${state.audio === 'recording' ? ' mic-live' : ''}"></span>${esc(sessionAudioText())}`;
-    document.getElementById('hardware-hint').textContent = state.active ? 'Green or red to stop' : state.page === 'translation_languages' ? 'Digits: first ten · ' + (state.audioAvailable ? 'Green: start · ' : '') + 'Red: back' : 'Green: translation';
-    const homeAction = (name, icon, label, note = '') => `<button class="home-action${name === 'translation' ? ' home-action-main' : ''}" data-action="${name}">${name === 'translation' ? '<span class="orb">' + icons.arrow + '</span>' : icon}<span>${label}</span>${note ? '<small>' + note + '</small>' : ''}</button>`;
+    document.getElementById('hardware-hint').textContent = state.active ? 'Green or red to stop' : state.page === 'translation_languages' ? 'Digits: first ten · ' + (state.audioAvailable ? 'Green: start · ' : '') + 'Red: back' : state.night ? 'Green: hotel assistance' : 'Green: translation';
+    const homeAction = (name, icon, label, note = '') => `<button class="home-action${name === (state.night ? 'reception' : 'translation') ? ' home-action-main' : ''}" data-action="${name}">${name === (state.night ? 'reception' : 'translation') ? '<span class="orb">' + icons.arrow + '</span>' : icon}<span>${label}</span>${note ? '<small>' + note + '</small>' : ''}</button>`;
     const html = {
-      idle: () => `<div class="welcome"><h1>Welcome.</h1><p>Guest and staff support.</p></div><nav class="home-actions" aria-label="Reception services">${homeAction('translation',icons.translate,'Live translation',state.audioAvailable ? 'Talk to each other' : 'Audio unavailable')}${homeAction('reception',icons.bell,'Hotel assistance')}${homeAction('request:checkin',icons.bed,'Arrival guide')}${homeAction('request:taxi',icons.car,'Taxi request')}${homeAction('request:message',icons.message,'Message staff')}</nav><div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="Switch to ${appearance === 'dark' ? 'brighter' : 'dimmed'} appearance" title="Appearance · keypad 1">${themeIcon()}</button></div>`,
+      idle: () => `<div class="welcome"><h1>Welcome.</h1><p>${state.night ? 'Self-service hotel assistance.' : 'Guest and staff support.'}</p></div><nav class="home-actions" aria-label="Reception services">${state.night ? homeAction('reception',icons.bell,'Hotel assistance','Self-service support') + homeAction('translation',icons.translate,'Live translation',state.audioAvailable ? 'Talk to each other' : 'Audio unavailable') : homeAction('translation',icons.translate,'Live translation',state.audioAvailable ? 'Talk to each other' : 'Audio unavailable') + homeAction('reception',icons.bell,'Hotel assistance')}${homeAction('request:checkin',icons.bed,'Arrival guide')}${homeAction('request:taxi',icons.car,'Taxi request')}${homeAction('request:message',icons.message,'Message staff')}</nav><div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="Switch to ${appearance === 'dark' ? 'day' : 'night'} mode" title="Day / night mode · keypad 1">${themeIcon()}</button></div>`,
       languages: () => `<div class="status-line"><div><h2 class="language-heading">Hotel assistance</h2></div><button class="back" data-action="back">${icons.back}Back</button></div><label class="assist-label" for="assist-language">Language</label><select id="assist-language" class="assist-language" lang="${state.language}" dir="${languageDir(state.language)}">${Object.entries(languages).map(([id,item]) => `<option value="${id}" lang="${id}" dir="${languageDir(id)}" ${state.language === id ? 'selected' : ''}>${esc(item.native)}</option>`).join('')}</select>${action('assist-go','Continue','primary assist-go')}`,
       translation_languages: () => `<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">Guest ↔ Receptionist</p></div><button class="back" data-action="back">${icons.back}Back</button></div><div class="language-pair">${languagePicker('language','Guest')}${languagePicker('staff_language','Receptionist')}</div>${action('start',state.audioAvailable ? 'Start translation' : 'Audio unavailable','primary setup-start',!state.audioAvailable || sameLanguage() || state.audio !== 'off')}`,
       active: () => state.mode === 'translation'
         ? `<button class="translate-back" data-action="back" aria-label="Back">${icons.back}</button><p class="pair-title">${esc(langName(state.language))} → ${esc(langName(state.staff_language))}</p><div class="session-scroll"><div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">${conversation()}</div></div>${sessionDock()}`
         : `<div class="status-line session-top"><div><h2>Hotel assistance</h2><p>${esc(phaseLabel())}</p></div><button class="back" data-action="back">${icons.back}Back</button></div>${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}<div class="session-scroll">${!state.closed ? `<div class="shortcut-list">${shortcuts.map((id,i) => action(id, `<span class="key">${i + 1}</span><strong>${esc(concierge()[i])}</strong>`, 'choice shortcut', ['connecting','greeting'].includes(state.phase))).join('')}</div>` : ''}<div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">${conversation()}</div>${state.metrics ? `<p class="metrics">${esc(state.metrics)}</p>` : ''}</div>${sessionDock()}`,
-      operation_form: () => `<div class="status-line"><h2>${esc(state.operation?.action === 'message' ? 'Message staff' : concierge()[shortcuts.indexOf(state.operation?.action)] || 'Hotel request')}</h2><button class="back" data-action="back">${icons.back}Back</button></div><form id="operation-form" class="operation-form">${(state.operation?.fields || []).map((field,index) => `<label for="operation-field-${index}">${esc(field.label)}${field.required ? ' *' : ''}${field.name === 'original_request' ? `<textarea id="operation-field-${index}" name="${esc(field.name)}" maxlength="4000" ${field.required ? 'required' : ''} autocomplete="off" dir="auto">${esc(state.operation.values[field.name] || '')}</textarea>` : `<input id="operation-field-${index}" name="${esc(field.name)}" value="${esc(state.operation.values[field.name] || '')}" ${field.required ? 'required' : ''} autocomplete="off" dir="auto">`}</label>`).join('')}<div class="button-row"><button type="submit" class="primary">Review</button>${action('cancel-operation',esc(t().cancel),'secondary')}</div></form>${action('stop','End','stop')}`,
-      confirming: () => `<div class="status-line"><h2>Confirm request?</h2><button class="back" data-action="back">${icons.back}Back</button></div><div class="draft">${esc(state.draft?.message || '')}</div>${fine('Confirm only if the details are correct.')}<div class="button-row">${action('confirm',state.confirmed ? 'Sending…' : 'Confirm','primary',state.confirmed)}${action('cancel-draft',esc(t().cancel),'secondary',state.confirmed)}</div>`,
+      operation_form: () => `<div class="status-line"><h2>${esc(state.operation?.action === 'message' ? 'Message staff' : concierge()[shortcuts.indexOf(state.operation?.action)] || 'Hotel request')}</h2><button class="back" data-action="back">${icons.back}Back</button></div><form id="operation-form" class="operation-form" aria-busy="${!!state.operation?.pending}">${(state.operation?.fields || []).map(operationField).join('')}<div class="button-row"><button type="submit" class="primary" ${state.operation?.pending ? 'disabled' : ''}>${state.operation?.pending ? 'Reviewing…' : 'Review'}</button>${action('cancel-operation',esc(t().cancel),'secondary',state.operation?.pending)}</div></form>${action('stop','End','stop')}`,
+      confirming: () => `<div class="status-line"><h2>Confirm request?</h2><button class="back" data-action="back">${icons.back}Back</button></div><div class="draft" dir="auto">${esc(state.draft?.message || '')}</div>${fine(state.draft?.attempted ? state.draft.approved === false ? 'No cancellation receipt yet. Retry to check the result.' : 'No receipt yet. Retry the same request to check its result.' : 'Confirm only if the details are correct.')}<div class="button-row">${action(state.draft?.attempted ? 'retry-draft' : 'confirm',state.confirmed ? state.draft?.approved === false ? 'Cancelling…' : 'Sending…' : state.draft?.attempted ? 'Retry' : 'Confirm','primary',state.confirmed)}${state.operation ? action('edit-draft','Edit','secondary',state.confirmed || state.draft?.attempted) : ''}${action('cancel-draft',esc(t().cancel),'secondary',state.confirmed)}</div>`,
       saved: () => `<h2>Request receipt</h2><section class="request-receipt"><p class="lead" dir="auto">${esc(state.outcome?.text || 'No receipt returned. Ask staff to check.')}</p>${state.outcome?.receipt ? `<div class="receipt" dir="auto">${esc(state.outcome.receipt)}</div>` : ''}</section><div class="button-row">${action('continue',esc(t().continue))}${action('stop','End','secondary')}</div>`,
       error: () => `<div class="status-line"><h2>Conversation unavailable</h2><button class="back" data-action="back">${icons.back}Back</button></div><div class="notice error">${esc(state.error || 'Please ask reception for help.')}</div>${fine(state.audio === 'off' ? 'Microphone off. Staff can check this device’s setup.' : 'Audio release is not confirmed. Ask reception for help before restarting.')}<div class="button-row">${action('retry','Try again','primary',state.audio !== 'off')}${action('home','Back to home','secondary')}</div>`
     };
@@ -250,18 +258,27 @@
   }
 
   function activity() { send('activity'); }
+  function applyAppearance(value) {
+    if (value !== 'light' && value !== 'dark') return;
+    const changed = appearance !== value;
+    appearance = value;
+    if (changed) render();
+  }
   function toggleAppearance() {
-    if (state.page !== 'idle') return;
-    appearance = appearance === 'light' ? 'dark' : 'light';
-    render();
+    if (state.page !== 'idle' || state.active) return;
+    activity();
+    applyAppearance(appearance === 'light' ? 'dark' : 'light');
     send('appearance', { value:appearance });
   }
   function sameLanguage() { return state.mode === 'translation' && state.language === state.staff_language; }
   function page(next) { state.page = next; render(); }
   function toggleNight() {
     if (state.page !== 'idle' || state.active) return;
-    activity(); state.night = !state.night; state.mode = state.night ? 'reception' : 'translation';
-    page('idle'); send('night', { enabled: state.night });
+    activity();
+    state.night = !state.night;
+    state.mode = state.night ? 'reception' : 'translation';
+    render();
+    send('night', { enabled: state.night });
   }
   function chooseMode(mode) {
     if (state.active || state.audio !== 'off') return;
@@ -408,14 +425,23 @@
       case 'retry': if(state.mode === 'reception') start(); else page('translation_languages'); break;
       case 'checkin': case 'operator': case 'taxi': case 'question': chooseShortcut(name); break;
       case 'message': chooseShortcut('message'); break;
-      case 'cancel-operation': state.operation = null; page('active'); break;
+      case 'cancel-operation': if (!state.operation?.pending) { state.operation = null; page('active'); } break;
+      case 'edit-draft':
+        if (!state.active || state.closed || state.confirmed || !state.operation || !state.draft || state.draft.attempted) return;
+        state.draft = null;
+        state.operation.pending = false;
+        page('operation_form');
+        break;
       case 'confirm':
+      case 'retry-draft':
       case 'cancel-draft':
         if (!state.active || state.closed || !state.draft || state.confirmed) return;
+        if (name === 'retry-draft' && !state.draft.attempted) return;
         state.confirmed = true;
-        send('confirm', { draft_id: state.draft.draft_id, approved: name === 'confirm' });
-        if (name === 'cancel-draft') { state.draft = null; state.confirmed = false; page('active'); }
-        else render();
+        if (name !== 'retry-draft') state.draft.approved = name === 'confirm';
+        state.draft.attempted = true;
+        send('confirm', { draft_id: state.draft.draft_id, approved: state.draft.approved });
+        render();
         break;
       case 'continue':
         state.outcome = null;
@@ -436,18 +462,23 @@
   });
   content.addEventListener('input', event => {
     const input = event.target;
-    if (state.operation && input.closest('#operation-form')) state.operation.values[input.name] = input.value;
+    if (state.operation && input.closest('#operation-form')) {
+      state.operation.values[input.name] = input.value;
+      input.setCustomValidity('');
+    }
     activity();
   });
   content.addEventListener('submit', event => {
     if (event.target.id !== 'operation-form') return;
     event.preventDefault();
-    if (!state.active || state.closed || !state.operation || !event.target.reportValidity()) return;
+    if (!state.active || state.closed || !state.operation || state.operation.pending) return;
+    for (const input of event.target.querySelectorAll('[required]')) input.setCustomValidity(input.value.trim() ? '' : 'Please complete this field.');
+    if (!event.target.reportValidity()) return;
     activity();
     const operation = state.operation;
-    state.operation = null;
+    operation.pending = true;
     send(operation.action, { arguments: { ...operation.values } });
-    page('active');
+    render();
   });
   document.getElementById('notices').addEventListener('click', event => {
     const button = event.target.closest('[data-dismiss]');
@@ -467,7 +498,7 @@
     if (key === 'back' || key === 'red' || key === '0') { goBack(); return; }
     if (key === 'green') {
       if (state.active) stop();
-      else if (state.page === 'idle') chooseMode('translation');
+      else if (state.page === 'idle') chooseMode(state.night ? 'reception' : 'translation');
       else if (state.page === 'translation_languages') start();
       else if (state.page === 'active' && state.terminated) start(true);
       return;
@@ -537,16 +568,17 @@
       goBack();
       return;
     }
-    if (type === 'appearance') { appearance = event.value === 'dark' ? 'dark' : 'light'; render(); return; }
+    if (type === 'appearance') { applyAppearance(event.value); return; }
     if (type === 'visibility') {
       if (event.visible === false) { detachGuest(); state.error = ''; page('idle'); }
       return;
     }
     if (type === 'night_mode') {
-      if (state.active) return;
-      state.night = event.enabled === true;
-      if (state.night) state.mode = 'reception';
-      page('idle'); return;
+      if (typeof event.enabled !== 'boolean' || state.night === event.enabled) return;
+      state.night = event.enabled;
+      if (state.page === 'idle') state.mode = state.night ? 'reception' : 'translation';
+      render();
+      return;
     }
     if (type === 'connection') { state.connected = event.connected === true; render(); return; }
     if (type === 'reception_info') {
@@ -602,7 +634,11 @@
     }
     if (type === 'notice') {
       addNotice(event.text, event.status);
-      if (state.draft && ['error','failed','unavailable','denied','save_failed'].includes(event.status)) { state.confirmed = false; render(); }
+      if (['error','failed','unavailable','denied','save_failed'].includes(event.status)) {
+        state.confirmed = false;
+        if (state.operation) state.operation.pending = false;
+        render();
+      }
       return;
     }
     if (type === 'metrics') { state.metrics = String(event.text || ''); if (state.page === 'active') render(); return; }
@@ -635,12 +671,24 @@
       if (![...shortcuts,'message'].includes(event.action) || !Array.isArray(event.fields) || state.draft) return;
       const fields = event.fields.filter(field => field && typeof field.name === 'string' && field.name && typeof field.label === 'string');
       if (!fields.length) { addNotice('This request did not provide usable fields. Please ask reception for help.', 'unavailable'); return; }
-      state.operation = { action: event.action, fields, values: Object.fromEntries(fields.map(field => [field.name, ''])) };
+      const previous = state.operation?.action === event.action ? state.operation : null;
+      const allFields = new Map((previous?.fields || []).map(field => [field.name, field]));
+      fields.forEach(field => allFields.set(field.name, field));
+      state.operation = { action: event.action, fields: [...allFields.values()], values: { ...Object.fromEntries([...allFields.keys()].map(name => [name, ''])), ...previous?.values }, pending: false };
       page('operation_form'); return;
     }
     if (type === 'operation_result') {
       const text = String(event.text || '');
       if (['confirmation_required','needs_confirmation','fields_required'].includes(event.status)) return;
+      if (['unavailable','error','pending'].includes(event.status) && (state.operation || state.draft)) {
+        // A lost response may already have saved the note. Keep its confirmation
+        // identity so Retry is idempotent instead of submitting a second note.
+        state.confirmed = false;
+        if (state.operation) state.operation.pending = false;
+        addNotice(text || 'No receipt was received. Retry or ask reception to check.', event.status);
+        page(state.draft ? 'confirming' : 'operation_form');
+        return;
+      }
       if (state.draft && !state.confirmed) { addNotice(text, event.status); return; }
       const receipt = event.result?.item_id || event.result?.request_id || event.result?.escalation_id;
       state.outcome = { text: text || 'No receipt returned. Ask staff to check.', receipt: typeof receipt === 'string' ? `Receipt: ${receipt}` : '' };
@@ -673,7 +721,7 @@
       if (typeof event.draft_id !== 'string' || !event.draft_id || state.draft?.draft_id === event.draft_id) return;
       state.draft = { draft_id: event.draft_id, guest_name: String(event.guest_name || ''), room_reference: String(event.room_reference || ''), message: String(event.message || '') };
       state.confirmed = false;
-      state.operation = null;
+      if (state.operation) state.operation.pending = false;
       page('confirming'); return;
     }
     if (!['connecting','ready','greeting','listening','thinking','speaking'].includes(phase)) return;

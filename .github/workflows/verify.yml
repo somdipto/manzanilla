@@ -13,9 +13,12 @@ jobs:
         with: {python-version: '3.12'}
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
-      - run: node --test tests/reception_language_turns.test.cjs
+      - run: node --test tests/*.test.cjs
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest tests -q
+      - run: pip install -r requirements-browser.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python tests/run_reception_browser.py
   android:
     runs-on: ubuntu-latest
     steps:

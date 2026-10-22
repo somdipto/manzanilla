@@ -24,16 +24,22 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
     private var disposed = false
     private var shown = false
     private var dark = context.getSharedPreferences("deck", Context.MODE_PRIVATE).getString("reception_appearance", "dark") != "light"
-    private val host = "manzania-reception.invalid"
+    private val host = ReceptionAssets.HOST
 
     init {
-        setBackgroundColor(if (dark) Color.rgb(8, 15, 21) else Color.rgb(16, 34, 48))
+        setBackgroundColor(if (dark) Color.rgb(8, 15, 21) else Color.rgb(243, 245, 242))
         visibility = View.GONE
         addView(browser, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         browser.setBackgroundColor(Color.TRANSPARENT)
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
         browser.settings.apply {
             javaScriptEnabled = true
+            // The page owns its palette; Android must not invert a light theme again.
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                @Suppress("DEPRECATION")
+                forceDark = WebSettings.FORCE_DARK_OFF
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 33) isAlgorithmicDarkeningAllowed = false
             allowFileAccess = false
             allowContentAccess = false
             @Suppress("DEPRECATION")
@@ -50,9 +56,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
         }
         browser.addJavascriptInterface(object {
             @JavascriptInterface fun postMessage(raw: String) {
-                if (raw.length > 8192) return
-                val message = try { JSONObject(raw) } catch (_: Exception) { return }
-                if (message.optString("action") !in setOf("info", "start", "stop", "appearance", "night", "bell", "settings", "languages", "checkin", "operator", "taxi", "question", "message", "confirm", "silence", "activity", "mute", "exit", "apply_update", "check_updates")) return
+                val message = ReceptionBridge.decode(raw) ?: return
                 post { if (!disposed && shown) action(message) }
             }
         }, "ManzaniaNative")
@@ -64,8 +68,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse {
                 val uri = request?.url
                 val path = uri?.path?.removePrefix("/") ?: ""
-                val permitted = uri?.scheme == "https" && uri.host == host && uri.query == null &&
-                    request?.method == "GET" && path in setOf("index.html", "reception.js", "reception.css", "greetings.js")
+                val permitted = ReceptionAssets.allows(uri?.scheme, uri?.host, uri?.path, uri?.query, request?.method)
                 if (permitted) {
                     val mime = when { path.endsWith(".js") -> "application/javascript"; path.endsWith(".css") -> "text/css"; else -> "text/html" }
                     try {
@@ -107,7 +110,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
         if (disposed) return
         if (message.optString("type", message.optString("t")) == "appearance") {
             dark = message.optString("value") != "light"
-            setBackgroundColor(if (dark) Color.rgb(8, 15, 21) else Color.rgb(16, 34, 48))
+            setBackgroundColor(if (dark) Color.rgb(8, 15, 21) else Color.rgb(243, 245, 242))
         }
         if (!message.has("type") && message.has("t")) message.put("type", message.optString("t"))
         if (!ready) {
@@ -132,7 +135,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
             addView(TextView(context).apply {
                 text = "Reception could not load.\nReturn to the launcher and open Reception again."
                 textSize = 20f
-                setTextColor(Color.rgb(241, 243, 239))
+                setTextColor(if (dark) Color.rgb(241, 243, 239) else Color.rgb(24, 44, 56))
                 gravity = Gravity.CENTER
             })
             addView(Button(context).apply { text = "Back to launcher"; setOnClickListener { action(JSONObject().put("action", "exit")) } })

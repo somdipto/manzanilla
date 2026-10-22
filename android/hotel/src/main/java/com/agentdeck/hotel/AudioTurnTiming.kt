@@ -53,27 +53,41 @@ internal class AudioTurnTiming(private val now: () -> Long, private val report: 
         pending.addLast(Probe(currentOutput, firstFrame))
     }
 
-    /** Local SDK output-state grouping only; the SDK exposes no output-to-input association here. */
+    /** A state receipt can open a group before any decoded frames arrive. */
+    @Synchronized fun sdkOutputStarted() {
+        beginOutput()
+        report(Point(currentOutput, "sdk_output_state_started_received", now()))
+    }
+
+    /** Local SDK output-state grouping only; the SDK exposes no output-to-input association here.
+     * WebRTC may keep delivering silent frames while the agent is idle. They must
+     * not create the next output group minutes before that output actually starts.
+     * Non-silent PCM may precede its state event, so it can also open a group.
+     */
     @Synchronized fun sdkDecodedReceived(pcm: ByteBuffer? = null, sampleBytes: Int = 0) {
+        val crossing = !nonSilent && pcm != null && containsActivity(pcm, sampleBytes)
+        if (currentOutput == 0L && pcm != null && !crossing) return
         beginOutput()
         if (!received) {
             received = true
             report(Point(currentOutput, "sdk_decoded_received_not_audible", now()))
         }
-        // Stop inspecting PCM after the first threshold crossing. No per-packet RMS/bridge work.
-        if (nonSilent || pcm == null) return
+        if (crossing) {
+            nonSilent = true
+            report(Point(currentOutput, "sdk_non_silent_decoded_received_not_audible", now()))
+        }
+    }
+
+    private fun containsActivity(pcm: ByteBuffer, sampleBytes: Int): Boolean {
         val start = pcm.position()
         val bytes = minOf(pcm.remaining(), sampleBytes)
         var offset = 0
         while (offset + 1 < bytes) {
             val sample = ((pcm.get(start + offset).toInt() and 255) or (pcm.get(start + offset + 1).toInt() shl 8)).toShort().toInt()
-            if (sample > 655 || sample < -655) {
-                nonSilent = true
-                report(Point(currentOutput, "sdk_non_silent_decoded_received_not_audible", now()))
-                break
-            }
+            if (sample > 655 || sample < -655) return true
             offset += 2
         }
+        return false
     }
 
     @Synchronized fun playbackHead(frames: Long) {
@@ -87,12 +101,57 @@ internal class AudioTurnTiming(private val now: () -> Long, private val report: 
             if (sdkState) "sdk_output_state_ended_received" else "provider_output_turn_complete_received", now()))
         currentOutput = 0
         received = false
+        nonSilent = false
     }
 
     @Synchronized fun interrupted() {
         if (currentOutput != 0L) report(Point(currentOutput, "output_interrupted_received", now()))
         currentOutput = 0
         received = false
+        nonSilent = false
         pending.clear()
+    }
+}
+
+/** A bounded diagnostic handoff. Audio callbacks never wait for the writer (logcat).
+ * The supplied dispatcher must enqueue work asynchronously. It is called at most
+ * once per active drain; a slow logger cannot create one coroutine per PCM event.
+ * Old diagnostic points may be dropped under pressure, but audio is never dropped.
+ */
+internal class AudioTimingLog(
+    private val dispatch: (() -> Unit) -> Unit,
+    private val write: (AudioTurnTiming.Point) -> Unit,
+    private val dropped: (Int) -> Unit = {},
+    private val capacity: Int = 128
+) {
+    private val lock = Any()
+    private val pending = ArrayDeque<AudioTurnTiming.Point>()
+    private var draining = false
+    private var lost = 0
+
+    init { require(capacity > 0) }
+
+    fun offer(point: AudioTurnTiming.Point) {
+        val start = synchronized(lock) {
+            if (pending.size == capacity) { pending.removeFirst(); lost++ }
+            pending.addLast(point)
+            if (draining) false else { draining = true; true }
+        }
+        if (start) dispatch(::drain)
+    }
+
+    private fun drain() {
+        while (true) {
+            val next = synchronized(lock) {
+                if (pending.isEmpty()) { draining = false; return }
+                val item = pending.removeFirst()
+                val count = lost
+                lost = 0
+                item to count
+            }
+            // A diagnostic failure must not wedge the queue or affect live audio.
+            if (next.second > 0) try { dropped(next.second) } catch (_: Exception) { }
+            try { write(next.first) } catch (_: Exception) { }
+        }
     }
 }

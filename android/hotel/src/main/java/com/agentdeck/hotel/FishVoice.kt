@@ -46,9 +46,14 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
     private val cleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val admission = admission(this.ctx)
     private inner class Run(val owner: VoiceSession, val greet: String) {
-        val timing = AudioTurnTiming(SystemClock::elapsedRealtime) {
-            Log.i("AudioTiming", "source=interpreter-sdk session_id=${owner.id} generation=${owner.generation} $it")
-        }
+        // AudioTrackSink runs on WebRTC's audio thread. Logging must never perform
+        // logcat I/O there or hold the timing monitor while the logger is stalled.
+        private val diagnostics = AudioTimingLog(
+            dispatch = { task -> cleanup.launch { task() } },
+            write = { point -> Log.i("AudioTiming", "source=interpreter-sdk session_id=${owner.id} generation=${owner.generation} $point") },
+            dropped = { count -> Log.w("AudioTiming", "session_id=${owner.id} generation=${owner.generation} endpoint=diagnostic_points_dropped count=$count") }
+        )
+        val timing = AudioTurnTiming(SystemClock::elapsedRealtime, diagnostics::offer)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         // HTTP creation can finish late after cancellation. It must not delay local media release.
         val creation = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -211,7 +216,10 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
                 when (event) {
                     is RoomEvent.DataReceived -> if (event.topic == "agent-event") onAgent(run, event.data)
                     is RoomEvent.ParticipantAttributesChanged -> when (event.changedAttributes["lk.agent.state"]) {
-                        "speaking" -> run.owner.phase("speaking")
+                        "speaking" -> {
+                            run.timing.sdkOutputStarted()
+                            run.owner.phase("speaking")
+                        }
                         "thinking" -> {
                             run.timing.marker("provider_thinking_state_received")
                             run.owner.phase("thinking")
@@ -247,19 +255,16 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             run.scope.launch(Dispatchers.IO) {
                 if (!run.owner.active()) return@launch
                 try {
-                    val text = StringBuilder()
                     var activitySent = false
                     reader.flow.collect { chunk ->
-                        text.append(chunk)
                         if (mine && !activitySent && chunk.isNotBlank()) {
                             activitySent = true
                             run.owner.emit(JSONObject().put("type", "input_activity"))
                         }
-                        // Raw streams have no source-language or translation relationship.
-                        // Caption reports below carry the model's complete, identified turn.
-                        run.captions.replace(stream, text.toString(), false)
+                        // Consume the transport stream without accumulating/copying its text.
+                        // Raw captions have no language/link metadata and are not rendered;
+                        // complete identified captions arrive through the report tool below.
                     }
-                    run.captions.replace(stream, text.toString(), true)
                 } catch (_: CancellationException) { }
                 catch (_: Exception) { run.owner.emit(JSONObject().put("type", "notice").put("status", "unavailable").put("text", "A transcript segment was unavailable; audio may continue.")) }
             }

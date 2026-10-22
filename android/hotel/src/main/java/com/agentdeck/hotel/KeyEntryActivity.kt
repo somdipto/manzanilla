@@ -6,6 +6,7 @@ import android.app.KeyguardManager
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
@@ -35,12 +36,21 @@ class KeyEntryActivity : Activity() {
     private var foreground = false
     private val fields = ArrayList<EditText>()
     private var dialog: AlertDialog? = null
-    private val background = Color.rgb(8, 15, 21)
-    private val ink = Color.rgb(229, 237, 243)
+    private val light by lazy { getSharedPreferences("deck", MODE_PRIVATE).getString("reception_appearance", "dark") == "light" }
+    private val background get() = if (light) Color.rgb(243, 245, 242) else Color.rgb(8, 15, 21)
+    private val ink get() = if (light) Color.rgb(24, 44, 56) else Color.rgb(229, 237, 243)
+    private val hintInk get() = if (light) Color.rgb(68, 93, 108) else Color.rgb(157, 178, 194)
+    private val accent get() = if (light) Color.rgb(20, 85, 112) else Color.rgb(97, 201, 237)
+    private val surface get() = if (light) Color.rgb(228, 236, 235) else Color.rgb(24, 44, 59)
 
     override fun onCreate(state: Bundle?) {
+        if (light) setTheme(android.R.style.Theme_Material_Light_NoActionBar)
         // Do not restore a prior configuration view hierarchy or typed credentials.
         super.onCreate(null)
+        window.setBackgroundDrawable(ColorDrawable(background))
+        window.statusBarColor = background
+        window.navigationBarColor = background
+        if (light) window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         lockedView("Use this device's screen lock to open staff setup.")
     }
@@ -139,7 +149,8 @@ class KeyEntryActivity : Activity() {
             setSaveFromParentEnabled(false)
             importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
             setTextColor(ink)
-            setHintTextColor(Color.rgb(157, 178, 194))
+            setHintTextColor(hintInk)
+            backgroundTintList = ColorStateList.valueOf(accent)
             setText(HotelConnection(this@KeyEntryActivity).load()?.base.orEmpty())
         }
         fields.add(connectionUrl)
@@ -212,8 +223,8 @@ class KeyEntryActivity : Activity() {
             filterTouchesWhenObscured = true
             setSingleLine()
             setTextColor(ink)
-            setHintTextColor(Color.rgb(157, 178, 194))
-            backgroundTintList = ColorStateList.valueOf(Color.rgb(97, 201, 237))
+            setHintTextColor(hintInk)
+            backgroundTintList = ColorStateList.valueOf(accent)
             customSelectionActionModeCallback = object : ActionMode.Callback {
                 override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean = false
                 override fun onPrepareActionMode(mode: ActionMode, menu: Menu): Boolean = false
@@ -278,7 +289,7 @@ class KeyEntryActivity : Activity() {
     private fun button(value: String, action: () -> Unit) = Button(this).apply {
         text = value
         setTextColor(ink)
-        backgroundTintList = ColorStateList.valueOf(Color.rgb(24, 44, 59))
+        backgroundTintList = ColorStateList.valueOf(surface)
         minHeight = (48 * resources.displayMetrics.density).toInt()
         filterTouchesWhenObscured = true
         setOnClickListener { action() }

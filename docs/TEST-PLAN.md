@@ -134,3 +134,19 @@ Its descriptive summary does not replace the existing latency plan's confirmed c
 The historical $4 allowance is aggregate, not renewed: no paid trial without established remaining
 authorization and a conservative reservation.
 
+
+
+## 17.0.27 reception browser regression runner
+
+Install `requirements-browser.txt` and run `python -m playwright install chromium`,
+then `python tests/run_reception_browser.py`. To reuse a system browser, pass
+`--chromium /usr/bin/chromium`. CI runs this alongside Python, Node and Android
+checks. The runner blocks external requests and exercises the real shipped assets
+with isolated bridge events for captions, notes and appearance. Android JVM tests
+separately verify that the native asset policy permits each dependency in the
+shipped HTML; a permissive HTTP fixture alone cannot catch that APK boundary.
+
+Use [the candidate investigation](realtime-reception-fix.md) for speech-first
+caption migration and the physical old/new acceptance comparison. Pending/unknown
+note outcomes retain the exact confirmation identity and last user intent; verify
+that retries and cancellation return one durable receipt without another write.

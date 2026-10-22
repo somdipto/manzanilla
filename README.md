@@ -2,7 +2,7 @@
 
 **Faster execution hardware for the hospitality industry.**
 
-Manzanilla Reception is a landscape Android app with an open-canvas reception home, navy appearance options and hands-free live translation. Reception and guest languages have independent selectors. Fish provides the configured opening greeting within its voice session; there is no local greeting-WAV capture gate. A configured hotel backend keeps its provider key server-side. **The current public release APK includes an extractable CI-injected provider key**; encrypted device storage does not protect a key compiled into an APK.
+Manzanilla Reception is a landscape Android app with an open-canvas reception home, day/night appearance and hands-free live translation. Reception and guest languages have independent selectors. Fish provides the configured opening greeting within its voice session; there is no local greeting-WAV capture gate. A configured hotel backend keeps its provider key server-side. **The current public release APK includes an extractable CI-injected provider key**; encrypted device storage does not protect a key compiled into an APK.
 
 <p align="center">
   <a href="https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Manzanilla%20Reception-2ea44f?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="56"></a>
@@ -42,6 +42,15 @@ Android may require an "Update" confirmation for an app installed from a file; t
 
 ## Screens
 
+17.0.27 candidate: real day/night palettes and repaired reception controls.
+These are isolated synthetic browser captures, **not native-device or live-audio evidence**.
+
+<p align="center">
+  <img src="docs/screens/17.0.27-day-fixture.png" alt="17.0.27 day appearance browser fixture" width="720">
+  <img src="docs/screens/17.0.27-night-fixture.png" alt="17.0.27 night appearance browser fixture" width="720">
+</p>
+
+
 17.0.26 language-attribution fixture: consecutive German receptionist utterances
 stay right; French guest speech goes left. This is a synthetic browser capture,
 not a live microphone or physical-device result.
@@ -80,6 +89,20 @@ Every reception screen, original and current, is listed in [docs/screens](docs/s
 The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-README.md).
 
 ## Status
+
+**17.0.27 translation/reception candidate (unreleased):** translation text is
+requested before caption generation, Android audio diagnostics run off the media
+callback, and unused raw transcript copying is removed. Fixed the APK's blocked
+language script, real light/dark palettes, preference navigation, native setup
+appearance, and note review/edit/retry/cancel behavior. Managed `language-v2`
+retains separate legacy v1/tool-free contracts; deploy the backend before the APK.
+[Investigation, architecture, device-test needs and limitations](docs/realtime-reception-fix.md).
+
+The latest public APK checked on 2026-10-22 is **17.0.24**. The 17.0.25 recognition
+and playout improvements and newer source fixes are not installed by pulling or
+merging source. A signed GitHub Release is required. No physical speech-latency
+improvement or sub-second result is claimed for this candidate.
+
 
 **17.0.26 language-side candidate (unreleased):** the interpretation model sends
 one display-only caption report containing its source-language decision, original

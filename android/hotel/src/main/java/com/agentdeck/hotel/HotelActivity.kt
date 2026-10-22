@@ -266,10 +266,8 @@ class HotelActivity : Activity() {
         }
         when (action) {
             "appearance" -> {
-                val value = if (message.optString("value") == "dark") "dark" else "light"
-                deck.edit().putString("reception_appearance", value).apply()
-                window.setBackgroundDrawable(ColorDrawable(if (value == "dark") Color.rgb(8, 15, 21) else Color.rgb(16, 34, 48)))
-                reception?.push(JSONObject().put("type", "appearance").put("value", value))
+                val value = message.optString("value")
+                if (value == "dark" || value == "light") setAppearance(value)
             }
             "night" -> if (owner.current == null) {
                 night = message.optBoolean("enabled", !night)
@@ -318,6 +316,12 @@ class HotelActivity : Activity() {
         }
     }
 
+    private fun setAppearance(value: String) {
+        deck.edit().putString("reception_appearance", value).apply()
+        window.setBackgroundDrawable(ColorDrawable(if (value == "dark") Color.rgb(8, 15, 21) else Color.rgb(243, 245, 242)))
+        reception?.push(JSONObject().put("type", "appearance").put("value", value))
+    }
+
     private fun navigateBack() {
         val event = JSONObject().put("type", "navigation").put("action", "back").put("source", "android")
         val lease = owner.current
@@ -331,7 +335,7 @@ class HotelActivity : Activity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         val dark = deck.getString("reception_appearance", "dark") != "light"
-        window.setBackgroundDrawable(ColorDrawable(if (dark) Color.rgb(8, 15, 21) else Color.rgb(16, 34, 48)))
+        window.setBackgroundDrawable(ColorDrawable(if (dark) Color.rgb(8, 15, 21) else Color.rgb(243, 245, 242)))
         if (Build.VERSION.SDK_INT >= 33) {
             backCallback = OnBackInvokedCallback { navigateBack() }.also {
                 onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, it)

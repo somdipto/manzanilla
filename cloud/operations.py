@@ -23,9 +23,17 @@ class Confirmation(Strict):
 FIELDS = {
     'checkin':[],
     'taxi':[('destination','Destination'),('pickup_time','Pickup time'),('guest_name','Guest name'),('room_number','Room number')],
-    'message':[('original_request','Exact message to send to staff')],
+    'message':[('original_request','Exact message to send to staff'),('guest_name','Guest name (optional)'),('room_number','Room number (optional)')],
     'question':[('query','Your hotel question')], 'operator':[]}
 MODELS = {'checkin':Empty,'taxi':Taxi,'question':Search,'operator':Operator,'message':Message}
+
+
+def operation_fields(action):
+    properties = MODELS[action].model_json_schema()['properties']
+    return [{'name':name,'label':label,
+             'required':action != 'message' or name == 'original_request',
+             'max_length':properties[name]['maxLength']}
+            for name,label in FIELDS[action]]
 
 
 def receipt(result):
@@ -110,9 +118,12 @@ class Operations:
 
     async def action(self, dev, sid, value):
         self.valid(dev,sid)
-        missing = [{'name':name,'label':label,'required':True} for name,label in FIELDS[value.action]
-                   if not isinstance(value.arguments.get(name),str) or not value.arguments[name].strip()]
-        if missing: return {'status':'needs_arguments','text':'Please complete these details.','fields':missing}
+        fields = operation_fields(value.action)
+        missing = any(field['required'] and (not isinstance(value.arguments.get(field['name']),str)
+                      or not value.arguments[field['name']].strip()) for field in fields)
+        # Return the complete form so a partial reply can retain earlier values,
+        # and optional note identity fields are available from the first render.
+        if missing: return {'status':'needs_arguments','text':'Please complete these details.','fields':fields}
         try: args = MODELS[value.action].model_validate(value.arguments).model_dump()
         except Exception: raise HTTPException(422,'Invalid operation arguments')
         serialized = json.dumps(args,sort_keys=True)

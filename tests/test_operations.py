@@ -1,5 +1,6 @@
 import asyncio, json, time
 from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 import pytest
 from fastapi.testclient import TestClient
 from cloud.db import Store
@@ -53,17 +54,33 @@ def test_operation_auth_tenant_and_user_selector_denials(operations):
 
 def test_missing_fields_and_approved_knowledge_only(operations):
     store,client,dev,_,_,headers,_=operations; hdr=headers(dev)
-    expected={'taxi':set(TAXI),'question':{'query'},'message':{'original_request'}}
+    expected={'taxi':set(TAXI),'question':{'query'},'message':set(MESSAGE)}
     for name,fields in expected.items():
         response=action(client,hdr,name,{}).json()
         assert response['status']=='needs_arguments'
         assert {f['name'] for f in response['fields']}==fields
-        assert all(f['required'] for f in response['fields'])
+        assert all(f['required'] for f in response['fields'] if name != 'message' or f['name']=='original_request')
+        assert all(f['max_length'] > 0 for f in response['fields'])
+        if name == 'message':
+            assert not any(f['required'] for f in response['fields'] if f['name'] != 'original_request')
     found=action(client,hdr,'question',{'query':'breakfast'},'question').json()
     assert found['result']['matches']=={'breakfast':'7–10 AM'} and '7–10 AM' in found['text']
     unknown=action(client,hdr,'question',{'query':'secret rooftop access code'},'unknown').json()
     assert unknown['result']['matches']=={} and 'operator' in unknown['text']
     assert not store.rows('SELECT * FROM items')
+
+
+def test_incomplete_form_returns_all_fields_and_model_limits(operations):
+    _,client,dev,_,_,headers,_=operations
+    response=action(client,headers(dev),'taxi',{'destination':'Airport'}).json()
+    fields={field['name']:field for field in response['fields']}
+    assert set(fields)==set(TAXI)
+    assert fields['destination']['max_length']==300
+    assert fields['pickup_time']['max_length']==100
+    assert fields['room_number']['max_length']==20
+    note=action(client,headers(dev),'message',{}).json()
+    assert {field['name']:field['max_length'] for field in note['fields']}=={
+        'original_request':4000,'guest_name':100,'room_number':20}
 
 
 @pytest.mark.parametrize('connector',['unconfigured','rest','edge'])
@@ -136,6 +153,36 @@ def test_concurrent_confirmations_and_new_call_ids_do_not_double_write(operation
     assert all(r['status'] in {success,'pending'} for r in results)
     assert len(store.rows("SELECT * FROM items WHERE kind=?",(kind,)))==1
     assert confirm(client,hdr,drafts[0]['confirmation_id']).json()['status']==success
+
+
+def test_pending_note_retries_and_cancel_resolve_one_delayed_write(operations,monkeypatch):
+    from cloud.operations import Operations
+    store,client,dev,_,_,headers,_=operations; hdr=headers(dev)
+    draft=action(client,hdr,'message',MESSAGE).json()
+    entered,release=Event(),Event()
+    original_execute=Operations.execute
+
+    async def delayed_execute(self,*args):
+        entered.set()
+        assert await asyncio.to_thread(release.wait,5), 'Test did not release the delayed write'
+        return await original_execute(self,*args)
+
+    monkeypatch.setattr(Operations,'execute',delayed_execute)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending=pool.submit(confirm,client,hdr,draft['confirmation_id'])
+        try:
+            assert entered.wait(5)
+            assert confirm(client,hdr,draft['confirmation_id']).json()['status']=='pending'
+            assert confirm(client,hdr,draft['confirmation_id'],False).json()['status']=='pending'
+            assert action(client,hdr,'message',MESSAGE,'retry-during-write').json()['status']=='pending'
+            assert not store.rows('SELECT * FROM items')
+        finally:
+            release.set()
+        receipt=pending.result(timeout=5).json()
+    assert receipt['status']=='saved'
+    assert confirm(client,hdr,draft['confirmation_id']).json()==receipt
+    assert confirm(client,hdr,draft['confirmation_id'],False).json()==receipt
+    assert len(store.rows("SELECT * FROM items WHERE kind='note'"))==1
 
 
 @pytest.mark.parametrize('operation,args',[('taxi',TAXI),('message',MESSAGE)])
@@ -236,6 +283,9 @@ def test_message_exact_confirmation_cancel_retry_and_durable_truthful_receipt(op
     assert revised['original_request'] in next_draft['summary']
     receipt=confirm(client,hdr,next_draft['confirmation_id']).json()
     assert receipt['status']=='saved'
+    # An Android response can be lost after the durable write. A later Cancel
+    # must return that original receipt, not claim it cancelled a saved note.
+    assert confirm(client,hdr,next_draft['confirmation_id'],False).json()==receipt
     assert receipt['result']['destination']=='staff inbox'
     assert receipt['result']['staff_acknowledged'] is False
     assert receipt['result']['pms_delivered'] is False
@@ -256,7 +306,7 @@ def test_message_argument_boundaries_preserve_original_and_do_not_accept_model_a
     for args in [{},{'original_request':''},{'original_request':' \n '}]:
         missing=action(client,hdr,'message',args).json()
         assert missing['status']=='needs_arguments'
-        assert [field['name'] for field in missing['fields']]==['original_request']
+        assert [field['name'] for field in missing['fields'] if field['required']]==['original_request']
     for args in [{'original_request':'x'*4001},
                  {**MESSAGE,'guest_name':'x'*101},{**MESSAGE,'room_number':'x'*21},
                  {**MESSAGE,'confirmed':True},{**MESSAGE,'summary':'Invented account'},
