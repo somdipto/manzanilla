@@ -6,6 +6,9 @@ fun javaString(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"",
 android {
     namespace = "com.agentdeck.hotel"
     compileSdk = 34
+    // The private upgrade fixture must share the release app's signing identity.
+    // Ordinary verification retains the existing key-free debug instrumentation.
+    testBuildType = if (project.hasProperty("upgradeFixture")) "release" else "debug"
     defaultConfig {
         fun injected(name: String): String {
             val env = System.getenv(name)
@@ -20,12 +23,13 @@ android {
         applicationId = "dev.orange.hotel"
         minSdk = 26
         targetSdk = 34
-        testInstrumentationRunner = "com.agentdeck.hotel.VoiceLifecycleFixture"
+        testInstrumentationRunner = if (project.hasProperty("upgradeFixture"))
+            "com.agentdeck.hotel.UpgradeDataFixture" else "com.agentdeck.hotel.VoiceLifecycleFixture"
         // Increment explicitly for every published APK; never derive identity from a CI run.
         versionCode = rootProject.file("VERSION_CODE").readText().trim().toInt().also {
             require(it > 34) { "Release candidates must supersede published code 34" }
         }
-        buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://api.github.com/repos/somdipto/manzanilla/releases/latest"))
+        buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://github.com/somdipto/manzanilla/releases/latest/download/release-metadata.json"))
         buildConfigField("String", "FISH_API_KEY", javaString(injected("FISH_API_KEY")))
         buildConfigField("String", "FISH_VOICE_ID", javaString(injected("FISH_VOICE_ID")))
         manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl")) "true" else "false"

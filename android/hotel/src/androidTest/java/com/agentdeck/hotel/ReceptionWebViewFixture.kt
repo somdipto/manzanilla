@@ -190,6 +190,17 @@ internal object ReceptionWebViewFixture {
                 "startup failure reference was lost at the native/WebView boundary"
             }
             check(evaluate("document.documentElement.dataset.captureActive") == "\"false\"")
+            // JavaScript completion precedes WebView/compositor painting. Wait for
+            // the current DOM state and two display frames before capturing evidence.
+            val painted = CountDownLatch(1)
+            instrumentation.runOnMainSync {
+                browser.postVisualStateCallback(71L, object : WebView.VisualStateCallback() {
+                    override fun onComplete(requestId: Long) {
+                        browser.postOnAnimation { browser.postOnAnimation { painted.countDown() } }
+                    }
+                })
+            }
+            check(painted.await(15, TimeUnit.SECONDS)) { "WebView did not paint the diagnostic frame before screenshot" }
             instrumentation.uiAutomation.takeScreenshot()?.let { screenshot ->
                 val image = java.io.File(instrumentation.targetContext.getExternalFilesDir(null), "startup-reference-fixture.png")
                 image.outputStream().use { screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }

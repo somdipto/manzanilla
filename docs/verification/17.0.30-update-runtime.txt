@@ -1,0 +1,74 @@
+17.0.30 / code 60 isolated runtime evidence — 2026-10-22
+Android 10 / API29 x86_64 emulator; stock WebView74; provider credentials empty.
+No live provider call or guest-data mutation. Local existing debug signer; not a public release.
+API31 unattended request parameters are a separate CI check; no unattended replacement claim.
+Full native suite ran after the completed forward-upgrade preservation check.
+No uninstall or data clear occurred between preservation seed and verify.
+Later native cases reset only the disposable fixture.
+
+Production APK SHA-256 (local verification artifacts):
+27d8a07cfe1c9bd3a2631176573ec99eb10b914c558d93ede8713861a71fe532  android/hotel/build/outputs/apk/debug/hotel-debug.apk
+a4cd05c2e5c1f2239e0bef84387031a1ce16cb81682b9457a6a1d5bef2122c2c  android/hotel/build/outputs/apk/release/hotel-release.apk
+
+Forward in-place upgrade:
+PASS signing_continuity=true candidate=17.0.30/60
+Performing Streamed Install
+Success
+instrumentation:dev.orange.hotel.test/com.agentdeck.hotel.UpgradeDataFixture (target=dev.orange.hotel)
+Success
+INSTRUMENTATION_RESULT: stream=PASS case=seed preferences=true private_file=true encrypted_marker=true
+
+INSTRUMENTATION_CODE: -1
+Performing Streamed Install
+Success
+INSTRUMENTATION_RESULT: stream=PASS case=verify preferences=true private_file=true encrypted_marker=true
+
+INSTRUMENTATION_CODE: -1
+{"result": "PASS", "upgrade": "17.0.29/code59 -> 17.0.30/code60", "firstInstallTime_preserved": true, "uid_preserved": true, "saved_preferences_preserved": true, "private_file_preserved": true, "keystore_encrypted_marker_preserved": true, "uninstall_or_data_clear_between_seed_and_verify": false, "signing": "existing local Android debug identity; not a public release"}
+
+
+reception-bridge:
+INSTRUMENTATION_RESULT: stream=PASS case=reception-bridge late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+
+microphone-permission:
+INSTRUMENTATION_RESULT: stream=PASS case=microphone-permission late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+
+microphone-permission-denied:
+INSTRUMENTATION_RESULT: stream=PASS case=microphone-permission-denied late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+
+microphone-permission-background:
+INSTRUMENTATION_RESULT: stream=PASS case=microphone-permission-background late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+
+translation-startup:
+INSTRUMENTATION_RESULT: stream=PASS case=translation-startup late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+
+update-delivery:
+INSTRUMENTATION_STATUS: stream=updater_scope=isolated idle=deferred cache_cleanup=user_data_retained installer=same_package_full_install_uncommitted_and_abandoned
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=PASS case=update-delivery late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+Final bridge rerun after test-only WebView frame synchronization:
+INSTRUMENTATION_RESULT: stream=PASS case=reception-bridge late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+Screenshot: docs/screens/17.0.30-startup-reference-fixture.png
+Synthetic HTTP402 refusal; safe reference and Mic off, not an account diagnosis.

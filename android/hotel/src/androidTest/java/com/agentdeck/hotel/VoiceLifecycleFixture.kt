@@ -31,6 +31,7 @@ class VoiceLifecycleFixture : Instrumentation() {
                 "microphone-permission-denied" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "deny")
                 "microphone-permission-background" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "background")
                 "translation-startup" -> FishStartupFixture.verify(this)
+                "update-delivery" -> UpdaterFixture.verify(this)
                 "pending-end" -> pendingEnd(late, status)
                 "failed-start" -> failedStart(uncertainAudio = false)
                 "failed-start-uncertain" -> failedStart(uncertainAudio = true)

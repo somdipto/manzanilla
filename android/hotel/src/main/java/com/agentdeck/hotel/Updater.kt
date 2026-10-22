@@ -28,19 +28,24 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.UUID
 
 /** One pinned, persisted release per attempt. Feed refreshes never rename an in-flight APK. */
-class Updater(context: Context, private val onStatus: (String) -> Unit) {
+class Updater(context: Context, private val onStatus: (String) -> Unit,
+              private val canInstall: () -> Boolean = { false }) {
     private val app = context.applicationContext
     private val http = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS).followRedirects(true).build()
     private val ui = Handler(Looper.getMainLooper())
     private val checking = AtomicBoolean(false)
     private val ownership = UpdateOwnership()
+    private val installPolicy = UpdateInstallPolicy()
+    private val installOwner = UUID.randomUUID().toString()
     private val action = "dev.orange.hotel.UPDATE_RESULT"
     private var phase = "idle"
     private var restored = false
     private var installWhenReady = false
+    private var lastStatus: String? = null
     private var receiver: BroadcastReceiver? = null
     @Volatile private var installSessionId = -1
     private val poll = object : Runnable {
@@ -53,7 +58,28 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
     private fun externalFile(request: UpdateRequest) = app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
         ?.let { File(it, "update-${request.key}.apk") }
     private fun onUi(block: () -> Unit) { if (Looper.myLooper() == Looper.getMainLooper()) block() else ui.post { block() } }
-    private fun status(attempt: UpdateAttempt, text: String) { if (ownership.owns(attempt)) onStatus(text) }
+    private fun status(attempt: UpdateAttempt, text: String) {
+        if (ownership.owns(attempt) && text != lastStatus) { lastStatus = text; onStatus(text) }
+    }
+
+    /** A UI-thread reservation fences new conversation starts before background validation. */
+    fun isInstalling(): Boolean = installPolicy.reserved
+
+    /** Also consumes a one-time install-source permission grant without a second app tap. */
+    fun onForeground() = onUi {
+        if (phase == "confirming") {
+            // Returning from an OS prompt must not block reception forever. Its
+            // next attempt stays manual even if Android returned no final result.
+            installPolicy.settled()
+            ownership.active?.let { status(it, "confirm:The update is already downloaded. Tap once more if the Android prompt closed.") }
+        }
+        tryInstallIfIdle()
+    }
+
+    fun tryInstallIfIdle() = onUi {
+        val attempt = ownership.active ?: return@onUi
+        if (phase == "ready" || phase == "permission") applyReady(attempt, explicit = false)
+    }
 
     @Suppress("DEPRECATION")
     private fun code(info: PackageInfo): Long = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
@@ -94,11 +120,16 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
             .putLong("downloadId", ownership.downloadId).commit()
     }
 
+    private fun restoreInstallAttempt(request: UpdateRequest) {
+        if (prefs().getString("installAttempted", null) == request.key) installPolicy.restoreAttempted()
+    }
+
     /** Only updater-owned artifacts/preferences are migrated; app settings, keys and data are untouched. */
     private fun discardObsoleteCache() {
         val id = prefs().getLong("downloadId", -1L)
         if (id >= 0) downloads().remove(id)
-        prefs().edit().remove("request").remove("pendingVersion").remove("pendingUrl").remove("downloadId").remove("last").commit()
+        prefs().edit().remove("request").remove("pendingVersion").remove("pendingUrl").remove("downloadId")
+            .remove("installAttempted").remove("installAttemptOwner").remove("last").commit()
         listOfNotNull(app.filesDir, app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)).forEach { dir ->
             dir.listFiles()?.filter { it.name.startsWith("update-") && (it.name.endsWith(".apk") || it.name.endsWith(".part")) }
                 ?.forEach { it.delete() }
@@ -115,6 +146,7 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
             val request = try { saved?.let { UpdateRequest.fromJson(JSONObject(it)) } } catch (_: Exception) { null }
             if (request != null && eligible(request)) {
                 val attempt = ownership.begin(request)!!
+                restoreInstallAttempt(request)
                 val id = prefs().getLong("downloadId", -1L)
                 if (id >= 0) ownership.attach(attempt, id)
             } else discardObsoleteCache()
@@ -123,6 +155,7 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
             when (phase) {
                 "downloading", "validating", "installing" -> Unit
                 "confirming" -> status(attempt, "confirm:The update is already downloaded. Tap once more if the Android prompt closed.")
+                "permission" -> tryInstallIfIdle()
                 "ready" -> verifyAndOffer(attempt)
                 else -> resume(attempt)
             }
@@ -163,23 +196,7 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
         }
     }
 
-    private fun releaseRequest(): UpdateRequest? {
-        val release = getJson(BuildConfig.FEED_URL)
-        if (release.optBoolean("draft") || release.optBoolean("prerelease")) return null
-        val tag = release.getString("tag_name")
-        if (!ReleaseVersion.valid(tag) || !tag.startsWith("v")) return null
-        val assets = release.getJSONArray("assets")
-        val entries = (0 until assets.length()).map { assets.getJSONObject(it) }
-        val manifest = entries.singleOrNull { it.optString("name") == "release-metadata.json" } ?: return null
-        val request = UpdateRequest.fromJson(getJson(manifest.getString("browser_download_url")))
-        require(request.tag == tag) { "Release tag/metadata mismatch" }
-        val asset = entries.singleOrNull { it.optString("browser_download_url") == request.url && it.optString("name").endsWith(".apk") }
-            ?: error("Release APK/metadata mismatch")
-        require(Uri.parse(request.url).path.orEmpty().contains("/releases/download/$tag/")) { "APK URL is not pinned to its release" }
-        val apiDigest = asset.optString("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase()
-        if (request.sha256 != null && apiDigest != null) require(request.sha256 == apiDigest) { "Release digests disagree" }
-        return request.copy(sha256 = apiDigest ?: request.sha256)
-    }
+    private fun releaseRequest(): UpdateRequest? = UpdateFeed.parse(getJson(BuildConfig.FEED_URL), ::getJson)
 
     private fun resume(attempt: UpdateAttempt) {
         if (!ownership.owns(attempt)) return
@@ -192,9 +209,18 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
 
     fun installOffered() = onUi {
         val attempt = ownership.active ?: run { check(); return@onUi }
-        if (phase == "installing") return@onUi
+        if (isInstalling()) return@onUi
+        if (phase == "confirming") {
+            // An explicit retry may replace an abandoned/dismissed Android prompt.
+            stopListening()
+            abandonInstall()
+            phase = "ready"
+        }
         installWhenReady = true
-        if (phase != "downloading" && phase != "validating") resume(attempt)
+        if (phase == "ready" || phase == "permission") {
+            installWhenReady = false
+            applyReady(attempt, explicit = true)
+        } else if (phase != "downloading" && phase != "validating") resume(attempt)
     }
 
     /** Cancels only this updater's immutable attempt, including its DownloadManager job. */
@@ -213,8 +239,11 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
         abandonInstall()
         apkFile(attempt.request).delete()
         externalFile(attempt.request)?.delete()
-        prefs().edit().remove("request").remove("downloadId").remove("last").commit()
+        prefs().edit().remove("request").remove("downloadId").remove("installAttempted")
+            .remove("installAttemptOwner").remove("last").commit()
         installWhenReady = false
+        installPolicy.reset()
+        lastStatus = null
         phase = "idle"
         note(done = true)
     }
@@ -319,8 +348,9 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
         }
         note(done = true)
         phase = "ready"
-        if (installWhenReady) { installWhenReady = false; beginInstall(attempt) }
-        else status(attempt, "offer:${attempt.request.versionName}")
+        val explicit = installWhenReady
+        installWhenReady = false
+        applyReady(attempt, explicit)
     }
 
     private fun fail(attempt: UpdateAttempt, text: String, error: Exception? = null) {
@@ -330,17 +360,39 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
         onStatus("failed:$text")
     }
 
-    private fun beginInstall(attempt: UpdateAttempt) {
+    private fun applyReady(attempt: UpdateAttempt, explicit: Boolean) {
         if (!ownership.owns(attempt)) return
-        abandonInstall()
-        if (!app.packageManager.canRequestPackageInstalls()) {
-            phase = "confirming"
-            try { app.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${app.packageName}"))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            catch (e: Exception) { fail(attempt, "Android install permission settings could not open.", e); return }
-            status(attempt, "confirm:Allow Manzanilla to install updates, then tap once more. The file is already downloaded.")
-            return
+        when (installPolicy.reserve(canInstall(), app.packageManager.canRequestPackageInstalls(), explicit)) {
+            UpdateInstallPolicy.Decision.DEFER -> status(attempt,
+                "waiting:Update ${attempt.request.versionName} is downloaded. It will apply when reception is idle.")
+            UpdateInstallPolicy.Decision.PERMISSION -> {
+                phase = "permission"
+                if (explicit) {
+                    try { app.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${app.packageName}"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    catch (e: Exception) { fail(attempt, "Android install permission settings could not open.", e); return }
+                    status(attempt, "confirm:Allow Manzanilla to install updates, then return. The downloaded update will continue automatically.")
+                } else status(attempt, "confirm:Update is downloaded. Tap to allow app updates once; app data stays in place.")
+            }
+            UpdateInstallPolicy.Decision.INSTALL -> {
+                if (!prefs().edit().putString("installAttempted", attempt.request.key)
+                        .putString("installAttemptOwner", "$installOwner:${attempt.revision}").commit()) {
+                    installPolicy.settled()
+                    phase = "ready"
+                    status(attempt, "failed:Update state could not be saved. The current app and data are kept; ask staff to check device storage.")
+                } else beginInstall(attempt, explicit)
+            }
+            UpdateInstallPolicy.Decision.MANUAL_RETRY -> {
+                if (lastStatus?.startsWith("failed:") != true && lastStatus?.startsWith("confirm:") != true)
+                    status(attempt, "confirm:Update is downloaded. Tap to finish the Android update; the current app and data are kept.")
+            }
+            UpdateInstallPolicy.Decision.IN_PROGRESS -> Unit
         }
+    }
+
+    private fun beginInstall(attempt: UpdateAttempt, explicit: Boolean) {
+        if (!ownership.owns(attempt)) { installPolicy.settled(); return }
+        abandonInstall()
         phase = "installing"
         status(attempt, "progress:Installing update…")
         listen(attempt)
@@ -348,16 +400,22 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
             try {
                 val file = apkFile(attempt.request)
                 validate(file, attempt.request) // Revalidate immediately before handing bytes to Android.
-                writeAndCommit(file, attempt)
-            } catch (e: Exception) { ui.post {
-                if (ownership.owns(attempt)) {
-                    Log.w("UPD", "PackageInstaller session failed", e)
-                    stopListening()
-                    abandonInstall()
-                    openSystemInstaller(attempt)
-                }
-            } }
+                writeAndCommit(file, attempt, explicit)
+            } catch (e: Exception) { ui.post { installFailed(attempt, explicit, e) } }
         }.start()
+    }
+
+    private fun installFailed(attempt: UpdateAttempt, explicit: Boolean, error: Exception) {
+        if (!ownership.owns(attempt)) return
+        Log.w("UPD", "PackageInstaller session failed", error)
+        stopListening()
+        abandonInstall()
+        if (explicit) openSystemInstaller(attempt)
+        else {
+            installPolicy.settled()
+            phase = "ready"
+            status(attempt, "failed:Update could not apply automatically. Tap to retry; the current app and data are kept.")
+        }
     }
 
     private fun openSystemInstaller(attempt: UpdateAttempt) {
@@ -368,6 +426,12 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
                 validate(file, attempt.request)
                 ui.post {
                     if (!ownership.owns(attempt)) return@post
+                    if (!canInstall()) {
+                        installPolicy.settled()
+                        phase = "ready"
+                        status(attempt, "confirm:Update is downloaded. End the conversation, then tap to finish the Android update.")
+                        return@post
+                    }
                     try {
                         app.startActivity(Intent(Intent.ACTION_VIEW)
                             .setDataAndType(UpdateApkProvider.uri(file), "application/vnd.android.package-archive")
@@ -380,22 +444,52 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
         }.start()
     }
 
-    private fun writeAndCommit(file: File, attempt: UpdateAttempt) {
+    private fun writeAndCommit(file: File, attempt: UpdateAttempt, explicit: Boolean) {
         val installer = app.packageManager.packageInstaller
-        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-        params.setAppPackageName(attempt.request.packageName)
-        if (Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)
+        val params = installParameters(attempt.request.packageName)
         val id = installer.createSession(params)
         installSessionId = id
         try {
             installer.openSession(id).use { session ->
                 file.inputStream().use { input -> session.openWrite("update.apk", 0, file.length()).use { out -> input.copyTo(out); session.fsync(out) } }
-                val pending = PendingIntent.getBroadcast(app, id, Intent(action).setPackage(app.packageName),
-                    PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-                session.commit(pending.intentSender)
             }
         } catch (e: Exception) { installer.abandonSession(id); throw e }
+        // Copying an APK can take time. Commit only on the UI thread after checking
+        // that reception is still foreground/idle; the reservation fences new starts.
+        ui.post {
+            if (!ownership.owns(attempt) || installSessionId != id) {
+                try { installer.abandonSession(id) } catch (_: Exception) { }
+                return@post
+            }
+            if (!canInstall()) {
+                abandonInstall()
+                stopListening()
+                installPolicy.settled()
+                // This session provably never committed. Only its exact owner may
+                // clear suppression; an old activity cannot clear a newer attempt.
+                val store = prefs()
+                if (store.getString("installAttemptOwner", null) == "$installOwner:${attempt.revision}" &&
+                    store.edit().remove("installAttempted").remove("installAttemptOwner").commit()) installPolicy.reset()
+                phase = "ready"
+                status(attempt, "waiting:Update ${attempt.request.versionName} is downloaded. It will apply when reception is idle.")
+                return@post
+            }
+            try {
+                installer.openSession(id).use { session ->
+                    val pending = PendingIntent.getBroadcast(app, id, Intent(action).setPackage(app.packageName),
+                        PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                    session.commit(pending.intentSender)
+                }
+            } catch (e: Exception) { installFailed(attempt, explicit, e) }
+        }
     }
+
+    /** FULL_INSTALL replaces the same signed package; it never requests uninstall or data clear. */
+    private fun installParameters(packageName: String): PackageInstaller.SessionParams =
+        PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+            setAppPackageName(packageName)
+            if (Build.VERSION.SDK_INT >= 31) setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+        }
 
     // Pre-33 receivers have no export flag; the filter carries an app-private action and setPackage().
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
@@ -406,7 +500,17 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
                 if (!ownership.owns(attempt) || intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1) != installSessionId) return
                 when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
                     PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                        if (phase == "confirming") return
                         phase = "confirming"
+                        // Keep the reservation until the prompt pauses this activity.
+                        // onForeground releases it without automatically reopening consent.
+                        status(attempt, "confirm:Android needs confirmation to update this app in place. App data is kept.")
+                        if (!canInstall()) {
+                            // Verification can finish after reception has gone to the
+                            // background. Keep a manual action, never open UI over another app.
+                            installPolicy.settled()
+                            return
+                        }
                         val confirm = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
                             else @Suppress("DEPRECATION") intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
                         try {
@@ -416,10 +520,12 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
                     }
                     PackageInstaller.STATUS_SUCCESS -> {
                         phase = "installed"
+                        installPolicy.settled()
                         stopListening()
                     }
                     else -> {
                         phase = "ready"
+                        installPolicy.settled()
                         status(attempt, "failed:Android did not install the update. Tap to retry or cancel.")
                         stopListening()
                     }
