@@ -30,6 +30,8 @@ class VoiceLifecycleFixture : Instrumentation() {
                 "microphone-permission" -> ReceptionWebViewFixture.verifyMicrophonePermission(this)
                 "microphone-permission-denied" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "deny")
                 "microphone-permission-background" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "background")
+                "translation-startup" -> FishStartupFixture.verify(this)
+                "update-delivery" -> UpdaterFixture.verify(this)
                 "pending-end" -> pendingEnd(late, status)
                 "failed-start" -> failedStart(uncertainAudio = false)
                 "failed-start-uncertain" -> failedStart(uncertainAudio = true)
@@ -186,7 +188,9 @@ class VoiceLifecycleFixture : Instrumentation() {
             var rejected = false
             try { create.invoke(fish, run, "http://127.0.0.1:${server.localPort}", "fixture-only", "es", "en") }
             catch (e: java.lang.reflect.InvocationTargetException) {
-                check(e.cause is IllegalStateException && e.cause?.message == "Service request rejected") {
+                check((e.cause as? FishStartupFailure)?.let {
+                    it.stage == FishStartupFailure.Stage.MANAGED_SESSION && it.httpStatus == status
+                } == true) {
                     "creation did not receive the fixture rejection: ${e.cause}"
                 }
                 rejected = true

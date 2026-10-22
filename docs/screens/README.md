@@ -1,5 +1,13 @@
 # Reception screens
 
+## 17.0.30 combined candidate
+
+[Safe startup reference and microphone off](17.0.30-startup-reference-fixture.png),
+captured from the real Android10/WebView74 bridge after waiting for painting.
+This uses a simulated HTTP402 refusal; it is not a live billing diagnosis or
+translation. The earlier [17.0.29 capture](17.0.29-startup-reference-fixture.png)
+is retained with its historical verification notes.
+
 ## 17.0.21 release-source fixtures
 
 Current browser renderer at 844×390 CSS pixels. Session/caption/microphone events are synthetic; no provider audio, physical microphone or real hotel request is demonstrated.

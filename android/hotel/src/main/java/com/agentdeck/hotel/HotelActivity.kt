@@ -32,7 +32,9 @@ class HotelActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private val ringing = AtomicBoolean(false)
     private val fishStore by lazy { SecretStore(this, "fish") }
-    private val updater by lazy { Updater(this) { status -> runOnUiThread { onUpdate(status) } } }
+    private val updater by lazy { Updater(this,
+        onStatus = { status -> runOnUiThread { onUpdate(status) } },
+        canInstall = ::canInstallUpdate) }
     private val updatePoll = object : Runnable {
         override fun run() {
             if (!foreground || destroyed) return
@@ -63,11 +65,15 @@ class HotelActivity : Activity() {
                 audioState = fish.localAudioState()
                 pushState()
             }
+            updater.tryInstallIfIdle()
             ui.postDelayed(this, 1_000)
         }
     }
 
     private fun backendConfigured() = hotelConnection.load() != null
+    private fun canInstallUpdate(): Boolean = foreground && !destroyed && owner.current == null &&
+        !owner.closing && pendingPermission == null && audioState == "off" &&
+        fish.localAudioState() == "off" && fish.admissionIssue() == null
     private fun current(lease: SessionOwner.Lease) = owner.accepts(lease.request.id, lease.generation)
     private fun scoped(lease: SessionOwner.Lease, message: JSONObject) = message
         .put("session_id", lease.request.id).put("generation", lease.generation)
@@ -134,6 +140,14 @@ class HotelActivity : Activity() {
     }
 
     private fun begin(request: SessionOwner.Request) {
+        if (updater.isInstalling()) {
+            reception?.push(JSONObject().put("type", "audio_state").put("state", "off")
+                .put("session_id", request.id).put("generation", 0))
+            reception?.push(JSONObject().put("type", "reception_event").put("phase", "error")
+                .put("text", "An app update is being installed. Please wait for it to finish before starting a conversation.")
+                .put("session_id", request.id).put("generation", 0))
+            return
+        }
         val blocked = if (request.mode == "translation") fish.admissionIssue() else null
         if (blocked != null) {
             fish.retryCleanup()
@@ -210,6 +224,7 @@ class HotelActivity : Activity() {
 
     private fun finishReleaseActions() {
         while (afterRelease.isNotEmpty()) afterRelease.removeAt(0).invoke()
+        updater.tryInstallIfIdle()
     }
 
 
@@ -243,11 +258,17 @@ class HotelActivity : Activity() {
         when {
             status.startsWith("checking:") -> page.push(JSONObject().put("type", "update_status").put("phase", "checking").put("text", "Checking for updates…"))
             status.startsWith("current:") -> page.push(JSONObject().put("type", "update_status").put("phase", "current").put("text", "Up to date · ${BuildConfig.VERSION_NAME}"))
-            status.startsWith("offer:") -> page.push(JSONObject().put("type", "update").put("phase", "ready").put("version", status.removePrefix("offer:")))
+            status.startsWith("offer:") -> page.push(JSONObject().put("type", "update_status").put("phase", "ready")
+                .put("version", status.removePrefix("offer:"))
+                .put("text", "Update ${status.removePrefix("offer:")} downloaded. It will apply when this device is idle."))
+            status.startsWith("waiting:") -> page.push(JSONObject().put("type", "update_status").put("phase", "ready")
+                .put("text", status.removePrefix("waiting:")))
             status.startsWith("progress:") -> {
                 val value = status.removePrefix("progress:")
                 val percent = value.toIntOrNull()
-                val text = if (percent != null && percent >= 0) "Downloading $percent%" else if (value.startsWith("m")) "Downloading ${value.removePrefix("m")} MB" else "Starting download…"
+                val text = if (percent != null) { if (percent >= 0) "Downloading $percent%" else "Starting download…" }
+                    else if (value.startsWith("m") && value.removePrefix("m").toLongOrNull() != null) "Downloading ${value.removePrefix("m")} MB"
+                    else value.ifBlank { "Starting download…" }
                 page.push(JSONObject().put("type", "update_status").put("phase", "progress").put("percent", percent ?: -1).put("text", text))
             }
             status.startsWith("confirm:") -> page.push(JSONObject().put("type", "update_status").put("phase", "confirm").put("text", status.removePrefix("confirm:")))
@@ -311,8 +332,8 @@ class HotelActivity : Activity() {
             "silence" -> if (owner.current != null) stopSession()
             "exit" -> stopSession(done = { finish() })
             "check_updates" -> updater.check()
-            "apply_update" -> if (owner.current == null) updater.installOffered()
-                else onUpdate("confirm:End the conversation before installing the update, then tap here again.")
+            "apply_update" -> if (canInstallUpdate()) updater.installOffered()
+                else onUpdate("confirm:The downloaded update will wait until the conversation and audio cleanup finish.")
         }
     }
 
@@ -362,6 +383,7 @@ class HotelActivity : Activity() {
             pendingPermission = null
             if (current(lease)) connect(lease)
         }
+        updater.onForeground()
         updater.check()
         ui.removeCallbacks(updatePoll)
         ui.postDelayed(updatePoll, 10 * 60_000L)

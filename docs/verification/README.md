@@ -4,6 +4,93 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.30 update delivery and translation candidate
+
+Base main `73e273b`, version 17.0.30/code 60, tested on 2026-10-22. Includes
+the earlier 17.0.29 startup repair. See [update delivery](../update-delivery.md).
+
+- Python: **344 passed**, including publication recovery and committed-tree
+  version-policy checks; one existing AnyIO deprecation warning.
+- Node: **14 passed**; generated reception assets match source. All **five**
+  Chromium154 browser scenarios passed.
+- Android JVM: **130 passed**, zero failures/errors/skips. Debug lint: **zero
+  errors**, **14 warnings**. Debug, debug instrumentation, locally signed release
+  and private release instrumentation APKs assembled; release vital lint passed.
+- Actual in-place **17.0.29/code59 → 17.0.30/code60** upgrade passed on an
+  isolated Android10/API29 emulator. The same package, signer, UID and original
+  installation time were retained. Saved reception preferences, a private file
+  and a synthetic AES-GCM AndroidKeyStore marker all survived. There was no
+  uninstall or data clear between seed and verification.
+- Android10/API29 with stock WebView74: all **six native runtime cases passed**:
+  reception bridge, microphone grant/denial/background cancellation, 15 startup
+  provisioning scenarios and isolated update delivery. Every case returned its
+  PASS line and `INSTRUMENTATION_CODE: -1`.
+  [Scoped runtime and upgrade output](17.0.30-update-runtime.txt).
+- The bridge was rebuilt and rerun after a test-only compositor synchronization
+  fix. Its [clean screenshot](../screens/17.0.30-startup-reference-fixture.png)
+  shows a synthetic HTTP402 reference and microphone off, not a live account
+  diagnosis. All **68** captured final Android source hashes remained stable.
+
+The local upgrade used the existing local Android debug signing identity, not
+the public pilot key. Merge-triggered publication repeats the retained-data
+check with the actual previous public APK and existing CI release key. Its
+standalone test runner is registered only by `-PupgradeFixture`, shares the
+release signing identity and is never uploaded with public release assets.
+
+The native `update-delivery` fixture creates and abandons an empty same-package
+installer session; it never commits or installs an APK. API31 CI additionally
+asserts Android's stored `USER_ACTION_NOT_REQUIRED` parameter. This qualifies
+the request, not unattended replacement on a particular physical device.
+Local runtime uses API29; Android still controls eligibility and confirmation.
+
+The pinned-source AudioSwitch qualification described below remains necessary
+locally because JitPack is blocked. GitHub Actions resolves the production
+dependency. No live provider call, guest-data mutation, Play/EMM enrollment,
+production backend deployment or public release was performed.
+
+## 17.0.29 translation startup candidate
+
+Base `73e273b`, version 17.0.29/code 59, tested on 2026-10-22. See
+[diagnosis and repair boundaries](../translation-startup-fix.md).
+
+- Python: **292 passed**, including 32 new managed startup diagnostic cases.
+- Node language ledger: **14 passed**; generated reception assets match source.
+- Chromium154: all **five browser scenarios passed**.
+- Android JVM: **118 passed**, zero failures, errors or skips.
+- Android lint: **zero errors**, **14 warnings**.
+- Debug and instrumentation APK assembly: **passed**, provider fields empty.
+- Android10/API29 native startup fixture: **15 scenarios passed** with
+  `PASS case=translation-startup` and `INSTRUMENTATION_CODE: -1`.
+- Stock WebView74 bridge: **passed**, including visible safe-reference delivery
+  and capture-off state. [Runtime output](17.0.29-translation-runtime.txt).
+- Native microphone permission grant, denial and background cancellation:
+  **all passed** after recovering the emulator's System UI.
+- Local dependency qualification uses the exact pinned-source AudioSwitch
+  substitution documented below. The published JitPack binary remains a CI check.
+
+The committed native `translation-startup` fixture exercises actual FishVoice
+provisioning and teardown with intercepted HTTP, not a live provider: complete
+setup, stage-specific rejections, cached-agent 404/409 recovery, bounded retries,
+uncertain creation, malformed responses and managed/legacy backend errors.
+The WebView fixture also checks that the safe reference reaches the visible
+error message and clears capture state. None of these checks establishes physical
+audio quality or the reported device's actual account/service status.
+The initial software-emulator run encountered a System UI ANR overlay; the
+recorded bridge result and screenshot come from the clean recovery run.
+
+After building and installing the key-free debug and instrumentation APKs on a
+disposable emulator, run just the provider-startup regression with:
+
+```sh
+adb shell am instrument -w -r -e case translation-startup \
+  dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture
+```
+
+Require both its PASS line and `INSTRUMENTATION_CODE: -1`. The committed
+`scripts/run-android-emulator.sh` also runs it with the WebView and permission
+fixtures, retains the safe-reference screenshot, and verifies instrumentation
+results independently of adb's exit status.
+
 ## 17.0.28 Android startup and release delivery
 
 Base merged main `02dce27`, version 17.0.28/code58. See

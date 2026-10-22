@@ -24,9 +24,28 @@ All releases: https://github.com/somdipto/manzanilla/releases
 
 ## Update an existing installation
 
-Version-bump PRs merged into `main` now trigger **Publish verified Reception APK**: source and emulator checks, signed build, APK identity checks, then a GitHub Release. The update becomes available only when that publication succeeds. See [Android startup and release-delivery fixes](docs/android-start-fix.md).
+Every change goes through a GitHub PR. App/release changes must include increasing
+version files; the required release-policy check rejects a missing bump. Merging
+an eligible PR triggers **Publish verified Reception APK**: source and emulator
+checks, signing with the existing key, identity and retained-data upgrade checks,
+then verified draft uploads and publication. No manual tag or direct main push
+is needed. See [update delivery and fleet architecture](docs/update-delivery.md).
 
-Open Manzanilla while connected to the internet. From 17.0.8, every app resume checks immediately; an open foreground app also rechecks every ten minutes. The home screen's **Check updates** button retries immediately. The banner shows checking, download progress, a downloaded update, an up-to-date version, or a retryable failure instead of silently hiding discovery errors. Tap the downloaded update, allow installation if Android asks, then approve Android's install prompt. Do not uninstall: an in-place update keeps app data and saved keys.
+Open Manzanilla while connected to the internet. Every app resume checks for an
+update; an open foreground app also rechecks every ten minutes. Downloading is
+automatic. The **17.0.30 candidate** applies a verified download when reception
+is idle and audio/session cleanup is settled. Eligible Android 12+ self-updates
+request no user action. Android can still require approval; Android 8–11 ordinary
+installs generally do. Granting install-source permission once resumes a prepared
+update without a second app tap. No update path uninstalls the app or clears data.
+Replacement can close reception. Guaranteed unattended return to reception needs
+a managed kiosk/default-HOME or EMM relaunch policy; ordinary direct installs
+may need reopening.
+
+An installed 17.0.28 app needs one initial **in-place upgrade** to receive the new
+updater. Use its downloaded-update action or install the newer signed APK over
+it; keep the existing app installed. The new behavior exists only after the
+17.0.30 candidate has been signed, published and installed.
 
 Older installed versions through 17.0.7 can suppress checks for ten minutes after a recent attempt and hide discovery errors. If that prevents this repair from arriving, perform a **one-time manual in-place update** using the latest APK link above. Allow your browser to install unknown apps if requested, and choose **Update**, not uninstall.
 
@@ -43,6 +62,12 @@ Publication uses the semantic version in `android/VERSION` and the explicit incr
 Android may require an "Update" confirmation for an app installed from a file; this is not a silent remote installation. Installed apps update from a newer signed GitHub Release, not from a source push or an Actions build artifact.
 
 ## Screens
+
+17.0.30 candidate: an **isolated, simulated HTTP402 refusal** displayed through
+the native Android10/WebView74 bridge. This demonstrates the repair reference;
+it is not a diagnosis of the reported device's account or a live translation.
+
+<p align="center"><img src="docs/screens/17.0.30-startup-reference-fixture.png" alt="17.0.30 simulated billing refusal with a visible safe reference and microphone off" width="720"></p>
 
 17.0.28 candidate on an actual Android10 emulator with stock WebView74.
 Key-free functional checks; no live conversation or latency measurement.
@@ -102,6 +127,22 @@ The original hand-off notes are kept in [docs/HANDOFF-README.md](docs/HANDOFF-RE
 
 ## Status
 
+**17.0.30 combined candidate (unreleased):** includes the translation startup
+repair below, automatic idle installation where Android permits it, a CDN
+metadata feed, PR-only release policy and atomic verified publication. CI also
+checks that preferences, private files and a synthetic encrypted Keystore marker
+survive an actual in-place upgrade. For thousands of hotel-owned tablets,
+[the architecture](docs/update-delivery.md) recommends managed Google Play/EMM;
+Play enrollment, a compliant Play delivery variant and production backend rollout
+remain prerequisites, not completed deployments.
+
+**Earlier 17.0.29 translation-startup candidate (included in 17.0.30):** startup reports the failed
+operation and a safe repair reference instead of treating every provisioning
+failure as an internet problem. A definitively rejected cached agent is replaced
+once; uncertain creation is never retried. Managed services distinguish provider
+access, hotel-device access and daily allowance failures. See
+[diagnosis, repair behavior and delivery limits](docs/translation-startup-fix.md).
+
 **17.0.27 translation/reception candidate (unreleased):** translation text is
 requested before caption generation, Android audio diagnostics run off the media
 callback, and unused raw transcript copying is removed. Fixed the APK's blocked
@@ -110,10 +151,10 @@ appearance, and note review/edit/retry/cancel behavior. Managed `language-v2`
 retains separate legacy v1/tool-free contracts; deploy the backend before the APK.
 [Investigation, architecture, device-test needs and limitations](docs/realtime-reception-fix.md).
 
-The latest public APK checked on 2026-10-22 is **17.0.24**. The 17.0.25 recognition
-and playout improvements and newer source fixes are not installed by pulling or
-merging source. A signed GitHub Release is required. No physical speech-latency
-improvement or sub-second result is claimed for this candidate.
+The latest public APK checked on 2026-10-22 is **17.0.28**. It includes the earlier
+recognition, reception and Android-startup changes. The 17.0.30 combined repair
+above is a source candidate; installed devices require a signed GitHub Release.
+No physical speech-latency improvement or sub-second result is claimed.
 
 
 **17.0.26 language-side candidate (unreleased):** the interpretation model sends
