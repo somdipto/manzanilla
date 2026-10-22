@@ -82,9 +82,20 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
             }
             override fun onPageFinished(view: WebView?, url: String?) {
                 if (url != "https://$host/index.html" || disposed) return
-                ready = true
-                while (waiting.isNotEmpty()) deliver(waiting.removeFirst())
-                if (!shown) browser.onPause()
+                // A loaded HTML document does not establish that its scripts ran.
+                // Older WebViews or a missing bundled script can leave an inert shell.
+                browser.evaluateJavascript("typeof window.manzania === 'object' && typeof window.manzania.receive === 'function'") { result ->
+                    if (!disposed) {
+                        if (result == "true") {
+                            ready = true
+                            while (waiting.isNotEmpty()) deliver(waiting.removeFirst())
+                            if (!shown) browser.onPause()
+                        } else {
+                            showFallback("Reception could not start.\nUpdate Android System WebView and reopen Reception. If this continues, ask staff to update the app.")
+                            unavailable()
+                        }
+                    }
+                }
             }
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 if (request?.isForMainFrame == true) { showFallback(); unavailable() }
@@ -124,8 +135,9 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
         browser.evaluateJavascript("window.manzania && window.manzania.receive(${message});", null)
     }
 
-    private fun showFallback() {
+    private fun showFallback(message: String = "Reception could not load.\nReturn to the launcher and open Reception again.") {
         if (disposed) return
+        ready = false
         browser.visibility = View.GONE
         if (childCount > 1) return
         val column = LinearLayout(context).apply {
@@ -133,7 +145,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
             gravity = Gravity.CENTER
             setPadding(32, 24, 32, 24)
             addView(TextView(context).apply {
-                text = "Reception could not load.\nReturn to the launcher and open Reception again."
+                text = message
                 textSize = 20f
                 setTextColor(if (dark) Color.rgb(241, 243, 239) else Color.rgb(24, 44, 56))
                 gravity = Gravity.CENTER

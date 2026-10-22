@@ -4,6 +4,35 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.28 Android startup and release delivery
+
+Base merged main `02dce27`, version 17.0.28/code58. See
+[reproduction and changes](../android-start-fix.md). Tested on 2026-10-22 with a
+disposable Android10/API29 x86_64 emulator, stock WebView74.0.3729.185, software
+CPU/GPU emulation, and key-free APKs. This environment now has an actual adb
+target; earlier candidate sections below retain their historical limitations.
+
+- Prior APK reproduced `Unexpected token ?` in both shipped interface scripts.
+- Patched real WebView/native bridge instrumentation passes cold initialization,
+  queued preferences, appearance action and Start with the selected pair/UUID.
+- Initial microphone permission reproduced cancellation of the pending session;
+  the repaired grant path preserves the actual JS session and resumes once.
+  Denial and true-background cancellation both pass without starting Fish.
+- Python: **260 passed**. Node language ledger: **14 passed**.
+- Chromium154: **five browser scenarios passed**, including untouched packaged
+  HTML/CSP/resource loading and missing newer Object helpers.
+- Android JVM: **110 passed**, including six native loopback HTTPS note cases.
+- Android lint: **zero errors**, **14 warnings**.
+- Debug and instrumentation APK assembly: **passed**, provider fields empty.
+- Local dependency qualification is the same temporary pinned-source AudioSwitch
+  substitution described below; GitHub Actions resolves the normal artifact.
+- No physical acoustic-latency result or live provider/hotel mutation is claimed.
+
+Generated JavaScript is verified with `npm ci && npm run check:reception`.
+`bash scripts/run-android-emulator.sh` executes the committed native runtime
+fixtures on a disposable emulator; it rejects a failed instrumentation result
+rather than relying on adb's process exit code.
+
 ## 17.0.27 translation and reception candidate
 
 Base `b1835c1`, version 17.0.27/code 57, Fish config revision 14. Tested on

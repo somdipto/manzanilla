@@ -1,0 +1,22 @@
+Android10/API29 x86_64; stock WebView74.0.3729.185; key-free debug APK.
+Software emulation: functional checks only, no acoustic latency measurement.
+
+microphone-permission-before.txt
+INSTRUMENTATION_RESULT: stream=FAIL: IllegalStateException: Opening microphone permission discarded the pending translation session
+
+INSTRUMENTATION_CODE: 0
+
+microphone-permission-after.txt
+INSTRUMENTATION_RESULT: stream=PASS case=microphone-permission late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+microphone-permission-denied-after.txt
+INSTRUMENTATION_RESULT: stream=PASS case=microphone-permission-denied late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+microphone-permission-background-after.txt
+INSTRUMENTATION_RESULT: stream=PASS case=microphone-permission-background late=false status=200
+
+INSTRUMENTATION_CODE: -1
