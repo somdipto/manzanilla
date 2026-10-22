@@ -12,9 +12,9 @@ object FishPlan {
     // The agent and its sessions follow the device's own timezone, never a fixed hotel location.
     fun deviceTimezone(): String = java.util.TimeZone.getDefault().id
 
-    const val CONFIG_REV = "13"
-    const val CAPTION_TOOL = "manzanilla_publish_interpretation_v1"
-    const val CAPTION_PROTOCOL = "language-v1"
+    const val CONFIG_REV = "14"
+    const val CAPTION_TOOL = "manzanilla_publish_interpretation_v2"
+    const val CAPTION_PROTOCOL = "language-v2"
     const val AGENT_NAME = "Manzanilla Interpreter"
     const val MAX_SECONDS = 600
     const val CLIENT_CAP_MS = 540_000L
@@ -70,12 +70,20 @@ object FishPlan {
         """.trimIndent()
     }
 
-    const val REPORT_POLICY = "For EVERY human utterance, call manzanilla_publish_interpretation_v1 exactly once BEFORE speaking, with source_language, original and translation. " +
+    // Speech is the critical path; caption generation follows ordinary streamed text.
+    // This is a model instruction, not a guarantee of hosted scheduling or audible latency.
+    const val REPORT_POLICY =
+        "For EVERY human utterance with a clear selected source language, start speaking the complete faithful translation immediately as ordinary speech, BEFORE calling any tool. " +
+        "Do not generate a caption, JSON, original-text copy or explanation before the spoken translation. " +
+        "After emitting the translation, call manzanilla_publish_interpretation_v2 exactly once with source_language, original and that same translation. " +
+        "The caption is display only and must never delay speech. " +
+        "After the call, stay silent for this turn; do not speak the translation a second time. " +
         "Choose source_language from the two selected language codes using this utterance alone; never alternate languages or speakers. " +
-        "Numbers, names and shared one-word replies without clear language evidence use und and an empty translation. " +
+        "Numbers, names and shared one-word replies without clear language evidence use und and an empty translation; report these without speaking. " +
         "A repeat or speech after a pause is a new utterance and needs its own call, even when the same language continues. " +
-        "Then speak exactly the reported translation and nothing else. Never speak the tool name, language code, original text, JSON or metadata. " +
-        "Do not report your opening greeting, your own output, music or background speech. Only this display-only caption tool is allowed; never perform hotel or device actions."
+        "Never speak the tool name, language code, original text, JSON or metadata. " +
+        "Do not report your opening greeting, your own output, music or background speech. " +
+        "Only this display-only caption tool is allowed; never perform hotel or device actions."
 
 
     // The staff language uses the same 52-language allowlist as the picker.

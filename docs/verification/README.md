@@ -4,6 +4,60 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.27 translation and reception candidate
+
+Base `b1835c1`, version 17.0.27/code 57, Fish config revision 14. Tested on
+2026-10-22 using isolated databases, fake provider transports and browser bridges.
+No real provider session, live hotel write, production deployment or release tag
+was created. See [investigation and device requirements](../realtime-reception-fix.md).
+
+- Python: **260 passed**, one existing AnyIO deprecation warning.
+- Node language ledger: **14 passed**, covering all 2,652 distinct ordered pairs.
+- Chromium **154.0.8037.57**: all **three** committed browser fixtures passed:
+  captions/session fencing, **24** notes/confirmation checks, and day/night
+  appearance/preferences/navigation. Separate appearance runs covered 837×471,
+  640×360, 740×360 and 844×390 landscape viewports. These are simulated browser
+  interactions, not microphone or Android installation evidence.
+- Android JVM: **104 passed**, zero failures, errors or skips. Includes timing
+  queue/idle PCM behavior, v2 prompt provisioning, actual HTML/native asset
+  compatibility and worst-case escaped note bridge requests.
+- Android lint: **zero errors**, **17 warnings**.
+- Debug APK and instrumentation APK: **assembled**. Instrumentation was not run;
+  no adb target, emulator/system image or hardware acceleration was available.
+- Debug package `dev.orange.hotel`, version **17.0.27/code 57**, minSdk 26,
+  targetSdk 34. Generated Fish key/voice fields are **empty**. Packaged assets
+  match source. All 99 captured relevant source hashes remained stable during
+  the final build.
+- Final local debug APK SHA-256:
+  `41b9ac13466ced2520dc4bfdf6f88f9a590cdfc0896b6fdef46b311bf31a8873`.
+- Physical acoustic latency, provider speech-before-caption behavior, bilingual
+  accuracy, interrupted-report coverage and actual hotel delivery: **not run**.
+
+### Local Android dependency qualification
+
+This environment blocks `jitpack.io`, preventing retrieval of the pinned
+`com.github.davidliu:audioswitch:039a35aefab7747c557242fa216c9ea11743b604` binary.
+The exact public GitHub source commit was built into a temporary local Maven
+repository and supplied only through a temporary Gradle init script. Production
+build files and dependency coordinates are unchanged. The temporary build used
+AGP 8.2.2/Kotlin 1.9.22/SDK 34 and the original manifest permissions and dependency
+list; the manifest package attribute was moved to the AGP namespace setting.
+This establishes application compilation/tests against that dependency source,
+not byte-for-byte validation of the published JitPack AAR. Normal GitHub Actions
+must still resolve and verify the production dependency artifact. The local debug
+APK is a verification artifact, not a production update.
+
+```sh
+python -m pytest tests -q
+node --test tests/*.test.cjs
+pip install -r requirements-browser.txt
+python -m playwright install chromium
+python tests/run_reception_browser.py
+# Or use a system installation: --chromium /usr/bin/chromium
+cd android
+bash gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug :hotel:assembleDebugAndroidTest --no-daemon
+```
+
 ## 17.0.26 language-side candidate
 
 Base: merged main `bf9e36b` (includes latency PR #3). Source version 17.0.26,

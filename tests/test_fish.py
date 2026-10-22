@@ -36,17 +36,27 @@ def fish_api(tmp_path,monkeypatch):
                                             'has_more':False})
         if state['status'] != 201: return httpx.Response(state['status'],json={'message':'private provider detail'})
         if request.url.path=='/v1/agent/tools' and request.method=='GET':
-            return httpx.Response(200,json={'tools':[{'tool_id':'synthetic-caption-tool','name':fish.CAPTION_TOOL['name']}] if state.get('tools') else []})
-        if request.url.path=='/v1/agent/tools/synthetic-caption-tool' and request.method=='GET':
-            return httpx.Response(200,json=state.get('tool_definition',fish.CAPTION_TOOL))
+            query=request.url.params['search']
+            return httpx.Response(200,json={'tools':[
+                {'tool_id':'synthetic-caption-tool'+('' if index==0 else '-'+str(index+1)), 'name':tool['name']}
+                for index,tool in enumerate(state.get('tools',[])) if tool['name']==query]})
+        if request.url.path.startswith('/v1/agent/tools/') and request.method=='GET':
+            suffix=request.url.path.removeprefix('/v1/agent/tools/synthetic-caption-tool')
+            index=int(suffix[1:])-1 if suffix else 0
+            return httpx.Response(200,json=state.get('tool_definition',state['tools'][index]))
         if request.url.path=='/v1/agent/tools':
-            assert data == fish.CAPTION_TOOL
+            assert data in (fish.CAPTION_TOOL,fish.LEGACY_CAPTION_TOOL)
             if state.get('tool_status',201) != 201: return httpx.Response(state['tool_status'])
             state.setdefault('tools',[]).append(data)
-            return httpx.Response(201,json={'tool_id':'synthetic-caption-tool'})
+            count=len(state['tools'])
+            return httpx.Response(201,json={'tool_id':'synthetic-caption-tool'+('' if count==1 else '-'+str(count))})
         if request.url.path=='/v1/agent/agents':
             tools = data['config']['tools']
-            assert tools == ({'enabled':True,'tool_ids':['synthetic-caption-tool']} if tools['enabled'] else {'enabled':False,'tool_ids':[]})
+            if tools['enabled']:
+                valid_ids=['synthetic-caption-tool'+('' if i==0 else '-'+str(i+1)) for i in range(len(state['tools']))]
+                assert len(tools['tool_ids'])==1 and tools['tool_ids'][0] in valid_ids
+            else:
+                assert tools=={'enabled':False,'tool_ids':[]}
             assert data['config']['prompt']['first_message_mode']=='fixed'
             assert data['config']['conversation']['record_audio'] is False
             assert data['config']['conversation']['max_duration_seconds']==600
@@ -475,7 +485,7 @@ def test_fast_recognition_requires_both_languages_in_hosted_switching_set():
 
 def test_upgraded_clients_get_one_caption_tool_and_an_immutable_cached_agent(fish_api):
     _,client,headers,_,calls,state=fish_api
-    request={**REQUEST,'caption_protocol':'language-v1'}
+    request={**REQUEST,'caption_protocol':'language-v2'}
     for _ in range(2):
         result=client.post('/api/device/fish-session',headers=headers,json=request)
         assert result.status_code==200
@@ -490,13 +500,17 @@ def test_upgraded_clients_get_one_caption_tool_and_an_immutable_cached_agent(fis
         prompt=session['overrides']['system_prompt']
         assert 'guest language es' in prompt and 'receptionist language en' in prompt
         assert 'source_language' in prompt and 'und' in prompt
+        assert 'BEFORE calling any tool' in prompt
+        assert 'After emitting the translation, call manzanilla_publish_interpretation_v2' in prompt
+        assert 'do not speak the translation a second time' in prompt
+        assert 'BEFORE speaking' not in prompt
         assert 'never alternate' in prompt and 'never perform hotel or device actions' in prompt
         assert session['tool_events'] is False  # client_tool.call is independent of lifecycle events
 
 
 def test_legacy_clients_keep_a_separate_agent_without_caption_tool_calls(fish_api):
     _,client,headers,_,_,state=fish_api
-    for request in [{**REQUEST,'caption_protocol':'language-v1'},REQUEST]:
+    for request in [{**REQUEST,'caption_protocol':'language-v2'},REQUEST]:
         result=client.post('/api/device/fish-session',headers=headers,json=request)
         assert result.status_code==200
         assert client.post('/api/device/fish-session/'+result.json()['session_id']+'/end',headers=headers).status_code==200
@@ -507,7 +521,7 @@ def test_legacy_clients_keep_a_separate_agent_without_caption_tool_calls(fish_ap
 def test_failed_caption_tool_setup_never_creates_a_paid_session(fish_api):
     store,client,headers,_,calls,state=fish_api
     state['tool_status']=503
-    response=client.post('/api/device/fish-session',headers=headers,json={**REQUEST,'caption_protocol':'language-v1'})
+    response=client.post('/api/device/fish-session',headers=headers,json={**REQUEST,'caption_protocol':'language-v2'})
     assert response.status_code==503
     assert response.headers['X-Manzanilla-Session-Creation']=='not-created'
     assert [path for path,_ in calls]==['/v1/agent/tools','/v1/agent/tools']
@@ -522,7 +536,7 @@ def test_unrecognized_caption_protocol_is_rejected_before_provisioning(fish_api)
 
 def test_caption_tool_is_reused_without_editing_published_agents(fish_api,monkeypatch):
     _,client,headers,_,calls,state=fish_api
-    request={**REQUEST,'caption_protocol':'language-v1'}
+    request={**REQUEST,'caption_protocol':'language-v2'}
     for voice in ['voice-one','voice-two']:
         monkeypatch.setenv('FISH_VOICE_ID',voice)
         result=client.post('/api/device/fish-session',headers=headers,json=request)
@@ -538,7 +552,7 @@ def test_modified_existing_caption_tool_is_not_silently_reused_or_overwritten(fi
     _,client,headers,_,calls,state=fish_api
     state['tools']=[fish.CAPTION_TOOL]
     state['tool_definition']={**fish.CAPTION_TOOL,'expects_response':True}
-    result=client.post('/api/device/fish-session',headers=headers,json={**REQUEST,'caption_protocol':'language-v1'})
+    result=client.post('/api/device/fish-session',headers=headers,json={**REQUEST,'caption_protocol':'language-v2'})
     assert result.status_code==503
     assert result.headers['X-Manzanilla-Session-Creation']=='not-created'
     assert [path for path,_ in calls]==['/v1/agent/tools','/v1/agent/tools/synthetic-caption-tool']
@@ -704,3 +718,25 @@ def test_recovery_accepts_exact_provider_terminal_status_without_reending(fish_a
     assert client.post('/api/device/fish-session-requests/already-finished/end',headers=headers).json()=={'status':'ended'}
     assert not any(path.endswith('/end') for path,_ in calls)
     assert store.rows('SELECT status FROM fish_sessions')==[{'status':'ended'}]
+
+
+def test_caption_upgrade_keeps_old_clients_on_their_immutable_contract(fish_api):
+    _,client,headers,_,calls,state=fish_api
+    for protocol in ['language-v1','language-v2',None]:
+        request={**REQUEST,**({'caption_protocol':protocol} if protocol else {})}
+        response=client.post('/api/device/fish-session',headers=headers,json=request)
+        assert response.status_code==200
+        assert client.post('/api/device/fish-session/'+response.json()['session_id']+'/end',headers=headers).status_code==200
+    assert state['tools']==[fish.LEGACY_CAPTION_TOOL,fish.CAPTION_TOOL]
+    agents=list(state['agents'].values())
+    assert len(agents)==3
+    assert agents[0]['tools']['tool_ids']==['synthetic-caption-tool']
+    assert agents[1]['tools']['tool_ids']==['synthetic-caption-tool-2']
+    assert agents[2]['tools']=={'enabled':False,'tool_ids':[]}
+    sessions=[body for path,body in calls if path=='/v1/agent/sessions']
+    for index,policy in enumerate([fish.LEGACY_REPORT_POLICY,fish.REPORT_POLICY]):
+        assert policy in agents[index]['prompt']['system_prompt']
+        assert policy in sessions[index]['overrides']['system_prompt']
+    assert 'manzanilla_publish_interpretation_v2' not in sessions[0]['overrides']['system_prompt']
+    assert 'manzanilla_publish_interpretation_v1' not in sessions[1]['overrides']['system_prompt']
+    assert 'manzanilla_publish_interpretation' not in sessions[2]['overrides']['system_prompt']

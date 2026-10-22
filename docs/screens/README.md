@@ -70,3 +70,15 @@ Earlier Android emulator captures (854×480 landscape), not the current design:
 | Night reception: assistance | [7-night-assistance.png](7-night-assistance.png) |
 
 Screen recording of the whole flow: [../videos/reception-demo.mp4](../videos/reception-demo.mp4)
+
+
+## 17.0.27 candidate browser fixtures
+
+Synthetic Chromium captures of the shipped HTML/CSS/JS, with a fake native bridge:
+
+- [Day appearance](17.0.27-day-fixture.png)
+- [Night appearance](17.0.27-night-fixture.png)
+- [Day translation](17.0.27-translation-day-fixture.png)
+
+These verify visual rendering only, not Android installation, microphone capture,
+Fish output, physical latency or delivery to hotel staff.
