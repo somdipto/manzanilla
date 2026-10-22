@@ -81,6 +81,8 @@ against the published APK, creates or verifies the exact immutable version tag,
 and publishes the APK and release metadata together. PR builds do not publish.
 A pre-existing tag for a different commit is rejected, never moved.
 
+The signed build also installs the previous published APK on a fresh Android 10 emulator, then runs `adb install -r` with the candidate without uninstalling or clearing data. It checks the installed version and original installation time, observes startup for crashes, and retains a screenshot/log evidence artifact. This is an upgrade/startup smoke check; debug instrumentation separately verifies Start and permission behavior. It never grants microphone permission or starts a live Fish session.
+
 The app can offer the update only after that publication workflow succeeds.
 Android still asks the user to approve installation; source merges cannot
 silently replace an installed app.
