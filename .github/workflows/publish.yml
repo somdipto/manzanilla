@@ -2,6 +2,8 @@ name: Publish verified Reception APK
 on:
   push:
     tags: ['v*']
+    branches: [main]
+    paths: ['android/VERSION', 'android/VERSION_CODE']
   workflow_dispatch: {}
 permissions:
   contents: read
@@ -10,6 +12,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   candidate:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     uses: ./.github/workflows/release.yml
     secrets: inherit
   publish:
@@ -39,8 +42,6 @@ jobs:
           tag="v${version}"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then test "$GITHUB_REF_NAME" = "$tag"; fi
           mkdir -p "$RUNNER_TEMP/previous"
-          git fetch origin "refs/tags/$tag:refs/tags/$tag"
-          test "$(git rev-parse "$tag^{commit}")" = "$GITHUB_SHA"
           gh release download --repo "$GITHUB_REPOSITORY" --pattern '*.apk' --dir "$RUNNER_TEMP/previous"
           previous=("$RUNNER_TEMP/previous/"*.apk)
           test "${#previous[@]}" -eq 1
@@ -48,6 +49,18 @@ jobs:
             --previous-apk "${previous[0]}" --tag "$tag" --repository "$GITHUB_REPOSITORY" \
             --output "$RUNNER_TEMP/rechecked-metadata.json"
           cmp candidate/release-metadata.json "$RUNNER_TEMP/rechecked-metadata.json"
+          # Merge builds publish the already-verified candidate here. A tag made
+          # with GITHUB_TOKEN does not trigger another workflow, so do not rely
+          # on a second tag-push run to deliver the installed-app update.
+          existing="$(git ls-remote --tags origin "refs/tags/$tag")"
+          if [[ -n "$existing" ]]; then
+            git fetch origin "refs/tags/$tag:refs/tags/$tag"
+            test "$(git rev-parse "$tag^{commit}")" = "$GITHUB_SHA"
+          else
+            test "$GITHUB_REF" = refs/heads/main
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          fi
           printf 'RELEASE_TAG=%s\n' "$tag" >> "$GITHUB_ENV"
       - name: Publish the verified immutable release
         env:

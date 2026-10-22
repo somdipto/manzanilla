@@ -1,0 +1,11 @@
+{
+  "name": "manzanilla-reception-assets",
+  "private": true,
+  "scripts": {
+    "build:reception": "node scripts/build-reception.cjs",
+    "check:reception": "node scripts/build-reception.cjs --check"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

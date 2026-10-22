@@ -17,7 +17,9 @@ class HotelGateway(
     private val base: String,
     private val token: String,
     private val deliver: (SessionOwner.Lease, JSONObject) -> Unit,
-    private val dial: (SessionOwner.Lease, JSONObject) -> Unit
+    private val dial: (SessionOwner.Lease, JSONObject) -> Unit,
+    private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS).build()
 ) {
     private class Context(val lease: SessionOwner.Lease) {
         val id = UUID.randomUUID().toString()
@@ -26,8 +28,6 @@ class HotelGateway(
         var busy = false
         var closed = false
     }
-    private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS).build()
     private var current: Context? = null
     val configured get() = base.startsWith("https://") && token.isNotBlank()
 

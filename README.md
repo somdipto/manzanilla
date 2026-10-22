@@ -24,6 +24,8 @@ All releases: https://github.com/somdipto/manzanilla/releases
 
 ## Update an existing installation
 
+Version-bump PRs merged into `main` now trigger **Publish verified Reception APK**: source and emulator checks, signed build, APK identity checks, then a GitHub Release. The update becomes available only when that publication succeeds. See [Android startup and release-delivery fixes](docs/android-start-fix.md).
+
 Open Manzanilla while connected to the internet. From 17.0.8, every app resume checks immediately; an open foreground app also rechecks every ten minutes. The home screen's **Check updates** button retries immediately. The banner shows checking, download progress, a downloaded update, an up-to-date version, or a retryable failure instead of silently hiding discovery errors. Tap the downloaded update, allow installation if Android asks, then approve Android's install prompt. Do not uninstall: an in-place update keeps app data and saved keys.
 
 Older installed versions through 17.0.7 can suppress checks for ten minutes after a recent attempt and hide discovery errors. If that prevents this repair from arriving, perform a **one-time manual in-place update** using the latest APK link above. Allow your browser to install unknown apps if requested, and choose **Update**, not uninstall.
@@ -41,6 +43,16 @@ Publication uses the semantic version in `android/VERSION` and the explicit incr
 Android may require an "Update" confirmation for an app installed from a file; this is not a silent remote installation. Installed apps update from a newer signed GitHub Release, not from a source push or an Actions build artifact.
 
 ## Screens
+
+17.0.28 candidate on an actual Android10 emulator with stock WebView74.
+Key-free functional checks; no live conversation or latency measurement.
+
+<p align="center">
+  <img src="docs/screens/17.0.28-day-emulator.png" alt="17.0.28 day appearance on Android emulator" width="720">
+  <img src="docs/screens/17.0.28-night-emulator.png" alt="17.0.28 night appearance on Android emulator" width="720">
+  <img src="docs/screens/17.0.28-start-emulator.png" alt="17.0.28 translation explains missing audio configuration on key-free test APK" width="720">
+</p>
+
 
 17.0.27 candidate: real day/night palettes and repaired reception controls.
 These are isolated synthetic browser captures, **not native-device or live-audio evidence**.

@@ -1,0 +1,83 @@
+"""Exercise untouched packaged HTML/scripts/CSP with an isolated native transport.
+
+The fake transport only records outbound JSON. It cannot grant microphone access
+or contact a provider. Resource allowlisting and the bridge name/CSP are read
+from the native implementation so browser fixture conveniences cannot hide an
+unloadable production page.
+"""
+import json
+from pathlib import Path
+import re
+from urllib.parse import urlsplit
+
+
+ROOT = Path(__file__).resolve().parent.parent
+ASSETS = ROOT / "android/hotel/src/main/assets/reception"
+NATIVE = ROOT / "android/hotel/src/main/java/com/agentdeck/ui"
+
+
+def run_startup_fixture(browser, legacy_object_api=False):
+    native = (NATIVE / "ReceptionView.kt").read_text()
+    policy = (NATIVE / "ReceptionAssets.kt").read_text()
+    host = re.search(r'const val HOST = "([^"]+)"', policy).group(1)
+    paths = set(re.findall(r'"(/[^\"]+)"', policy))
+    bridge = re.search(r'}, "(\w+Native)"\)', native).group(1)
+    csp = re.search(r'"Content-Security-Policy" to "([^"]+)"', native).group(1)
+    context = browser.new_context(viewport={"width": 837, "height": 471}, service_workers="block")
+    errors, loaded = [], []
+
+    def intercept(route):
+        url = urlsplit(route.request.url)
+        if (url.scheme != "https" or url.netloc != host or url.path not in paths
+                or url.query or route.request.method != "GET"):
+            errors.append(f"Blocked request: {url.scheme}://{url.netloc}{url.path}")
+            route.abort()
+            return
+        suffix = Path(url.path).suffix
+        mime = {".js": "application/javascript", ".css": "text/css", ".html": "text/html"}[suffix]
+        loaded.append(url.path)
+        route.fulfill(body=(ASSETS / url.path.lstrip("/")).read_bytes(), headers={
+            "Content-Type": mime + "; charset=UTF-8", "Content-Security-Policy": csp,
+            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+        })
+
+    context.route("**/*", intercept)
+    context.add_init_script("""
+        window.fixtureMessages = [];
+        window[%s] = {postMessage: raw => window.fixtureMessages.push(JSON.parse(raw))};
+        %s
+    """ % (json.dumps(bridge), "delete Object.hasOwn; delete Object.fromEntries;" if legacy_object_api else ""))
+    page = context.new_page()
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    try:
+        page.goto(f"https://{host}/index.html")
+        assert not errors, f"Packaged page failed during startup: {errors}"
+        assert set(loaded) == paths, f"Packaged resources not loaded: {paths - set(loaded)}"
+        assert page.evaluate("fixtureMessages.some(event => event.action === 'info')"), "Native startup handshake missing"
+        assert page.locator('[data-action="translation"]').is_visible(), "Home did not render"
+
+        def receive(event):
+            page.evaluate("event => window.manzania.receive(event)", event)
+
+        receive({"type": "reception_info", "audio_available": True, "local_audio_state": "off", "staff_language": "en"})
+        receive({"type": "language_preferences", "language": "en", "staff_language": "en"})
+        page.locator('[data-action="translation"]').click()
+        assert page.locator('[data-action="start"]').is_disabled(), "Same-language start must be blocked"
+        assert "two different languages" in page.locator("#translation-readiness").inner_text()
+        receive({"type": "reception_info", "audio_available": False, "local_audio_state": "off", "audio_gate": "Configure translation in Staff setup."})
+        assert "Configure translation" in page.locator("#translation-readiness").inner_text()
+        assert page.locator("#settings").is_visible(), "Configuration help must remain reachable"
+        assert page.locator('[data-action="start"]').is_disabled()
+        receive({"type": "reception_info", "audio_available": True, "local_audio_state": "off"})
+        page.locator('#language').select_option("es")
+        assert page.locator('[data-action="start"]').is_enabled(), "Distinct languages with configured audio cannot start"
+        page.locator('[data-action="start"]').click()
+        starts = page.evaluate("fixtureMessages.filter(event => event.action === 'start')")
+        assert len(starts) == 1 and starts[0]["language"] == "es" and starts[0]["staff_language"] == "en", starts
+        assert starts[0]["session_id"] and starts[0]["mode"] == "translation", starts
+        assert not errors, f"Packaged page runtime errors: {errors}"
+        return {"fixture": "packaged_page_startup", "passed": True,
+                "object_has_own_available": not legacy_object_api, "resources": sorted(loaded),
+                "scope": "unchanged packaged page; isolated bridge; no microphone or provider"}
+    finally:
+        context.close()

@@ -354,6 +354,14 @@ class HotelActivity : Activity() {
         foreground = true
         reception?.setShown(true)
         pushState()
+        // Permission results can arrive before onResume. Start only after this
+        // window is foreground again, and consume the pending request once.
+        pendingPermission?.takeIf {
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        }?.let { lease ->
+            pendingPermission = null
+            if (current(lease)) connect(lease)
+        }
         updater.check()
         ui.removeCallbacks(updatePoll)
         ui.postDelayed(updatePoll, 10 * 60_000L)
@@ -362,17 +370,34 @@ class HotelActivity : Activity() {
         super.onRequestPermissionsResult(code, permissions, results)
         if (code != 5) return
         val lease = pendingPermission ?: return
-        pendingPermission = null
-        if (!current(lease)) return
-        if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED && foreground) connect(lease)
-        else stopSession("error", "Microphone permission is required. No conversation has started.")
+        if (!current(lease)) { pendingPermission = null; return }
+        if (results.firstOrNull() != PackageManager.PERMISSION_GRANTED) {
+            pendingPermission = null
+            stopSession("error", "Microphone permission is required. No conversation has started.")
+        } else if (foreground) {
+            pendingPermission = null
+            connect(lease)
+        }
     }
     override fun onPause() {
         foreground = false
         ui.removeCallbacks(updatePoll)
-        stopSession()
-        reception?.setShown(false)
+        // The system permission dialog pauses us without hiding this window.
+        // No microphone exists yet; retain its proposed session and visible UI.
+        if (pendingPermission == null) {
+            stopSession()
+            reception?.setShown(false)
+        }
         super.onPause()
+    }
+    override fun onStop() {
+        // Leaving the app while permission is pending must cancel the proposal.
+        // A later permission grant must never start capture in the background.
+        if (pendingPermission != null) {
+            stopSession()
+            reception?.setShown(false)
+        }
+        super.onStop()
     }
     override fun onDestroy() {
         destroyed = true

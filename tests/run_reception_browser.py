@@ -13,6 +13,7 @@ from threading import Thread
 from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
+from reception_startup_fixture import run_startup_fixture
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -39,6 +40,9 @@ def run(chromium=None):
             browser = playwright.chromium.launch(
                 executable_path=chromium, headless=True, args=["--no-sandbox"])
             version = browser.version
+            # Keep packaged script order, CSP, resource interception, and startup intact.
+            results.append(run_startup_fixture(browser))
+            results.append(run_startup_fixture(browser, legacy_object_api=True))
             for module, entrypoint in FIXTURES:
                 context = browser.new_context(viewport={"width": 1000, "height": 650}, service_workers="block")
                 errors = []

@@ -9,3 +9,7 @@ data/
 local.properties
 .gradle/
 **/build/
+node_modules/
+
+# Local emulator evidence and scratch output.
+/work/

@@ -26,6 +26,10 @@ class VoiceLifecycleFixture : Instrumentation() {
         val case = args?.getString("case") ?: "pending-end"
         try {
             when (case) {
+                "reception-bridge" -> ReceptionWebViewFixture.verify(this)
+                "microphone-permission" -> ReceptionWebViewFixture.verifyMicrophonePermission(this)
+                "microphone-permission-denied" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "deny")
+                "microphone-permission-background" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "background")
                 "pending-end" -> pendingEnd(late, status)
                 "failed-start" -> failedStart(uncertainAudio = false)
                 "failed-start-uncertain" -> failedStart(uncertainAudio = true)
