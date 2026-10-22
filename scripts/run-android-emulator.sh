@@ -23,6 +23,6 @@ for fixture in reception-bridge microphone-permission microphone-permission-deni
   timeout 180s adb shell am instrument -w -r -e case "$fixture" \
     dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture | tee "$evidence/$fixture.txt"
   # adb itself returns zero even when an instrumentation assertion fails.
-  rg -q "PASS case=$fixture " "$evidence/$fixture.txt"
-  rg -q '^INSTRUMENTATION_CODE: -1' "$evidence/$fixture.txt"
+  grep -q "PASS case=$fixture " "$evidence/$fixture.txt"
+  grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$fixture.txt"
 done
