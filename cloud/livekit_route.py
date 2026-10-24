@@ -71,7 +71,12 @@ async def mint(store, dev, value):
     """Route-compatible twin of fish.mint: same guards, lease and response shape."""
     if value.guest_language == value.staff_language:
         raise HTTPException(422, 'Choose two different interpreter languages')
-    url, http_base, key, secret = config()
+    try:
+        url, http_base, key, secret = config()
+    except HTTPException as exc:
+        # A pre-lease refusal proves no session was created; say so like fish.mint.
+        exc.headers = {**(exc.headers or {}), **NOT_CREATED}
+        raise
     try:
         ident = store.reserve_fish(dev, MAX_DURATION, duration_cap('FISH_HOTEL_DAILY_SECONDS', 1800),
                                    duration_cap('FISH_ACCOUNT_DAILY_SECONDS', 3600), 60, MAX_JOIN_SECONDS,
