@@ -12,7 +12,9 @@ agent-event data topic. Raw lk.transcription streams are agent-side timing
 signals only; identified captions never depend on them.
 """
 import asyncio
+import audioop
 import json
+import re
 import logging
 import time
 
@@ -27,6 +29,10 @@ from .tts import FishTTS
 LOG = logging.getLogger('voice_worker.session')
 
 CLAUSE_END = tuple('.!?;:\n。！？；：')
+# transcribe-stream-1 may embed its own diarization/control tokens in committed
+# text; they are markup, never spoken language, so they never reach the model,
+# the voice or the caption.
+CONTROL_TOKEN = re.compile(r'<\|[^|]*\|>')
 MIN_CLAUSE = 12
 PLAYBACK_QUEUE_MS = 200
 TABLET_WAIT_SECONDS = 15
@@ -100,19 +106,24 @@ class InterpreterSession:
         finally:
             await self._close()
 
+    async def _set_state(self, value: str):
+        await self.room.local_participant.set_attributes(contract.state(value))
+        self.bench.mark('agent_state', state=value)
+
     async def _connect(self):
         key, secret = self._grant
         token = (api.AccessToken(key, secret)
                  .with_identity(self.agent_identity)
                  .with_name('Manzanilla interpreter')
                  .with_grants(api.VideoGrants(room_join=True, room=self.room_name,
-                                              can_publish=True, can_subscribe=True))
+                                              can_publish=True, can_subscribe=True,
+                                              can_update_own_metadata=True))
                  .to_jwt())
         await self.room.connect(self._url, token)
         self.source = rtc.AudioSource(48000, 1, queue_size_ms=PLAYBACK_QUEUE_MS)
         track = rtc.LocalAudioTrack.create_audio_track('agent-voice', self.source)
         await self.room.local_participant.publish_track(track)
-        await self.room.local_participant.update_attributes(contract.state('listening'))
+        await self._set_state('listening')
         self.bench.mark('room_connected')
 
     async def _wait_tablet(self):
@@ -168,7 +179,11 @@ class InterpreterSession:
                     self.bench.mark('asr_committed', language=committed.get('language_code'),
                                     user_turn=committed.get('user_turn'))
                     if committed.get('user_turn') and committed.get('turn_kind') == 'user':
-                        await self.turns.put(committed)
+                        committed['text'] = CONTROL_TOKEN.sub('', committed.get('text', '')).strip()
+                        if committed['text']:
+                            await self.turns.put(committed)
+                        else:
+                            self.bench.mark('turn_skipped_markup_only')
                     else:
                         self.bench.mark('turn_skipped_backchannel')
                 elif kind == 'error':
@@ -231,7 +246,7 @@ class InterpreterSession:
     async def _translate(self, turn: int, text: str, language: str):
         if not text.strip():
             return
-        await self.room.local_participant.update_attributes(contract.state('thinking'))
+        await self._set_state('thinking')
         self.bench.mark('llm_requested', turn=turn)
         clauses: asyncio.Queue[str | None] = asyncio.Queue()
         full: list[str] = []
@@ -269,10 +284,11 @@ class InterpreterSession:
 
     async def _speak_stream(self, clauses: asyncio.Queue, turn: int, label: str = 'turn'):
         self.speaking = True
-        await self.room.local_participant.update_attributes(contract.state('speaking'))
+        await self._set_state('speaking')
         await self.asr.agent_speaking(True)
         tts = FishTTS(self._fish_key, self._voice)
         await tts.connect()
+        self._rs = None  # resampler state, per utterance
         async def feed():
             while True:
                 clause = await clauses.get()
@@ -291,6 +307,8 @@ class InterpreterSession:
                 if first:
                     first = False
                     self.bench.mark('first_audio_published', turn=turn, label=label)
+                chunk, state = audioop.ratecv(chunk, 2, 1, 24000, 48000, self._rs)
+                self._rs = state
                 for offset in range(0, len(chunk), 960 * 2):
                     piece = chunk[offset:offset + 960 * 2]
                     if len(piece) < 960 * 2:
@@ -304,7 +322,7 @@ class InterpreterSession:
             self.speaking = False
             await self.asr.agent_speaking(False)
             if not self.ended.is_set():
-                await self.room.local_participant.update_attributes(contract.state('listening'))
+                await self._set_state('listening')
 
     async def _interrupt(self):
         if not self.speaking:
@@ -317,7 +335,7 @@ class InterpreterSession:
             self.bench.mark('playback_flushed')
         self.speaking = False
         await self.asr.agent_speaking(False)
-        await self.room.local_participant.update_attributes(contract.state('listening'))
+        await self._set_state('listening')
 
     async def _caption(self, turn: int, language: str, original: str, translation: str):
         call_id = f'lk-{self.room_name[-24:]}-{turn}'

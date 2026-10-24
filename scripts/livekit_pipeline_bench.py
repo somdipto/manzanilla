@@ -77,12 +77,15 @@ async def run(args):
     server = subprocess.Popen(
         [args.livekit_bin, '--dev', '--bind', '127.0.0.1', '--port', '7880'],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    worker_env = dict(os.environ, LIVEKIT_URL='ws://127.0.0.1:7880',
+    worker_env = dict(os.environ,
+                      PYTHONPATH=str(ROOT) + os.pathsep + os.environ.get('PYTHONPATH', ''),
+                      LIVEKIT_URL='ws://127.0.0.1:7880',
                       LIVEKIT_API_KEY=DEV_KEY, LIVEKIT_API_SECRET=DEV_SECRET,
                       FISH_API_KEY=os.environ['FISH_API_KEY'],
                       FISH_VOICE_ID=os.environ['FISH_VOICE_ID'],
                       LLM_BASE_URL=args.llm_base, LLM_API_KEY=os.environ['LLM_API_KEY'],
-                      LLM_MODEL=args.llm_model, ROOM_PREFIX='manz-bench-',
+                      LLM_MODEL=args.llm_model, LLM_EXTRA_JSON='{"reasoning_effort": "low"}',
+                      ROOM_PREFIX='manz-bench-',
                       VOICE_BENCH_LOG=str(out / 'bench.jsonl'))
     worker = subprocess.Popen(
         [sys.executable, '-m', 'voice_worker'], env=worker_env,
@@ -140,9 +143,12 @@ async def run(args):
         track = rtc.LocalAudioTrack.create_audio_track('mic', source)
         await room.local_participant.publish_track(track)
         marks.mark('device_joined')
+        # Let the contract greeting finish before the guest speaks; the worker's
+        # echo gate ignores the room during its own playback.
+        await asyncio.sleep(10)
 
-        # Turn 1: play the full utterance, expect greeting-then-translation audio,
-        # then a caption with original + translation.
+        # Turn 1: play the full utterance, expect translation audio, then a
+        # caption with original + translation.
         pcm1 = load_wav_16k(str(out / 'turn1.wav'))
         marks.mark('device_input_start', utterance='turn1')
         measure_from[0] = time.time()
@@ -159,19 +165,49 @@ async def run(args):
             await asyncio.sleep(0.05)
         marks.mark('device_turn1_done', caption_received=bool(caption1))
 
+        # Headline timings come from the worker's own JSONL marks: the device's
+        # SDK-side first-frame callback is contaminated by jitter buffering.
+        worker_marks = {}
+        jsonl = out / 'bench.jsonl'
+        if jsonl.exists():
+            for line in jsonl.read_text().splitlines():
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if row.get('session', '').startswith('manz-bench-'):
+                    worker_marks.setdefault(row['event'], []).append(row)
+        def mark(name, turn=None, state=None):
+            for row in worker_marks.get(name, []):
+                if (turn is None or row.get('turn') == turn) and (state is None or row.get('state') == state):
+                    return row['ts']
+            return None
         table = []
-        if first_agent_audio:
-            table.append(('device input end -> first agent audio (turn 1, incl. greeting)',
-                          round(first_agent_audio[0] - t_input_end, 3)))
+        committed = mark('asr_committed')
+        llm_at = mark('llm_requested', turn=1)
+        first_turn_audio = mark('first_audio_published', turn=1)
+        caption_at = mark('caption_sent', turn=1)
+        if committed:
+            table.append(('input end -> ASR commit (s)', round(committed - t_input_end, 2)))
+        if llm_at and first_turn_audio:
+            table.append(('LLM request -> first agent audio chunk (s)',
+                          round(first_turn_audio - llm_at, 2)))
+        if first_turn_audio:
+            table.append(('input end -> first agent audio (s)', round(first_turn_audio - t_input_end, 2)))
+        if caption_at:
+            table.append(('input end -> caption emitted after playback (s)', round(caption_at - t_input_end, 2)))
         if caption1:
-            table.append(('device input end -> caption on device (turn 1)',
-                          round(caption1['at'] - t_input_end, 3)))
             params = caption1['payload']['params']
+            table.append(('caption lag on device after emit (ms)', round((caption1['at'] - caption_at) * 1000, 1) if caption_at else '?'))
             table.append(('turn 1 original (real ASR transcript)', params['original']))
             table.append(('turn 1 translation (real LLM output)', params['translation']))
             table.append(('turn 1 source_language', params['source_language']))
+        agent = next((p for p in room.remote_participants.values()
+                      if p.identity.startswith('agent-')), None)
+        table.append(('lk.agent.state at end (device view)',
+                      agent.attributes.get('lk.agent.state') if agent else 'agent gone'))
         states = ', '.join(f'{state}' for _, state in attributes)
-        table.append(('lk.agent.state sequence observed', states or 'none'))
+        table.append(('lk.agent.state change events observed on device', states or 'none (see note)'))
 
         (out / 'agent-audio-turn1.wav').write_bytes(wav_bytes(bytes(agent_audio), 48000))
         lines = ['# Self-hosted route bench (issue #8)', '',
@@ -198,7 +234,7 @@ async def run(args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--llm-base', default='https://integrate.api.nvidia.com/v1')
-    parser.add_argument('--llm-model', default='google/gemma-3-12b-it')
+    parser.add_argument('--llm-model', default='openai/gpt-oss-20b')
     parser.add_argument('--livekit-bin', default='/tmp/lkbin/livekit-server')
     parser.add_argument('--out', default='/tmp/bench')
     args = parser.parse_args()

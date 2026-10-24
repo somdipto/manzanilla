@@ -19,7 +19,7 @@ LOG = logging.getLogger('voice_worker.tts')
 
 
 class FishTTS:
-    def __init__(self, api_key: str, voice_id: str, sample_rate: int = 48000, endpoint: str = ENDPOINT):
+    def __init__(self, api_key: str, voice_id: str, sample_rate: int = 24000, endpoint: str = ENDPOINT):
         if not api_key:
             raise ValueError('Fish API key is required for streaming synthesis')
         if not voice_id:
@@ -79,7 +79,7 @@ class FishTTS:
                 elif kind == 'finish':
                     break
                 elif kind == 'error':
-                    LOG.warning('synthesis error: %s', event.get('message'))
+                    LOG.warning('synthesis error: %s', event)
                     break
         except websockets.ConnectionClosed:
             pass

@@ -11,13 +11,17 @@ import httpx
 
 
 class TranslateStream:
-    def __init__(self, base_url: str, api_key: str, model: str, timeout: float = 30.0):
+    def __init__(self, base_url: str, api_key: str, model: str, timeout: float = 30.0,
+                 extra: dict | None = None):
         if not api_key:
             raise ValueError('An LLM credential is required for translation')
         self._base = base_url.rstrip('/')
         self._key = api_key
         self._model = model
         self._timeout = timeout
+        # Provider-specific request fields for the local bench (for example a
+        # reasoning effort cap); production sends none.
+        self._extra = dict(extra or {})
         self.first_token_at: float | None = None
 
     async def stream(self, system: str, utterance: str) -> AsyncIterator[str]:
@@ -29,6 +33,7 @@ class TranslateStream:
                 {'role': 'system', 'content': system},
                 {'role': 'user', 'content': utterance},
             ],
+            **self._extra,
         }
         headers = {'Authorization': 'Bearer ' + self._key}
         async with httpx.AsyncClient(timeout=self._timeout) as client:
