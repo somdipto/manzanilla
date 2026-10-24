@@ -6,6 +6,6 @@ COPY voice-worker/requirements.txt voice-worker-requirements.txt
 RUN pip install --no-cache-dir -r voice-worker-requirements.txt && useradd --uid 10002 --create-home voiceworker
 COPY cloud cloud
 COPY voice-worker voice-worker
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app:/app/voice-worker
 USER voiceworker
 CMD ["python", "-m", "voice_worker"]
