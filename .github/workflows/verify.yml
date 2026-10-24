@@ -17,10 +17,25 @@ jobs:
       - run: npm run check:reception
       - run: node --test tests/*.test.cjs
       - run: pip install -r requirements-dev.txt
+      - run: pip install -r voice-worker/requirements.txt
       - run: python -m pytest tests -q
       - run: pip install -r requirements-browser.txt
       - run: python -m playwright install --with-deps chromium
       - run: python tests/run_reception_browser.py
+  release-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest tests/test_release_identity.py -q
+      - name: Enforce publication policy
+        env:
+          POLICY_BASE: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
+        run: python scripts/release_policy_check.py
+
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 30
