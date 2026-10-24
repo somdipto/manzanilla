@@ -10,6 +10,7 @@ from .models import Hotel, BookingLookup
 from .gateway import Gateway
 from .realtime import relay
 from .operations import Operations, Start, Action, Confirmation
+from .livekit_route import mint as livekit_mint, end as end_livekit, ROOM_PREFIX as livekit_room_prefix
 from .fish import FishSession, mint, end as end_fish, end_request as end_fish_request, revoke_sessions, NOT_CREATED
 from .models import Strict
 from typing import Literal
@@ -173,10 +174,14 @@ async def fish_session(value: FishSession, authorization: str = Header(default='
     except HTTPException as exc:
         exc.headers = NOT_CREATED
         raise
+    if os.getenv('VOICE_ROUTE','fish') == 'livekit':
+        return await livekit_mint(store,dev,value)
     return await mint(store,dev,value)
 
 @app.post('/api/device/fish-session/{session_id}/end')
 async def fish_session_end(session_id: str, authorization: str = Header(default='')):
+    if session_id.startswith(livekit_room_prefix()):
+        return await end_livekit(store,device_auth(authorization),session_id)
     return await end_fish(store,device_auth(authorization),session_id)
 
 @app.post('/api/device/fish-session-requests/{request_id}/end')
