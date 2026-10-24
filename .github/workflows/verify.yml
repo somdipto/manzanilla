@@ -17,6 +17,7 @@ jobs:
       - run: npm run check:reception
       - run: node --test tests/*.test.cjs
       - run: pip install -r requirements-dev.txt
+      - run: pip install -r voice-worker/requirements.txt
       - run: python -m pytest tests -q
       - run: pip install -r requirements-browser.txt
       - run: python -m playwright install --with-deps chromium
