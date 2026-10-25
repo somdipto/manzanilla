@@ -1,6 +1,6 @@
 name: Build verified signed APK
 # TEST BRANCH VARIANT: private diagnostics build. No embedded credentials, no
-# publication, no identity/upgrade checks against the published release.
+# publication. Includes signed 17.0.28->17.0.29 upgrade continuity evidence.
 on:
   workflow_dispatch: {}
 permissions:
@@ -54,6 +54,22 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: bash scripts/screenshot-diagnostics.sh
+      - name: Verify signed 17.0.28 to 17.0.29 upgrade continuity on Android 10
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash scripts/verify-upgrade-28-to-29.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: upgrade-evidence
+          path: work/upgrade-evidence/
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
           name: fish-diagnostics-test-apk
