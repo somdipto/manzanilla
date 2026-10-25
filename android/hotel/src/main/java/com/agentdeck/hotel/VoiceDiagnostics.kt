@@ -5,7 +5,7 @@ package com.agentdeck.hotel
  * Timestamps and event endpoint names only: never audio, transcripts, captions,
  * keys or device identifiers. Entries die with the process; nothing is persisted.
  */
-object VoiceDiagnostics {
+internal object VoiceDiagnostics {
     private const val MAX_POINTS = 600
 
     data class Entry(
