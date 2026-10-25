@@ -5,6 +5,10 @@ set -euo pipefail
 APK=android/hotel/build/outputs/apk/release/hotel-release.apk
 test -f "$APK"
 mkdir -p work/diagnostics-screen
+# The diagnostics activity is intentionally not exported; the emulator image is
+# userdebug, so adbd root can start it without weakening the manifest.
+adb root
+adb wait-for-device
 adb install -r "$APK"
 # Package registration can lag a streamed install by a beat; retry the launch.
 started=""
