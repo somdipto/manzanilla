@@ -10,7 +10,7 @@ adb install -r "$APK"
 started=""
 for attempt in 1 2 3 4 5; do
   sleep 2
-  if adb shell am start -W -n dev.orange.hotel/.DiagnosticsActivity 2>&1 | tee work/diagnostics-screen/am-start.log | grep -q "Status: ok"; then
+  if adb shell am start -W -n dev.orange.hotel/com.agentdeck.hotel.DiagnosticsActivity 2>&1 | tee work/diagnostics-screen/am-start.log | grep -q "Status: ok"; then
     started=1
     break
   fi
