@@ -1,6 +1,9 @@
 name: Verify CDN update feed (fixture)
 on:
   workflow_dispatch: {}
+  push:
+    branches: [test/fish-diagnostics]
+    paths: ['.github/workflows/verify-cdn-update-feed.yml']
 permissions:
   contents: read
 jobs:
