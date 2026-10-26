@@ -70,7 +70,23 @@ class GitHub:
             raise PublicationError(f"GitHub publication request failed with HTTP {error.code}") from None
 
     def release(self, tag):
-        return self.request("GET", f"/repos/{self.repository}/releases/tags/{quote(tag, safe='')}", missing=True)
+        release = self.request("GET", f"/repos/{self.repository}/releases/tags/{quote(tag, safe='')}", missing=True)
+        if release is not None:
+            return release
+        # GitHub's release-by-tag endpoint excludes drafts, including drafts
+        # visible to the authenticated publisher. Search the paginated list so
+        # interrupted uploads can resume without creating a duplicate draft.
+        matches = []
+        for page in range(1, 1001):
+            releases = self.request("GET", f"/repos/{self.repository}/releases?per_page=100&page={page}")
+            if not isinstance(releases, list):
+                raise PublicationError("Invalid GitHub release list")
+            matches.extend(item for item in releases if isinstance(item, dict) and item.get("tag_name") == tag)
+            if len(releases) < 100:
+                if len(matches) > 1:
+                    raise PublicationError("Multiple releases share the candidate tag")
+                return matches[0] if matches else None
+        raise PublicationError("GitHub release list exceeded its pagination limit")
 
     def tag_commit(self, tag):
         ref = self.request("GET", f"/repos/{self.repository}/git/ref/tags/{quote(tag, safe='')}", missing=True)

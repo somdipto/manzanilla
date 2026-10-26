@@ -6,7 +6,7 @@ from urllib.request import Request
 
 import pytest
 
-from scripts.publish_release import APK, MANIFEST, PublicationError, Publisher, SafeRedirect, digest
+from scripts.publish_release import APK, MANIFEST, GitHub, PublicationError, Publisher, SafeRedirect, digest
 
 
 REPOSITORY = "owner/hotel"
@@ -81,6 +81,29 @@ def candidate(tmp_path):
 
 def publisher(api):
     return Publisher(api, REPOSITORY, TAG, COMMIT)
+
+
+def test_github_finds_draft_on_paginated_release_list():
+    api = GitHub(REPOSITORY, "synthetic-token")
+    draft = {"tag_name": TAG, "draft": True, "id": 7}
+    calls = []
+
+    def request(method, path, **kwargs):
+        calls.append(path)
+        if "/tags/" in path:
+            return None  # GitHub's by-tag endpoint excludes drafts.
+        return [{"tag_name": f"v1.0.{i}"} for i in range(100)] if path.endswith("&page=1") else [draft]
+
+    api.request = request
+    assert api.release(TAG) == draft
+    assert len(calls) == 3
+
+
+def test_github_rejects_ambiguous_drafts():
+    api = GitHub(REPOSITORY, "synthetic-token")
+    api.request = lambda method, path, **kwargs: None if "/tags/" in path else [{"tag_name": TAG}, {"tag_name": TAG}]
+    with pytest.raises(PublicationError, match="Multiple releases"):
+        api.release(TAG)
 
 
 def test_latest_is_switched_only_after_both_server_digests_are_verified(candidate):
