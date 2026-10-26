@@ -76,9 +76,11 @@ B=$(find_node "New $PROVIDER_LABEL key, masked") || { echo "masked key field not
 adb shell input tap $(tap_bounds "$B")
 sleep 1
 adb shell input text "$DUMMY"
-adb shell input keyevent 111  # hide keyboard (ESCAPE)
+# BACK is consumed by the IME and only hides the keyboard; ESC would finish the
+# activity and KeyEntryActivity.onPause wipes typed fields by design.
+adb shell input keyevent 4
 sleep 1
-B=$(find_node "Save $PROVIDER_LABEL key") || { echo "save button not found" >&2; exit 1; }
+B=$(find_node "Save $PROVIDER_LABEL key") || { uidump > work/upgrade-evidence/staff-setup-save-missing.xml; echo "save button not found" >&2; exit 1; }
 adb shell input tap $(tap_bounds "$B")
 sleep 2
 XML=$(uidump)
