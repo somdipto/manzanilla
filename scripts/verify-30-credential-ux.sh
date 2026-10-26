@@ -89,13 +89,21 @@ fi
 
 # 4. Dummy key save
 if [ -f "$evidence/ui-staff-form.xml" ] && grep -qiF 'Voice credential' "$evidence/ui-staff-form.xml"; then
-  python3 - "$evidence/ui-staff-form.xml" <<'PYEOF' >> "$evidence/result.txt" 2>&1
+  # The form is a ScrollView; the Voice credential section sits below the fold.
+  adb shell input swipe 900 900 900 300 300 || true
+  sleep 2
+  dump ui-staff-scrolled.xml
+  python3 - "$evidence/ui-staff-scrolled.xml" <<'PYEOF' >> "$evidence/result.txt" 2>&1
 import re, subprocess, sys
 xml = open(sys.argv[1], encoding='utf-8', errors='replace').read()
-m = re.search(r'content-desc="New Voice credential \(release override\) key, masked"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', xml)
-if not m: sys.exit('masked key field not found')
-l, t, r, b = map(int, m.groups())
-subprocess.run(['adb', 'shell', 'input', 'tap', str((l + r) // 2), str((t + b) // 2)], check=True)
+for tag in re.findall(r'<node[^>]*>', xml):
+    cd = re.search(r'content-desc="([^"]*)"', tag)
+    bd = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', tag)
+    if cd and bd and cd.group(1) == 'New Voice credential (release override) key, masked':
+        l, t, r, b = map(int, bd.groups())
+        subprocess.run(['adb', 'shell', 'input', 'tap', str((l + r) // 2), str((t + b) // 2)], check=True)
+        sys.exit(0)
+sys.exit('masked key field not found')
 PYEOF
   sleep 1
   adb shell input text "sk-fish-DUMMY-INVALID-0000-notreal"
