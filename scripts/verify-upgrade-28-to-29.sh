@@ -54,22 +54,36 @@ sleep 3
 unlock_and_open_staff_setup
 XML=$(uidump)
 printf '%s' "$XML" > work/upgrade-evidence/staff-setup-28-before-save.xml
-# Tap the masked Fish key field, type the dummy, tap its Save button.
-FIELD_XML=$(printf '%s' "$XML" | tr '<' '\n' | grep "New $PROVIDER_LABEL key, masked" || true)
-if [ -z "$FIELD_XML" ]; then echo "masked key field not found" >&2; exit 1; fi
-XY=$(tap_node "$FIELD_XML"); adb shell input tap $XY
+# Scroll the staff-setup column until a node matching $1 is visible; prints its bounds.
+find_node() {
+  local pattern="$1" attempt line
+  for attempt in 1 2 3 4 5; do
+    line=$(uidump | tr '<' '\n' | grep -i "$pattern" | head -1 || true)
+    if [ -n "$line" ]; then printf '%s' "$line" | grep -o 'bounds="[0-9,\[\]]*"' | head -1; return 0; fi
+    adb shell input swipe 500 700 500 250
+    sleep 1
+  done
+  return 1
+}
+tap_bounds() {
+  python3 -c "
+import re,sys
+m=re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', sys.argv[1])
+print(f'{(int(m.group(1))+int(m.group(3)))//2} {(int(m.group(2))+int(m.group(4)))//2}')" "$1"
+}
+# Tap the masked voice-credential field, type the dummy, tap its Save button.
+B=$(find_node "New $PROVIDER_LABEL key, masked") || { echo "masked key field not found" >&2; exit 1; }
+adb shell input tap $(tap_bounds "$B")
 sleep 1
 adb shell input text "$DUMMY"
 adb shell input keyevent 111  # hide keyboard (ESCAPE)
 sleep 1
-XML=$(uidump)
-SAVE_XML=$(printf '%s' "$XML" | tr '<' '\n' | grep "Save $PROVIDER_LABEL key" || true)
-if [ -z "$SAVE_XML" ]; then echo "save button not found" >&2; exit 1; fi
-XY=$(tap_node "$SAVE_XML"); adb shell input tap $XY
+B=$(find_node "Save $PROVIDER_LABEL key") || { echo "save button not found" >&2; exit 1; }
+adb shell input tap $(tap_bounds "$B")
 sleep 2
 XML=$(uidump)
 printf '%s' "$XML" > work/upgrade-evidence/staff-setup-28-after-save.xml
-printf '%s' "$XML" | grep -q "a key is securely saved" || { echo "dummy key did not save on 17.0.28" >&2; exit 1; }
+printf '%s' "$XML" | grep -qi "a key is securely saved" || { echo "dummy key did not save on 17.0.28" >&2; exit 1; }
 adb shell input keyevent 4  # back out of staff setup
 sleep 1
 
@@ -83,9 +97,8 @@ adb exec-out screencap -p > work/upgrade-evidence/main-after-upgrade.png
 
 # 3. Credential state must survive the upgrade.
 unlock_and_open_staff_setup
-XML=$(uidump)
-printf '%s' "$XML" > work/upgrade-evidence/staff-setup-29-after-upgrade.xml
-printf '%s' "$XML" | grep -q "a key is securely saved" || { echo "credential state LOST in 28->29 upgrade" >&2; exit 1; }
+find_node "a key is securely saved" >/dev/null || { echo "credential state LOST in 28->29 upgrade" >&2; exit 1; }
+uidump > work/upgrade-evidence/staff-setup-29-after-upgrade.xml
 adb shell input keyevent 4
 sleep 1
 
