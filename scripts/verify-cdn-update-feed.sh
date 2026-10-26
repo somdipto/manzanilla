@@ -5,10 +5,9 @@
 # APK target intentionally does not exist; reaching the download phase (not a
 # completed offer) is the proof. Never starts voice or touches keys.
 set -euo pipefail
-cd "$(dirname "$0")/.."
 test "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" = 1
 package=dev.orange.hotel
-evidence=work/cdn-update-feed
+evidence="${GITHUB_WORKSPACE:-$PWD}/work/cdn-update-feed"
 mkdir -p "$evidence"
 if adb shell pm path "$package" | grep -q '^package:'; then
   echo 'Feed test requires a fresh disposable emulator' >&2
