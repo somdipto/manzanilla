@@ -48,9 +48,11 @@ jobs:
           export ORANGE_KEYSTORE="$RUNNER_TEMP/orange-pilot.jks"
           printf '%s' "$ORANGE_KEYSTORE_BASE64" | base64 --decode > "$ORANGE_KEYSTORE"
           trap 'rm -f "$ORANGE_KEYSTORE"' EXIT
-          bash gradlew :hotel:assembleRelease --no-daemon
+          bash gradlew :hotel:assembleRelease :hotel:assembleReleaseAndroidTest -PupgradeFixture --no-daemon
           mkdir -p "$RUNNER_TEMP/candidate"
           cp hotel/build/outputs/apk/release/hotel-release.apk "$RUNNER_TEMP/candidate/Manzanilla-Reception.apk"
+          mkdir -p "$RUNNER_TEMP/upgrade-fixture"
+          cp hotel/build/outputs/apk/androidTest/release/hotel-release-androidTest.apk "$RUNNER_TEMP/upgrade-fixture/"
       - name: Check installed-release continuity and APK identity
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,0 +1,32 @@
+17.0.29/code 59 — isolated Android 10/API29, stock WebView 74.0.3729.185
+Key-free APK; all provider requests intercepted; no live microphone/session.
+
+Native startup fixture (15 scenarios):
+INSTRUMENTATION_RESULT: stream=PASS case=translation-startup late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+Recovered WebView bridge fixture, including visible startup reference and capture-off check:
+INSTRUMENTATION_RESULT: stream=PASS case=reception-bridge late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+The first WebView screenshot was covered by an emulator System UI ANR.
+That original evidence is retained outside the repository. The screenshot in
+docs/screens is the clean rerun after recovering disposable emulator System UI.
+This is functional fixture evidence, not live translation or physical audio proof.
+
+Recovered microphone-permission:
+INSTRUMENTATION_RESULT: stream=PASS case=microphone-permission late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+Recovered microphone-permission-denied:
+INSTRUMENTATION_RESULT: stream=PASS case=microphone-permission-denied late=false status=200
+
+INSTRUMENTATION_CODE: -1
+
+Recovered microphone-permission-background:
+INSTRUMENTATION_RESULT: stream=PASS case=microphone-permission-background late=false status=200
+
+INSTRUMENTATION_CODE: -1

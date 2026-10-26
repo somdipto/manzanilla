@@ -75,6 +75,8 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         var previousSpeaker = false
         @Volatile var recording = false
         @Volatile var muted = false
+        @Volatile var startupStage = FishStartupFailure.Stage.AGENT_LOOKUP
+        var cachedAgentUsed = false
     }
     @Volatile private var current: Run? = null
 
@@ -161,17 +163,16 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         run.creation.launch {
             try {
                 val session = if (connection != null) managedSession(run, connection.base, connection.token, guest, staff) else {
-                    val agent = ensureAgent(run, apiKey, BuildConfig.FISH_VOICE_ID.ifBlank { FishPlan.DEFAULT_VOICE })
-                    createSession(run, apiKey, agent, guest, staff)
+                    directSession(run, apiKey, BuildConfig.FISH_VOICE_ID.ifBlank { FishPlan.DEFAULT_VOICE }, guest, staff)
                 }
                 run.timing.marker("provider_ticket_received")
                 run.scope.launch {
                     try { connect(run, session) }
                     catch (_: CancellationException) { }
-                    catch (_: Throwable) { terminate(run, "error", "Translation transport could not connect. Ask staff to check the connection.") }
+                    catch (error: Throwable) { startupFailed(run, FishStartupFailure.Stage.TRANSPORT, error, managed) }
                 }
             } catch (_: CancellationException) { }
-            catch (_: Throwable) { terminate(run, "error", "Translation could not connect. Check the internet connection or ask staff to check service access.") }
+            catch (error: Throwable) { startupFailed(run, run.startupStage, error, managed) }
         }
     }
 
@@ -382,6 +383,14 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
     private fun terminate(run: Run, phase: String, text: String) =
         detach(run, JSONObject().put("type", "reception_event").put("phase", phase).put("text", text))
 
+    private fun startupFailed(run: Run, stage: FishStartupFailure.Stage, error: Throwable, managed: Boolean) {
+        if (!run.owner.active()) return
+        val notice = FishStartupFailure.describe(stage, error, managed)
+        // Never pass the exception, request URL, response body or credential to logcat.
+        Log.w("TranslationStartup", notice.reference)
+        terminate(run, "error", notice.text)
+    }
+
     private fun detach(run: Run, terminal: JSONObject?, onStopped: () -> Unit = {}) {
         if (!run.owner.close(onStopped)) return
         run.timing.interrupted()
@@ -489,6 +498,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
     }
 
     private fun managedSession(run: Run, base: String, token: String, guest: String, staff: String): Session {
+        run.startupStage = FishStartupFailure.Stage.MANAGED_SESSION
         val body = JSONObject().put("guest_language", guest).put("staff_language", staff).put("mode", "translation")
             .put("request_id", run.reservation)
             .put("caption_protocol", FishPlan.CAPTION_PROTOCOL)
@@ -496,7 +506,28 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
         return parseSession(run, execute(run, request, createsSession = true), "$base/api/device/fish-session", token)
     }
-    private fun ensureAgent(run: Run, apiKey: String, voiceId: String): String {
+    private fun directSession(run: Run, apiKey: String, voiceId: String, guest: String, staff: String): Session {
+        val agent = ensureAgent(run, apiKey, voiceId)
+        try {
+            return createSession(run, apiKey, agent, guest, staff)
+        } catch (failure: FishStartupFailure) {
+            // Only received, definitive refusals can repair a stale cached agent. A lost
+            // response, timeout or 5xx must keep uncertain ownership and never retry creation.
+            if (!run.cachedAgentUsed || failure.stage != FishStartupFailure.Stage.DIRECT_SESSION ||
+                failure.httpStatus !in setOf(404, 409)) throw failure
+            if (!run.owner.use {
+                if (meta.getString("agent", "") == agent) {
+                    check(meta.edit().remove("agent").remove("scope").commit())
+                }
+            }) throw CancellationException("Session closed")
+            run.timing.marker("cached_agent_repair_requested")
+            val repaired = ensureAgent(run, apiKey, voiceId, agent)
+            return createSession(run, apiKey, repaired, guest, staff)
+        }
+    }
+
+    private fun ensureAgent(run: Run, apiKey: String, voiceId: String, missingAgent: String = ""): String {
+        run.startupStage = FishStartupFailure.Stage.AGENT_LOOKUP
         val staff = run.owner.staff
         val definition = ctx.assets.open("fish-caption-tool.json").bufferedReader().use { JSONObject(it.readText()) }
         check(definition.getString("name") == FishPlan.CAPTION_TOOL)
@@ -505,7 +536,8 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             .joinToString("") { "%02x".format(it.toInt() and 255) }
         val agentName = "${FishPlan.AGENT_NAME} ${FishPlan.CONFIG_REV} $staff ${scope.take(12)}"
         val known = if (meta.getString("scope", "") == scope) meta.getString("agent", "").orEmpty() else ""
-        val id = known.ifBlank { findAgent(run, apiKey, agentName) ?: kotlin.run {
+        run.cachedAgentUsed = known.isNotBlank()
+        val id = known.ifBlank { findAgent(run, apiKey, agentName, missingAgent) ?: kotlin.run {
             val toolId = ensureCaptionTool(run, apiKey, definition)
             createAgent(run, apiKey, voiceId, staff, agentName, toolId)
         } }
@@ -526,7 +558,8 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             if (summary.optString("name") != FishPlan.CAPTION_TOOL) continue
             val id = summary.getString("tool_id")
             check(id.matches(Regex("[A-Za-z0-9_-]{1,200}")))
-            check(FishPlan.captionToolMatches(definition, call(run, apiKey, "GET", "/v1/agent/tools/$id", null)))
+            if (!FishPlan.captionToolMatches(definition, call(run, apiKey, "GET", "/v1/agent/tools/$id", null)))
+                throw FishStartupFailure.configuration(FishStartupFailure.Stage.CAPTION_READ)
             return id
         }
         check(!listing.optBoolean("has_more")) { "Caption tool search is incomplete" }
@@ -534,12 +567,13 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             check(it.matches(Regex("[A-Za-z0-9_-]{1,200}")))
         }
     }
-    private fun findAgent(run: Run, apiKey: String, name: String): String? {
+    private fun findAgent(run: Run, apiKey: String, name: String, missingAgent: String): String? {
         val query = URLEncoder.encode(name, "UTF-8")
-        val agents = call(run, apiKey, "GET", "/v1/agent/agents?search=$query&page_size=20", null).optJSONArray("agents") ?: JSONArray()
+        val agents = call(run, apiKey, "GET", "/v1/agent/agents?search=$query&page_size=20", null).getJSONArray("agents")
         for (i in 0 until agents.length()) {
             val agent = agents.getJSONObject(i)
-            if (agent.optString("name") == name && agent.optString("status") != "archived") return agent.getString("agent_id")
+            if (agent.optString("name") == name && agent.optString("status") != "archived" &&
+                agent.optString("agent_id") != missingAgent) return agent.getString("agent_id")
         }
         return null
     }
@@ -552,6 +586,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             .put("end_user_id", run.reservation)),
             "https://api.fish.audio/v1/agent/sessions", apiKey)
     private fun parseSession(run: Run, json: JSONObject, sessionBase: String, credential: String): Session {
+        run.startupStage = FishStartupFailure.Stage.TICKET
         // Own termination even when the returned transport ticket is malformed.
         val id = json.getString("session_id")
         check(id.matches(Regex("[A-Za-z0-9_-]+"))) { "Invalid session identity" }
@@ -565,13 +600,22 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             check(meta.edit().putString("pending_end_url", run.endRequest!!.url.toString())
                 .putString("pending_end_credential_hash", credentialHash(credential)).commit()) { "Could not retain cleanup ownership" }
         }
-        check(json.optString("transport") == "livekit") { "Unsupported transport" }
+        if (json.optString("transport") != "livekit") throw FishStartupFailure.response(FishStartupFailure.Stage.TICKET)
         val url = json.getString("livekit_url")
         val token = json.getString("token")
-        check(url.startsWith("wss://") && token.isNotBlank()) { "Invalid transport ticket" }
+        if (!url.startsWith("wss://") || token.isBlank()) throw FishStartupFailure.response(FishStartupFailure.Stage.TICKET)
         return Session(url, token)
     }
     private fun call(run: Run, apiKey: String, method: String, path: String, body: JSONObject?): JSONObject {
+        run.startupStage = when {
+            path == "/v1/agent/sessions" -> FishStartupFailure.Stage.DIRECT_SESSION
+            path.startsWith("/v1/agent/tools?") -> FishStartupFailure.Stage.CAPTION_LOOKUP
+            path.startsWith("/v1/agent/tools/") -> FishStartupFailure.Stage.CAPTION_READ
+            path == "/v1/agent/tools" -> FishStartupFailure.Stage.CAPTION_CREATE
+            path.endsWith("/publish") -> FishStartupFailure.Stage.AGENT_PUBLISH
+            path == "/v1/agent/agents" -> FishStartupFailure.Stage.AGENT_CREATE
+            else -> FishStartupFailure.Stage.AGENT_LOOKUP
+        }
         val builder = Request.Builder().url("https://api.fish.audio$path").header("Authorization", "Bearer $apiKey")
         if (method == "GET") builder.get() else builder.method(method, (body?.toString() ?: "{}").toRequestBody("application/json".toMediaType()))
         return execute(run, builder.build(), createsSession = method == "POST" && path == "/v1/agent/sessions")
@@ -595,7 +639,11 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
                         creationNotCreated = response.header("X-Manzanilla-Session-Creation") == "not-created")) {
                     run.sessionRequested = false
                 }
-                check(response.isSuccessful) { "Service request rejected" }
+                if (!response.isSuccessful) {
+                    val managedFailure = if (request.url.host != "api.fish.audio")
+                        FishStartupFailure.managedHeader(response.header("X-Manzanilla-Voice-Failure")) else null
+                    throw managedFailure ?: FishStartupFailure.http(run.startupStage, response.code)
+                }
                 val text = response.body?.string().orEmpty()
                 return if (text.isBlank()) JSONObject() else JSONObject(text)
             }

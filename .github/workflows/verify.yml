@@ -1,10 +1,25 @@
 name: Verify Orange
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:
+permissions:
+  contents: read
 jobs:
+  release-policy:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Require an explicit increasing APK version for app changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python scripts/release_policy.py --base "$BASE_SHA" --head HEAD
   cloud:
     runs-on: ubuntu-latest
     steps:
@@ -63,12 +78,25 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: bash scripts/run-android-emulator.sh
+      - name: Exercise Android 12 update-session parameters
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          target: default
+          arch: x86_64
+          avd-name: updater-api31
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash scripts/run-updater-emulator.sh
       - name: Retain Android runtime evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-emulator-evidence
-          path: work/android-emulator-qa/
+          path: |
+            work/android-emulator-qa/
+            work/android-update-qa/
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
