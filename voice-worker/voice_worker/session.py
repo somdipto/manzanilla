@@ -36,6 +36,11 @@ CONTROL_TOKEN = re.compile(r'<\|[^|]*\|>')
 MIN_CLAUSE = 12
 PLAYBACK_QUEUE_MS = 200
 TABLET_WAIT_SECONDS = 15
+FIRST_AUDIO_PAUSE_SECONDS = 2.0
+
+
+async def _wait_for_gate_pause(delay: float):
+    await asyncio.sleep(delay)
 
 
 def pop_clause(buffer: str) -> str | None:
@@ -205,6 +210,7 @@ class InterpreterSession:
                     if committed.get('user_turn') is True:
                         committed['text'] = CONTROL_TOKEN.sub('', committed.get('text', '')).strip()
                         if committed['text']:
+                            committed['_received_monotonic'] = time.monotonic()
                             await self.turns.put(committed)
                         else:
                             self.bench.mark('turn_skipped_markup_only')
@@ -273,7 +279,8 @@ class InterpreterSession:
                 if self.turn:
                     self.turn.cancel()
                     await asyncio.gather(self.turn, return_exceptions=True)
-                self.turn = asyncio.create_task(self._translate(turn, committed.get('text', ''), language))
+                self.turn = asyncio.create_task(self._translate(turn, committed.get('text', ''), language,
+                    committed_at=committed.get('_received_monotonic')))
             try:
                 await self.turn
             except asyncio.CancelledError:
@@ -283,7 +290,7 @@ class InterpreterSession:
             finally:
                 self.turn = None
 
-    async def _translate(self, turn: int, text: str, language: str):
+    async def _translate(self, turn: int, text: str, language: str, *, committed_at: float | None = None):
         if not text.strip():
             return
         await self._set_state('thinking')
@@ -309,7 +316,7 @@ class InterpreterSession:
 
         producer = asyncio.create_task(generate())
         try:
-            await self._speak_stream(clauses, turn)
+            await self._speak_stream(clauses, turn, committed_at=committed_at)
             await producer
             translation = ''.join(full).strip()
             await self._caption(turn, language, text, translation)
@@ -326,10 +333,16 @@ class InterpreterSession:
         await queue.put(None)
         await self._speak_stream(queue, 0, label=label)
 
-    async def _speak_stream(self, clauses: asyncio.Queue, turn: int, label: str = 'turn'):
+    async def _speak_stream(self, clauses: asyncio.Queue, turn: int, label: str = 'turn',
+                            *, committed_at: float | None = None):
         self.speaking = True
         tts = FishTTS(self._fish_key, self._voice)
         feeder = None
+        pause_task = None
+        gate_lock = asyncio.Lock()
+        started_at = committed_at if committed_at is not None else time.monotonic()
+        paused = False
+        first = True
         resampler = None
         raw = bytearray()
         pcm = bytearray()
@@ -351,16 +364,49 @@ class InterpreterSession:
             if pending:
                 await tts.flush()
             await tts.finish()
+        async def pause_if_silent(delay: float):
+            nonlocal paused
+            await _wait_for_gate_pause(delay)
+            async with gate_lock:
+                if first:
+                    await self.asr.agent_speaking(False)
+                    paused = True
+                    await self._set_state('thinking')
+                    self.bench.mark('first_audio_wait_paused', turn=turn, label=label)
+        async def start_audio():
+            nonlocal first, paused
+            async with gate_lock:
+                if first:
+                    if paused:
+                        await self.asr.agent_speaking(True)
+                        paused = False
+                        await self._set_state('speaking')
+                    first = False
+                    self.bench.mark('first_audio_published', turn=turn, label=label)
         try:
-            await self._set_state('speaking')
-            await self.asr.agent_speaking(True)
+            remaining = FIRST_AUDIO_PAUSE_SECONDS - (time.monotonic() - started_at)
+            if remaining <= 0:
+                # This turn was already delayed by admission/previous cleanup.
+                paused = True
+                await self.asr.agent_speaking(False)
+                await self._set_state('thinking')
+            else:
+                await self._set_state('speaking')
+                await self.asr.agent_speaking(True)
+                # Measured from ASR commitment, including time spent waiting
+                # for model output or opening the TTS websocket.
+                remaining = max(0, FIRST_AUDIO_PAUSE_SECONDS - (time.monotonic() - started_at))
+                pause_task = asyncio.create_task(pause_if_silent(remaining))
+                def pause_done(task):
+                    if not task.cancelled() and task.exception() is not None:
+                        tts.audio.put_nowait(None)
+                pause_task.add_done_callback(pause_done)
             await tts.connect()
             feeder = asyncio.create_task(feed())
             def feed_done(task):
                 if not task.cancelled() and task.exception() is not None:
                     tts.audio.put_nowait(None)
             feeder.add_done_callback(feed_done)
-            first = True
             while True:
                 chunk = await asyncio.wait_for(tts.audio.get(), timeout=30)
                 if chunk is None:
@@ -377,16 +423,16 @@ class InterpreterSession:
                     frame = rtc.AudioFrame(data=piece, sample_rate=48000, num_channels=1,
                                            samples_per_channel=960)
                     if first:
-                        first = False
-                        self.bench.mark('first_audio_published', turn=turn, label=label)
+                        await start_audio()
                     await self.source.capture_frame(frame)
+            if pause_task and pause_task.done():
+                await pause_task
             if raw:
                 raise ValueError('Synthesis returned an incomplete PCM sample')
             if pcm:
                 piece = bytes(pcm) + b'\x00' * (960 * 2 - len(pcm))
                 if first:
-                    first = False
-                    self.bench.mark('first_audio_published', turn=turn, label=label)
+                    await start_audio()
                 await self.source.capture_frame(rtc.AudioFrame(data=piece, sample_rate=48000,
                     num_channels=1, samples_per_channel=960))
             if tts.error:
@@ -398,6 +444,9 @@ class InterpreterSession:
             # audio has played out, not merely until synthesis finishes.
             await self.source.wait_for_playout()
         finally:
+            if pause_task:
+                pause_task.cancel()
+                await asyncio.gather(pause_task, return_exceptions=True)
             if feeder:
                 feeder.cancel()
                 await asyncio.gather(feeder, return_exceptions=True)

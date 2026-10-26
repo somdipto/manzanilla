@@ -242,7 +242,7 @@ def test_model_failure_wakes_synthesis_and_propagates():
         obj = session.InterpreterSession.__new__(session.InterpreterSession)
         obj._llm = LLM(); obj.guest = 'es'; obj.staff = 'en'; obj.bench = Marks()
         async def state(value): pass
-        async def speak(clauses, turn): assert await clauses.get() is None
+        async def speak(clauses, turn, **kwargs): assert await clauses.get() is None
         obj._set_state = state; obj._speak_stream = speak
         with pytest.raises(RuntimeError, match='fixture model failed'):
             await asyncio.wait_for(obj._translate(1, 'hola', 'es'), .5)
@@ -264,7 +264,7 @@ def test_one_model_delta_releases_multiple_complete_clauses_immediately():
         obj._llm = LLM(); obj.guest = 'es'; obj.staff = 'en'; obj.bench = Marks()
         seen = []
         async def state(value): pass
-        async def speak(clauses, turn):
+        async def speak(clauses, turn, **kwargs):
             seen.append(await asyncio.wait_for(clauses.get(), .5))
             seen.append(await asyncio.wait_for(clauses.get(), .5))
             raise asyncio.CancelledError()
@@ -446,7 +446,7 @@ def test_old_interrupt_cannot_overwrite_next_turn_state():
                 await finish_cleanup.wait()
                 states.append(('old', 'cleaned'))
         async def state(value): states.append(('state', value))
-        async def translate(*args):
+        async def translate(*args, **kwargs):
             states.append(('gate', True)); states.append(('state', 'speaking')); new_started.set()
             await asyncio.Event().wait()
         obj._set_state = state; obj._translate = translate
@@ -599,4 +599,189 @@ def test_ended_mic_track_fails_instead_of_silently_stalling(monkeypatch):
         obj.ended = asyncio.Event()
         with pytest.raises(RuntimeError, match='Microphone audio stream ended'):
             await asyncio.wait_for(obj._pump_mic(), .5)
+    asyncio.run(scenario())
+
+
+def test_silent_tts_pause_restores_gate_before_first_frame(monkeypatch):
+    import asyncio
+    from voice_worker import session
+    async def scenario():
+        timer_started = asyncio.Event(); fire_timer = asyncio.Event(); paused = asyncio.Event()
+        open_tts = asyncio.Event(); frame = asyncio.Event(); gates = []; states = []
+        async def pause_wait(delay):
+            assert 0 <= delay <= session.FIRST_AUDIO_PAUSE_SECONDS
+            timer_started.set()
+            await fire_timer.wait()
+        class TTS:
+            def __init__(self, *args): self.audio = asyncio.Queue(); self.error = False
+            async def connect(self): await open_tts.wait()
+            async def send_text(self, text): await self.audio.put((1234).to_bytes(2, 'little', signed=True) * 960)
+            async def flush(self): pass
+            async def finish(self): await self.audio.put(None)
+            async def close(self): pass
+        class ASR:
+            async def agent_speaking(self, value):
+                gates.append(value)
+                if gates == [True, False]: paused.set()
+        class Source:
+            async def capture_frame(self, value):
+                assert gates[-1] is True
+                frame.set()
+            async def wait_for_playout(self): pass
+        class Marks:
+            def mark(self, *args, **kwargs): pass
+        monkeypatch.setattr(session, 'FishTTS', TTS)
+        monkeypatch.setattr(session, '_wait_for_gate_pause', pause_wait)
+        obj = session.InterpreterSession.__new__(session.InterpreterSession)
+        obj.speaking = False; obj._fish_key = 'fixture'; obj._voice = 'fixture'; obj.asr = ASR()
+        obj.source = Source(); obj.bench = Marks(); obj.ended = asyncio.Event()
+        async def state(value): states.append(value)
+        obj._set_state = state
+        clauses = asyncio.Queue(); await clauses.put('Fixture sentence.'); await clauses.put(None)
+        task = asyncio.create_task(obj._speak_stream(clauses, 1))
+        await asyncio.wait_for(timer_started.wait(), .5)
+        assert gates == [True]
+        fire_timer.set()
+        await asyncio.wait_for(paused.wait(), .5)
+        assert gates == [True, False] and 'thinking' in states
+        open_tts.set()
+        await asyncio.wait_for(frame.wait(), .5)
+        await asyncio.wait_for(task, .5)
+        assert gates == [True, False, True, False]
+    asyncio.run(scenario())
+
+
+def test_old_committed_turn_starts_paused_until_audio(monkeypatch):
+    import asyncio, time
+    from voice_worker import session
+    async def scenario():
+        gates = []
+        class TTS:
+            def __init__(self, *args): self.audio = asyncio.Queue(); self.error = False
+            async def connect(self): pass
+            async def send_text(self, text): await self.audio.put((1234).to_bytes(2, 'little', signed=True) * 960)
+            async def flush(self): pass
+            async def finish(self): await self.audio.put(None)
+            async def close(self): pass
+        class ASR:
+            async def agent_speaking(self, value): gates.append(value)
+        class Source:
+            async def capture_frame(self, value): assert gates == [False, True]
+            async def wait_for_playout(self): pass
+        class Marks:
+            def mark(self, *args, **kwargs): pass
+        monkeypatch.setattr(session, 'FishTTS', TTS)
+        obj = session.InterpreterSession.__new__(session.InterpreterSession)
+        obj.speaking = False; obj._fish_key = 'fixture'; obj._voice = 'fixture'; obj.asr = ASR()
+        obj.source = Source(); obj.bench = Marks(); obj.ended = asyncio.Event()
+        async def state(value): pass
+        obj._set_state = state
+        clauses = asyncio.Queue(); await clauses.put('Fixture sentence.'); await clauses.put(None)
+        await asyncio.wait_for(obj._speak_stream(clauses, 1,
+            committed_at=time.monotonic() - session.FIRST_AUDIO_PAUSE_SECONDS - 1), .5)
+        assert gates == [False, True, False]
+    asyncio.run(scenario())
+
+
+def test_interrupted_timer_cannot_pause_replacement_turn(monkeypatch):
+    import asyncio
+    from voice_worker import session
+    async def scenario():
+        old_timer_started = asyncio.Event(); old_timer_cancelled = asyncio.Event()
+        old_timer_fire = asyncio.Event(); next_frame = asyncio.Event(); release_frame = asyncio.Event()
+        gates = []; timer_calls = 0; tts_count = 0
+        async def pause_wait(delay):
+            nonlocal timer_calls
+            timer_calls += 1
+            if timer_calls == 1:
+                old_timer_started.set()
+                try: await old_timer_fire.wait()
+                finally: old_timer_cancelled.set()
+            else:
+                await asyncio.Event().wait()
+        class TTS:
+            def __init__(self, *args):
+                nonlocal tts_count
+                tts_count += 1; self.number = tts_count; self.audio = asyncio.Queue(); self.error = False
+            async def connect(self):
+                if self.number == 1: await asyncio.Event().wait()
+            async def send_text(self, text): await self.audio.put((1234).to_bytes(2, 'little', signed=True) * 960)
+            async def flush(self): pass
+            async def finish(self): await self.audio.put(None)
+            async def close(self): pass
+        class ASR:
+            async def agent_speaking(self, value): gates.append(value)
+        class Source:
+            def clear_queue(self): pass
+            async def capture_frame(self, value): next_frame.set(); await release_frame.wait()
+            async def wait_for_playout(self): pass
+        class Marks:
+            def mark(self, *args, **kwargs): pass
+        monkeypatch.setattr(session, 'FishTTS', TTS)
+        monkeypatch.setattr(session, '_wait_for_gate_pause', pause_wait)
+        obj = session.InterpreterSession.__new__(session.InterpreterSession)
+        obj.speaking = False; obj._fish_key = 'fixture'; obj._voice = 'fixture'; obj.asr = ASR()
+        obj.source = Source(); obj.bench = Marks(); obj.ended = asyncio.Event(); obj._turn_lock = asyncio.Lock()
+        async def state(value): pass
+        obj._set_state = state
+        old_clauses = asyncio.Queue(); await old_clauses.put('Old sentence.'); await old_clauses.put(None)
+        obj.turn = asyncio.create_task(obj._speak_stream(old_clauses, 1))
+        await asyncio.wait_for(old_timer_started.wait(), .5)
+        await asyncio.wait_for(obj._interrupt(), .5)
+        assert old_timer_cancelled.is_set()
+        next_clauses = asyncio.Queue(); await next_clauses.put('New sentence.'); await next_clauses.put(None)
+        obj.turn = asyncio.create_task(obj._speak_stream(next_clauses, 2))
+        await asyncio.wait_for(next_frame.wait(), .5)
+        assert gates[-1] is True
+        old_timer_fire.set()
+        await asyncio.sleep(0)
+        assert gates[-1] is True  # A canceled old timer cannot mutate the new turn.
+        release_frame.set()
+        await asyncio.wait_for(obj.turn, .5)
+        assert gates[-1] is False
+    asyncio.run(scenario())
+
+
+def test_pause_timer_cannot_disable_gate_after_first_frame(monkeypatch):
+    import asyncio
+    from voice_worker import session
+    async def scenario():
+        timer_started = asyncio.Event(); fire_timer = asyncio.Event(); frame_started = asyncio.Event()
+        release_frame = asyncio.Event(); timer_finished = asyncio.Event(); gates = []
+        async def pause_wait(delay):
+            timer_started.set()
+            await fire_timer.wait()
+            timer_finished.set()
+        class TTS:
+            def __init__(self, *args): self.audio = asyncio.Queue(); self.error = False
+            async def connect(self): pass
+            async def send_text(self, text): await self.audio.put((1234).to_bytes(2, 'little', signed=True) * 960)
+            async def flush(self): pass
+            async def finish(self): await self.audio.put(None)
+            async def close(self): pass
+        class ASR:
+            async def agent_speaking(self, value): gates.append(value)
+        class Source:
+            async def capture_frame(self, value): frame_started.set(); await release_frame.wait()
+            async def wait_for_playout(self): pass
+        class Marks:
+            def mark(self, *args, **kwargs): pass
+        monkeypatch.setattr(session, 'FishTTS', TTS)
+        monkeypatch.setattr(session, '_wait_for_gate_pause', pause_wait)
+        obj = session.InterpreterSession.__new__(session.InterpreterSession)
+        obj.speaking = False; obj._fish_key = 'fixture'; obj._voice = 'fixture'; obj.asr = ASR()
+        obj.source = Source(); obj.bench = Marks(); obj.ended = asyncio.Event()
+        async def state(value): pass
+        obj._set_state = state
+        clauses = asyncio.Queue(); await clauses.put('Fixture sentence.'); await clauses.put(None)
+        task = asyncio.create_task(obj._speak_stream(clauses, 1))
+        await asyncio.wait_for(timer_started.wait(), .5)
+        await asyncio.wait_for(frame_started.wait(), .5)
+        fire_timer.set()
+        await asyncio.wait_for(timer_finished.wait(), .5)
+        await asyncio.sleep(0)
+        assert gates == [True]
+        release_frame.set()
+        await asyncio.wait_for(task, .5)
+        assert gates == [True, False]
     asyncio.run(scenario())

@@ -10,7 +10,7 @@ Base merged main `eb6e7fa`, version 17.0.31/code 61. This is a source candidate,
 not a published release or a deployed backend. See the [local synthetic LiveKit
 A/B evidence](livekit-synthetic-2026-10-27.txt) for exact artifacts and scope.
 
-- Full Python suite: **401 passed**, with two dependency deprecation warnings;
+- Full Python suite: **405 passed**, with two dependency deprecation warnings;
   local worker dependencies were installed separately in a temporary directory.
 - Node: **14 passed**; generated reception assets match source. All **five**
   isolated Chromium154 scenarios passed, including stopped-session retry and
@@ -18,6 +18,15 @@ A/B evidence](livekit-synthetic-2026-10-27.txt) for exact artifacts and scope.
 - Android JVM: **138 passed**, zero failures/errors/skips. Debug lint: **zero
   errors**, 14 warnings. Debug and instrumentation APK assembly passed with
   the pinned-source AudioSwitch substitution described below.
+- The local Android10 in-place upgrade from 17.0.30/code60 to 17.0.31/code61
+  retained the signing certificate, UID, first-install time, saved preferences,
+  a private file and a synthetic encrypted Keystore marker. There was no clear
+  or uninstall between seeding and verification. This used a local debug signer;
+  signed publication repeats the test with the actual release key.
+- The subsequent `am start -W` timed out on the overloaded software emulator,
+  which already had a System UI ANR before installation; logcat later showed the
+  activity displayed. This does not establish clean local startup. The PR's
+  accelerated Android emulator job must independently check the shipped APK.
 - LiveKit 1.13.10 with synthetic audio and fake speech/model providers: the
   prior main worker did not receive the microphone during its greeting; this
   candidate received it, handled a simulated user-turn interruption, emitted

@@ -17,7 +17,7 @@ Baseline: origin/main commit eb6e7fabe4869e2b316384cf3671994ee1db6e19.
 Baseline worker git blobs: session ababda241ae07a40d66c93e174dd9c97d11c34a3,
 asr 76f87254c878cdbea1cbf9063c9df75362937b9a,
 tts 1b3b61b38ace2dd0a7c64bd3fe66422f4048e287.
-Candidate worker git blobs: session 89d76435fb201d4f3f7cd4cf1f74a44e62ce57ba,
+Candidate worker git blobs: session eb96985fa69f042c09fe1724aa607f880eaed54a,
 asr edafb83bf9905477aabee6bdd71b1480f1a73e76,
 tts 8da21d55601e217d37de5878c55e9f1fe5e933bd.
 Probe git blob: d5efc331cf1df10471c14962d8ce090e3e2d1b8f.
@@ -30,10 +30,11 @@ user_turn_taken. This tests both opening-mic ordering and the event correction;
 it does not establish how the real ASR recognizes a guest amid speaker echo.
 
 Baseline: FAIL — worker did not receive microphone audio during greeting.
-Candidate: PASS — 42 decoded microphone frames reached the worker; the device
+Candidate after the silent-synthesis pause fix: PASS — 41 decoded microphone
+frames reached the worker; the device
 received agent audio; interruption cleared the local playback queue; the device
 received the matching synthetic original/translation caption. One measured
-worker event-to-local-queue-clear interval was 0.07 ms. This is a local event
+worker event-to-local-queue-clear interval was 1.02 ms. This is a local event
 ordering observation, NOT guest-audible interruption latency or a percentile.
 
 Example reproduction (install the worker requirements in an isolated Python
