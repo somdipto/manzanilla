@@ -1,8 +1,15 @@
 name: Verify live update offer
 on:
-  workflow_dispatch: {}
-  push:
-    branches: [test/fish-diagnostics]
+  workflow_dispatch:
+    inputs:
+      prev_apk_url:
+        description: 'APK URL of the previous release to install'
+        required: true
+        default: 'https://github.com/somdipto/manzanilla/releases/download/v17.0.29/Manzanilla-Reception.apk'
+      expect_version:
+        description: 'Version string the update offer must show'
+        required: true
+        default: '17.0.30'
 permissions:
   contents: read
 jobs:
@@ -14,12 +21,11 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
-      - name: Download the published 17.0.28 APK
+      - name: Download the published previous APK
         shell: bash
         run: |
           set -euo pipefail
-          curl -sL -o "$RUNNER_TEMP/prev.apk" \
-            https://github.com/somdipto/manzanilla/releases/download/v17.0.28/Manzanilla-Reception.apk
+          curl -sL -o "$RUNNER_TEMP/prev.apk" "${{ inputs.prev_apk_url }}"
           test -s "$RUNNER_TEMP/prev.apk"
       - name: Enable emulator hardware acceleration
         run: |
@@ -36,6 +42,8 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: bash scripts/verify-live-update-offer.sh
+        env:
+          EXPECT_VERSION: ${{ inputs.expect_version }}
       - name: Retain update-offer evidence
         if: always()
         uses: actions/upload-artifact@v4

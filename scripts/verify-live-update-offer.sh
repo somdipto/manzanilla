@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Disposable emulator only. Observes the published update feed from an installed
-# 17.0.28. Capture tool, not the verdict: the offer is confirmed by inspecting
-# the retained screenshots and UI dumps. Never starts voice or touches keys.
+# previous release. Capture tool, not the verdict: the offer is confirmed by
+# inspecting the retained screenshots and UI dumps. Never starts voice or touches keys.
 set -euo pipefail
+expect_version="${EXPECT_VERSION:-17.0.30}"
 cd "$(dirname "$0")/.."
 test "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" = 1
 package=dev.orange.hotel
@@ -25,7 +26,7 @@ for round in $(seq 1 18); do
   if [ $((round % 3)) -eq 0 ]; then
     adb exec-out screencap -p > "$evidence/screen-$round.png" || true
   fi
-  if [ -f "$evidence/ui-$round.xml" ] && grep -q '17.0.29' "$evidence/ui-$round.xml"; then
+  if [ -f "$evidence/ui-$round.xml" ] && grep -q "$expect_version" "$evidence/ui-$round.xml"; then
     found=1
     break
   fi
@@ -37,7 +38,7 @@ done
 adb exec-out screencap -p > "$evidence/offer.png" || true
 adb logcat -d -v threadtime > "$evidence/logcat.txt" || true
 if [ "$found" = 1 ]; then
-  echo 'OBSERVED: UI hierarchy contains 17.0.29 (confirm via screenshots)' | tee "$evidence/result.txt"
+  echo "OBSERVED: UI hierarchy contains $expect_version (confirm via screenshots)" | tee "$evidence/result.txt"
 else
   echo 'NOT-OBSERVED in UI hierarchy; screenshots may still show the offer - inspect pixels' | tee "$evidence/result.txt"
 fi
