@@ -31,7 +31,7 @@ trap 'adb shell locksettings clear --old "$PIN" >/dev/null 2>&1 || true; adb she
 uidump() { adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb shell cat /sdcard/ui.xml; }
 tap_node() { # $1 = attribute match text; taps center of first matching node's bounds
   local xml="$1" bounds
-  bounds=$(printf '%s' "$xml" | grep -o 'bounds="[0-9,\[\]]*"' | head -1)
+  bounds=$(printf '%s' "$xml" | grep -o 'bounds="[^"]*"' | head -1 | sed 's/bounds="//; s/"$//')
   test -n "$bounds"
   python3 -c "
 import sys,re
@@ -59,7 +59,7 @@ find_node() {
   local pattern="$1" attempt line
   for attempt in 1 2 3 4 5; do
     line=$(uidump | tr '<' '\n' | grep -i "$pattern" | head -1 || true)
-    if [ -n "$line" ]; then printf '%s' "$line" | grep -o 'bounds="[0-9,\[\]]*"' | head -1; return 0; fi
+    if [ -n "$line" ]; then printf '%s' "$line" | grep -o 'bounds="[^"]*"' | head -1 | sed 's/bounds="//; s/"$//'; return 0; fi
     adb shell input swipe 500 700 500 250
     sleep 1
   done
