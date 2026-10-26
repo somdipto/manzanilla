@@ -175,7 +175,7 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
             return UpdateFeed.parse(getJson(BuildConfig.LEGACY_FEED_URL, "update feed")) { getJson(it, "release manifest") }
         } catch (fallbackFailure: Exception) {
             Log.w("UPD", "Legacy release API failed as well", fallbackFailure)
-            throw primaryFailure
+            throw primaryFailure ?: fallbackFailure
         }
     }
 
