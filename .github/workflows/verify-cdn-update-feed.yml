@@ -57,7 +57,8 @@ jobs:
             # download phase via the CDN manifest path (not a completed offer) is
             # the proof. The fixture's APK target intentionally does not exist.
             # Inline because this workflow checks out main, which lacks the script.
-            set -euo pipefail
+            # The runner executes this via /usr/bin/sh (dash): no pipefail, no bashisms.
+            set -eu
             test "$(adb shell getprop ro.kernel.qemu | tr -d '\r')" = 1
             package=dev.orange.hotel
             evidence=work/cdn-update-feed
@@ -67,6 +68,7 @@ jobs:
               exit 1
             fi
             adb install "$RUNNER_TEMP/fixture.apk" | tee "$evidence/install.txt"
+            grep -q 'Success' "$evidence/install.txt"
             adb shell dumpsys package "$package" | grep -E 'versionCode|versionName' | head -2 | tee "$evidence/installed-version.txt"
             adb shell settings put secure immersive_mode_confirmations confirmed
             adb logcat -c
