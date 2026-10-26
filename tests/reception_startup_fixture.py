@@ -68,7 +68,15 @@ def run_startup_fixture(browser, legacy_object_api=False):
         assert "Configure translation" in page.locator("#translation-readiness").inner_text()
         assert page.locator("#settings").is_visible(), "Configuration help must remain reachable"
         assert page.locator('[data-action="start"]').is_disabled()
+        page.locator('[data-action="settings"]').click()
+        assert page.evaluate("fixtureMessages.filter(event => event.action === 'settings').length") == 1
+        assert not page.evaluate("fixtureMessages.some(event => event.action === 'start')")
+        receive({"type": "reception_info", "audio_available": False, "local_audio_state": "off",
+                 "audio_gate": "The saved voice key could not be opened. Unlock this device, then open Staff setup to retry."})
+        assert "saved voice key could not be opened" in page.locator("#translation-readiness").inner_text()
+        assert page.locator('[data-action="settings"]').is_enabled()
         receive({"type": "reception_info", "audio_available": True, "local_audio_state": "off"})
+        assert page.locator('[data-action="settings"]').count() == 0
         page.locator('#language').select_option("es")
         assert page.locator('[data-action="start"]').is_enabled(), "Distinct languages with configured audio cannot start"
         page.locator('[data-action="start"]').click()

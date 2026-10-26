@@ -88,15 +88,15 @@ class HotelActivity : Activity() {
         val page = reception ?: return
         val ready = backendConfigured()
         if (owner.current == null) audioState = fish.localAudioState()
-        val audioReady = AudioPolicy.LIVE_AUDIO_ENABLED &&
-            (ready || fishStore.status() == SecretStore.Status.READY || BuildConfig.FISH_API_KEY.isNotBlank())
+        val audioGate = AudioPolicy.blockReason(ready, fishStore.status(), BuildConfig.FISH_API_KEY.isNotBlank())
+        val audioReady = audioGate.isEmpty()
         page.push(JSONObject().put("type", "appearance").put("value", deck.getString("reception_appearance", "dark")))
         page.push(JSONObject().put("type", "night_mode").put("enabled", night))
         page.push(JSONObject().put("type", "reception_info").put("hotel_name", "Hotel reception")
             .put("sample_hotel", false).put("configured", ready)
             .put("audio_available", audioReady)
             .put("local_audio_state", audioState)
-            .put("audio_gate", if (audioReady) "" else AudioPolicy.BLOCK_REASON)
+            .put("audio_gate", audioGate)
             .apply { java.util.Locale.getDefault().language.takeIf(DeskLanguages::has)?.let { put("staff_language", it) } })
         val guest = deck.getString("reception_guest_language", null)
         val staff = deck.getString("reception_staff_language", null)

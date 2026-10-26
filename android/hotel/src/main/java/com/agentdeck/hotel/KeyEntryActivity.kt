@@ -139,7 +139,8 @@ class KeyEntryActivity : Activity() {
         if (!authorized()) return
         val column = column()
         column.addView(label("Staff setup", 24f))
-        column.addView(label("For live translation, connect this device to your hotel service with its device key. If no hotel service is configured, save a direct voice credential instead. Existing installations that used a built-in credential need one of these configured. Saved keys stay encrypted on this device."))
+        column.addView(label("Live translation needs a Fish Audio API key on this device or a hotel connection. Check the saved-key status below. Keys stay encrypted on this device; a saved key still needs provider access to start a conversation."))
+        addProvider(column, "Fish Audio", "fish")
         column.addView(label("Hotel service", 20f))
         val connectionUrl = EditText(this).apply {
             hint = "HTTPS hotel service URL"
@@ -156,7 +157,6 @@ class KeyEntryActivity : Activity() {
         fields.add(connectionUrl)
         column.addView(connectionUrl)
         addProvider(column, "Hotel connection", "hotel_connection", connectionUrl)
-        addProvider(column, "Direct voice credential", "fish")
         column.addView(button("Voice diagnostics (test build)") {
             startActivity(Intent(this@KeyEntryActivity, DiagnosticsActivity::class.java))
         })
