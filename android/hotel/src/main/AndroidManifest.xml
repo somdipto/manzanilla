@@ -12,6 +12,7 @@
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.HOME"/><category android:name="android.intent.category.DEFAULT"/></intent-filter>
         </activity>
         <activity android:name=".KeyEntryActivity" android:exported="false" android:launchMode="singleTop" android:screenOrientation="landscape"/>
+        <activity android:name=".DiagnosticsActivity" android:exported="false" android:screenOrientation="landscape"/>
         <provider android:name=".UpdateApkProvider" android:authorities="dev.orange.hotel.update" android:exported="false" android:grantUriPermissions="true"/>
     </application>
 </manifest>

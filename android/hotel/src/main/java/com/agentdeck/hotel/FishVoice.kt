@@ -50,7 +50,10 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         // logcat I/O there or hold the timing monitor while the logger is stalled.
         private val diagnostics = AudioTimingLog(
             dispatch = { task -> cleanup.launch { task() } },
-            write = { point -> Log.i("AudioTiming", "source=interpreter-sdk session_id=${owner.id} generation=${owner.generation} $point") },
+            write = { point ->
+                Log.i("AudioTiming", "source=interpreter-sdk session_id=${owner.id} generation=${owner.generation} $point")
+                VoiceDiagnostics.record(owner.id, owner.generation, point)
+            },
             dropped = { count -> Log.w("AudioTiming", "session_id=${owner.id} generation=${owner.generation} endpoint=diagnostic_points_dropped count=$count") }
         )
         val timing = AudioTurnTiming(SystemClock::elapsedRealtime, diagnostics::offer)

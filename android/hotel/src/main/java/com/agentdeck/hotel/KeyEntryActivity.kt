@@ -157,6 +157,9 @@ class KeyEntryActivity : Activity() {
         column.addView(connectionUrl)
         addProvider(column, "Hotel connection", "hotel_connection", connectionUrl)
         addProvider(column, "Voice credential (release override)", "fish")
+        column.addView(button("Voice diagnostics (test build)") {
+            startActivity(Intent(this@KeyEntryActivity, DiagnosticsActivity::class.java))
+        })
         column.addView(button("Done") { finish() })
         setContentView(ScrollView(this).apply {
             isSaveEnabled = false

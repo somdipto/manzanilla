@@ -12,7 +12,7 @@ object FishPlan {
     // The agent and its sessions follow the device's own timezone, never a fixed hotel location.
     fun deviceTimezone(): String = java.util.TimeZone.getDefault().id
 
-    const val CONFIG_REV = "14"
+    const val CONFIG_REV = "15"
     const val CAPTION_TOOL = "manzanilla_publish_interpretation_v2"
     const val CAPTION_PROTOCOL = "language-v2"
     const val AGENT_NAME = "Manzanilla Interpreter"
@@ -127,7 +127,9 @@ object FishPlan {
             .put("record_audio", false)
             .put("timezone", deviceTimezone())
             .put("interruptible", true)
-            .put("interruption_sensitivity", "balanced")
+            .put("interruption_sensitivity", "high")
+            // Test build: Fish documents "high" as stopping on the caller's first word.
+            // Noise or echo can also trip it; this is a hypothesis under on-device test.
             // The default web/app guard drops caller speech during the first 3 s of agent
             // speech. Keep native WebRTC AEC/NS; remove the provider's opening mute window.
             .put("echo_guard", JSONObject().put("web_voice", false))
