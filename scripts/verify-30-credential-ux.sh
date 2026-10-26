@@ -108,6 +108,8 @@ PYEOF
   sleep 1
   adb shell input text "sk-fish-DUMMY-INVALID-0000-notreal"
   sleep 1
+  adb shell input keyevent 111 || true  # ESC: close the IME without leaving the form
+  sleep 2
   dump ui-staff-prefill.xml
   tap_text "$evidence/ui-staff-prefill.xml" 'Save Voice credential' >> "$evidence/result.txt" 2>&1 || say 'save button: TAP FAILED'
   if wait_for_text ui-staff-saved.xml 'a key is securely saved' 20; then
@@ -120,7 +122,7 @@ PYEOF
 fi
 
 # 5. Reception after save: Start translation should enable (any stored key)
-if wait_for_text ui-home-after.xml 'Staff setup' 30; then
+if wait_for_text ui-home-after.xml 'Live translation' 30; then
   tap_text "$evidence/ui-home-after.xml" 'Live translation' >> "$evidence/result.txt" 2>&1 || say 'translation page: TAP FAILED'
   if wait_for_text ui-translation.xml 'Start translation' 30; then
     shot translation.png
@@ -143,12 +145,14 @@ fi
 
 # 6. Diagnostics screen
 adb shell input keyevent 4 >/dev/null 2>&1 || true
-if wait_for_text ui-home-again.xml 'Staff setup' 30 && tap_text "$evidence/ui-home-again.xml" 'Staff setup' >/dev/null 2>&1; then
+if wait_for_text ui-home-again.xml 'Live translation' 30 && tap_text "$evidence/ui-home-again.xml" 'Staff setup' >/dev/null 2>&1; then
   sleep 4
   dump ui-reauth.xml
   if grep -qiF 'Confirm the device screen lock' "$evidence/ui-reauth.xml"; then
     adb shell input text 1234; adb shell input keyevent 66; sleep 4
   fi
+  adb shell input swipe 900 900 900 300 300 || true
+  sleep 2
   if wait_for_text ui-staff-again.xml 'Voice diagnostics' 30 && tap_text "$evidence/ui-staff-again.xml" 'Voice diagnostics' >/dev/null 2>&1; then
     if wait_for_text ui-diagnostics.xml 'diagnostic events' 20; then
       shot diagnostics.png
