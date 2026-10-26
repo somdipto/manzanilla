@@ -1,0 +1,43 @@
+name: Verify live update offer
+on:
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  offer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+      - name: Download the published 17.0.28 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sL -o "$RUNNER_TEMP/prev.apk" \
+            https://github.com/somdipto/manzanilla/releases/download/v17.0.28/Manzanilla-Reception.apk
+          test -s "$RUNNER_TEMP/prev.apk"
+      - name: Enable emulator hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Observe the update offer from an installed 17.0.28
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash scripts/verify-live-update-offer.sh
+      - name: Retain update-offer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-update-offer
+          path: work/update-offer/
+          if-no-files-found: error
