@@ -1,6 +1,8 @@
 name: Verify live update offer
 on:
   workflow_dispatch: {}
+  push:
+    branches: [test/fish-diagnostics]
 permissions:
   contents: read
 jobs:
