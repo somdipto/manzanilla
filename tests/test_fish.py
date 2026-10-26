@@ -28,6 +28,12 @@ def fish_api(tmp_path,monkeypatch):
         assert request.headers['authorization']=='Bearer SERVER-ONLY-TEST-KEY'
         data=json.loads(request.content) if request.content else None
         calls.append((request.url.path,data))
+        if request.url.path == state.get('failure_path') and request.method == state.get('failure_method','POST'):
+            if state.get('failure_kind') == 'timeout':
+                raise httpx.ReadTimeout('private token and guest text',request=request)
+            if state.get('failure_kind') == 'network':
+                raise httpx.ConnectError('private token and guest text',request=request)
+            return httpx.Response(state['failure_status'],json={'message':'private provider detail SERVER-ONLY-TEST-KEY'})
         if request.url.path.endswith('/end'):
             return httpx.Response(state['end_status'])
         if request.method == 'GET' and request.url.path == '/v1/agent/sessions':
@@ -189,6 +195,8 @@ def test_received_configuration_failure_is_not_created_and_can_retry(fish_api,mo
     request={**REQUEST,'request_id':'synthetic-configuration'}
     response=client.post('/api/device/fish-session',headers=headers,json=request)
     assert response.status_code==503
+    category='unconfigured' if name in {'FISH_API_KEY','FISH_VOICE_ID'} else 'contract'
+    assert response.headers[fish.VOICE_FAILURE_HEADER]==f'configuration:{category}:0'
     assert response.headers.get('X-Manzanilla-Session-Creation')=='not-created'
     assert calls==[] and store.rows('SELECT * FROM fish_sessions')==[]
     monkeypatch.setenv(name,valid)
@@ -740,3 +748,98 @@ def test_caption_upgrade_keeps_old_clients_on_their_immutable_contract(fish_api)
     assert 'manzanilla_publish_interpretation_v2' not in sessions[0]['overrides']['system_prompt']
     assert 'manzanilla_publish_interpretation_v1' not in sessions[1]['overrides']['system_prompt']
     assert 'manzanilla_publish_interpretation' not in sessions[2]['overrides']['system_prompt']
+
+
+@pytest.mark.parametrize('stage,path,method',[
+    ('tool_lookup','/v1/agent/tools','GET'),
+    ('tool_fetch','/v1/agent/tools/synthetic-caption-tool','GET'),
+    ('tool_create','/v1/agent/tools','POST'),
+    ('agent_create','/v1/agent/agents','POST'),
+    ('agent_publish','/v1/agent/agents/synthetic-agent/publish','POST'),
+    ('session_create','/v1/agent/sessions','POST'),
+])
+@pytest.mark.parametrize('status',[401,422,503])
+def test_managed_startup_reference_reports_stage_and_status_without_provider_details(fish_api,stage,path,method,status):
+    store,client,headers,_,_,state=fish_api
+    if stage=='tool_fetch': state['tools']=[fish.CAPTION_TOOL]
+    state.update(failure_path=path,failure_method=method,failure_status=status)
+    response=client.post('/api/device/fish-session',headers=headers,
+                         json={**REQUEST,'caption_protocol':'language-v2','request_id':'diagnostic'})
+    assert response.status_code==503
+    assert response.headers[fish.VOICE_FAILURE_HEADER]==f'{stage}:http:{status}'
+    assert response.json()=={'detail':fish.UNAVAILABLE}
+    assert 'private provider detail' not in str(response.headers) + response.text
+    assert 'SERVER-ONLY-TEST-KEY' not in str(response.headers) + response.text
+    not_created=stage!='session_create' or status in fish.CREATION_REJECTIONS
+    assert (response.headers.get('X-Manzanilla-Session-Creation')=='not-created')==not_created
+    lease=store.rows('SELECT status,reserved_seconds FROM fish_sessions')[0]
+    assert lease=={'status':'ended' if not_created else 'uncertain','reserved_seconds':600}
+
+
+@pytest.mark.parametrize('stage,path,method',[
+    ('tool_lookup','/v1/agent/tools','GET'),
+    ('session_create','/v1/agent/sessions','POST'),
+])
+@pytest.mark.parametrize('kind',['timeout','network'])
+def test_managed_startup_transport_reference_does_not_disclose_exception(fish_api,stage,path,method,kind):
+    _,client,headers,_,_,state=fish_api
+    state.update(failure_path=path,failure_method=method,failure_kind=kind)
+    response=client.post('/api/device/fish-session',headers=headers,
+                         json={**REQUEST,'caption_protocol':'language-v2'})
+    assert response.status_code==503
+    assert response.headers[fish.VOICE_FAILURE_HEADER]==f'{stage}:{kind}:0'
+    assert 'private token and guest text' not in response.text + str(response.headers)
+    assert ('X-Manzanilla-Session-Creation' in response.headers)==(stage!='session_create')
+
+
+def test_malformed_ticket_and_changed_caption_contract_have_distinct_references(fish_api):
+    store,client,headers,_,_,state=fish_api
+    state['tools']=[fish.CAPTION_TOOL]
+    state['tool_definition']={**fish.CAPTION_TOOL,'expects_response':True}
+    changed=client.post('/api/device/fish-session',headers=headers,
+                        json={**REQUEST,'caption_protocol':'language-v2'})
+    assert changed.status_code==503
+    assert changed.headers[fish.VOICE_FAILURE_HEADER]=='tool_fetch:contract:0'
+    assert changed.headers['X-Manzanilla-Session-Creation']=='not-created'
+    state['tool_definition']=fish.CAPTION_TOOL
+    state['session_body']={'transport':'livekit'}
+    malformed=client.post('/api/device/fish-session',headers=headers,
+                          json={**REQUEST,'caption_protocol':'language-v2'})
+    assert malformed.status_code==503
+    assert malformed.headers[fish.VOICE_FAILURE_HEADER]=='session_ticket:response:0'
+    assert 'X-Manzanilla-Session-Creation' not in malformed.headers
+    assert store.rows('SELECT status FROM fish_sessions')==[{'status':'ended'},{'status':'uncertain'}]
+
+
+def test_admission_diagnostics_do_not_weaken_reservations_or_existing_request_ownership(fish_api,monkeypatch):
+    store,client,headers,_,calls,_=fish_api
+    request={**REQUEST,'request_id':'diagnostic-owner'}
+    created=client.post('/api/device/fish-session',headers=headers,json=request)
+    assert created.status_code==200 and fish.VOICE_FAILURE_HEADER not in created.headers
+    count=len(calls)
+    blocked=client.post('/api/device/fish-session',headers=headers,json=request)
+    assert blocked.status_code==409
+    assert blocked.headers[fish.VOICE_FAILURE_HEADER]=='admission:conflict:0'
+    assert 'X-Manzanilla-Session-Creation' not in blocked.headers
+    assert len(calls)==count
+    ended=client.post('/api/device/fish-session/'+created.json()['session_id']+'/end',headers=headers)
+    assert ended.status_code==200 and fish.VOICE_FAILURE_HEADER not in ended.headers
+    monkeypatch.setenv('FISH_HOTEL_DAILY_SECONDS','600')
+    count=len(calls)
+    exhausted=client.post('/api/device/fish-session',headers=headers,
+                          json={**REQUEST,'request_id':'diagnostic-budget'})
+    assert exhausted.status_code==429
+    assert exhausted.headers[fish.VOICE_FAILURE_HEADER]=='admission:budget:0'
+    assert exhausted.headers['X-Manzanilla-Session-Creation']=='not-created'
+    assert len(calls)==count
+    assert store.rows('SELECT SUM(reserved_seconds) AS reserved FROM fish_sessions')==[{'reserved':600}]
+
+
+@pytest.mark.parametrize('stage,category,status',[
+    ('secret-token','http',401),('session_create','private detail',0),
+    ('session_create','http',0),('session_create','http',399),
+    ('session_create','http',600),('session_create','http','401'),
+    ('session_create','network',401),('session_create','network',False),
+])
+def test_failure_reference_rejects_values_outside_bounded_public_contract(stage,category,status):
+    with pytest.raises(ValueError): fish.failure_headers(stage,category,status)

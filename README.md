@@ -2,7 +2,7 @@
 
 **Faster execution hardware for the hospitality industry.**
 
-Manzanilla Reception is a landscape Android app with an open-canvas reception home, day/night appearance and hands-free live translation. Reception and guest languages have independent selectors. Fish provides the configured opening greeting within its voice session; there is no local greeting-WAV capture gate. A configured hotel backend keeps its provider key server-side. **The current public release APK includes an extractable CI-injected provider key**; encrypted device storage does not protect a key compiled into an APK.
+Manzanilla Reception is a landscape Android app with an open-canvas reception home, day/night appearance and hands-free live translation. Reception and guest languages have independent selectors. The 17.0.30 release requires an enrolled hotel backend or a staff-saved device credential for translation; it does not embed a shared Fish key. Earlier pilot APKs did embed an extractable credential, which its owner must rotate.
 
 <p align="center">
   <a href="https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Manzanilla%20Reception-2ea44f?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="56"></a>
@@ -24,9 +24,9 @@ All releases: https://github.com/somdipto/manzanilla/releases
 
 ## Update an existing installation
 
-Version-bump PRs merged into `main` now trigger **Publish verified Reception APK**: source and emulator checks, signed build, APK identity checks, then a GitHub Release. The update becomes available only when that publication succeeds. See [Android startup and release-delivery fixes](docs/android-start-fix.md).
+The 17.0.31 candidate requires a PR and increasing version files for app changes. After the user merges an eligible PR, **Publish verified Reception APK** runs source and emulator checks, signs with the existing key, checks a retained-data upgrade and verifies draft assets before publishing. The update becomes available only when publication succeeds.
 
-Open Manzanilla while connected to the internet. From 17.0.8, every app resume checks immediately; an open foreground app also rechecks every ten minutes. The home screen's **Check updates** button retries immediately. The banner shows checking, download progress, a downloaded update, an up-to-date version, or a retryable failure instead of silently hiding discovery errors. Tap the downloaded update, allow installation if Android asks, then approve Android's install prompt. Do not uninstall: an in-place update keeps app data and saved keys.
+Open Manzanilla while connected to the internet. Every app resume checks immediately; an open foreground app also rechecks every ten minutes. Version 17.0.30 requires the downloaded update action. The 17.0.31 candidate applies verified downloads when reception is idle and asks Android 12+ for unattended installation when eligible. Android can still require source permission or an installation confirmation. In-place replacement keeps app data and saved keys; it can stop the process, so unattended kiosk recovery requires a tested managed launcher or EMM policy.
 
 Older installed versions through 17.0.7 can suppress checks for ten minutes after a recent attempt and hide discovery errors. If that prevents this repair from arriving, perform a **one-time manual in-place update** using the latest APK link above. Allow your browser to install unknown apps if requested, and choose **Update**, not uninstall.
 
@@ -89,6 +89,15 @@ Every reception screen, original and current, is listed in [docs/screens](docs/s
 
 ## What is in this repository
 
+The **17.0.31 candidate** repairs translation startup and LiveKit cleanup,
+starts microphone capture during the worker greeting, avoids repeated PCM
+padding, and restores the verified in-place updater and PR release safeguards.
+The [local synthetic comparison](docs/verification/livekit-synthetic-2026-10-27.txt)
+shows the previous worker missed microphone input during the greeting while the
+candidate handled an interruption over a real local LiveKit server. Real Fish
+voice naturalness, physical-device interruption and acoustic latency remain
+unmeasured. Backend/worker deployment is separate from APK publication.
+
 | Folder | What it is |
 | --- | --- |
 | `android/hotel` | The Manzanilla Reception app (landscape, microphone, auto-update) |
@@ -135,9 +144,9 @@ does not update installed devices until a signed release is published.
 
 17.0.21 separates local audio release from paid-session cleanup, retains uncertain ownership, removes guessed caption associations, and updates individual caption bubbles instead of rebuilding the conversation. Startup failures now acknowledge the proposed session; restored reservations that never dispatched can recover without bypassing genuinely uncertain creation. Managed backends distinguish proven non-creation from lost responses. Refusing an update during a conversation keeps the update action retryable. The models, voice and endpointing settings are unchanged. The offline acoustic tool is `tools/voice_latency.py`; physical speech-to-speech latency and bilingual accuracy qualification remain blocked on an isolated matching tablet/capture setup and confirmed remaining spending authorization. See [verification](artifacts/VERIFICATION.md) and [reproduction instructions](docs/TEST-PLAN.md).
 
-17.0.13 enables live translation through the Fish interpreter route. The release build compiles the CI-injected Fish credential; a staff-saved credential overrides it on one device; a configured hotel service mints managed sessions instead, which requires the service-side FISH_API_KEY. The unused device-side Gemini route and the legacy managed relay are removed; there is no provider fallback or automatic switching. Provider usage is billed to the owner's provider account. Physical-device echo, latency and full-duplex behavior remain unverified.
+17.0.13 enabled live translation through the Fish interpreter route and embedded a CI credential at the time. Current releases do not embed that shared key. A staff-saved device credential or a configured hotel service is required. The unused device-side Gemini route and legacy managed relay are removed. Provider usage is billed to the owner's provider account. Physical-device echo, latency and full-duplex behavior remain unverified.
 
-17.0.10 keeps hotel assistance usable with the microphone off: arrival guidance, hotel questions, taxi requests, confirmed staff messages and human-contact options. Missing hotel configuration stays unavailable. A saved inbox receipt is not staff acknowledgement. Live translation runs through the owner-approved Fish route with the CI-injected credential.
+17.0.10 keeps hotel assistance usable with the microphone off: arrival guidance, hotel questions, taxi requests, confirmed staff messages and human-contact options. Missing hotel configuration stays unavailable. A saved inbox receipt is not staff acknowledgement.
 
 17.0.8 repairs update discovery: app resume no longer skips checks because of a persisted cooldown; offline/discovery errors are visible and retryable; a home-screen check control and foreground rechecks make updates reachable without restarting or reinstalling the app.
 

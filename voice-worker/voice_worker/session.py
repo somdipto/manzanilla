@@ -36,6 +36,11 @@ CONTROL_TOKEN = re.compile(r'<\|[^|]*\|>')
 MIN_CLAUSE = 12
 PLAYBACK_QUEUE_MS = 200
 TABLET_WAIT_SECONDS = 15
+FIRST_AUDIO_PAUSE_SECONDS = 2.0
+
+
+async def _wait_for_gate_pause(delay: float):
+    await asyncio.sleep(delay)
 
 
 def pop_clause(buffer: str) -> str | None:
@@ -82,6 +87,7 @@ class InterpreterSession:
         self.staff = ''
         self.speaking = False
         self.turn: asyncio.Task | None = None
+        self._turn_lock = asyncio.Lock()
         self.turns: asyncio.Queue = asyncio.Queue()
         self.turn_count = 0
         self.deadline = time.monotonic() + max_seconds
@@ -93,16 +99,18 @@ class InterpreterSession:
             await self._connect()
             await self._wait_tablet()
             await self._open_asr()
-            await self._greet()
-            await asyncio.wait_for(self._main(), timeout=self._max_seconds + 60)
-        except asyncio.TimeoutError:
-            await self._send(contract.session_ended('conversation_timeout'))
+            try:
+                await asyncio.wait_for(self._main(), timeout=self._max_seconds + 60)
+            except asyncio.TimeoutError:
+                await self._send(contract.session_ended('conversation_timeout'))
+            return True
         except Exception:
             LOG.exception('interpreter session failed')
             try:
                 await self._send(contract.error(recovered=False))
             except Exception:
                 pass
+            return False
         finally:
             await self._close()
 
@@ -165,34 +173,61 @@ class InterpreterSession:
         mic = asyncio.create_task(self._pump_mic())
         turns = asyncio.create_task(self._turn_loop())
         watchdog = asyncio.create_task(self._watchdog())
+        # Start receiving the microphone before the greeting is spoken. A guest
+        # may interrupt that greeting just like any other speech output.
+        greeting = asyncio.create_task(self._greet())
+        self.turn = greeting
+        def pipeline_done(task):
+            if not task.cancelled() and task.exception() is not None:
+                self.asr.events.put_nowait({'type': 'error'})
+        for task in (greeting, mic, turns, watchdog):
+            task.add_done_callback(pipeline_done)
+        stopped = asyncio.create_task(self.ended.wait())
+        event_task = None
         try:
             while not self.ended.is_set():
-                event = await self.asr.events.get()
+                event_task = asyncio.create_task(self.asr.events.get())
+                done, _ = await asyncio.wait((event_task, stopped), return_when=asyncio.FIRST_COMPLETED)
+                if stopped in done:
+                    break
+                event = event_task.result()
+                event_task = None
                 kind = event.get('type')
                 if kind == 'closed':
-                    break
+                    raise RuntimeError('Speech recognition connection closed')
                 if kind == 'speech_start':
                     self.bench.mark('asr_speech_start')
+                elif kind == 'user_turn_taken':
+                    # In auto mode a speech_start may be a backchannel or
+                    # background noise. Only a confirmed user turn interrupts.
                     await self._interrupt()
                 elif kind == 'committed':
                     committed = event
                     self.bench.mark('asr_committed', language=committed.get('language_code'),
                                     user_turn=committed.get('user_turn'))
-                    if committed.get('user_turn') and committed.get('turn_kind') == 'user':
+                    # Fish's auto-mode contract uses user_turn for ownership;
+                    # turn_kind can be absent on a valid user utterance.
+                    if committed.get('user_turn') is True:
                         committed['text'] = CONTROL_TOKEN.sub('', committed.get('text', '')).strip()
                         if committed['text']:
+                            committed['_received_monotonic'] = time.monotonic()
                             await self.turns.put(committed)
                         else:
                             self.bench.mark('turn_skipped_markup_only')
                     else:
                         self.bench.mark('turn_skipped_backchannel')
                 elif kind == 'error':
-                    raise RuntimeError('recognition error: ' + str(event.get('message')))
+                    raise RuntimeError('Voice pipeline failed')
         finally:
-            for task in (mic, turns, watchdog):
+            tasks = [mic, turns, watchdog, greeting, stopped]
+            if event_task:
+                tasks.append(event_task)
+            for task in tasks:
                 task.cancel()
             if self.turn:
                 self.turn.cancel()
+                tasks.append(self.turn)
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _watchdog(self):
         while not self.ended.is_set():
@@ -224,6 +259,9 @@ class InterpreterSession:
             if self.ended.is_set():
                 break
             await self.asr.send_audio(bytes(frame_event.frame.data))
+        if not self.ended.is_set():
+            # Do not leave a seemingly active conversation with no microphone.
+            raise RuntimeError('Microphone audio stream ended')
 
     async def _turn_loop(self):
         while not self.ended.is_set():
@@ -235,15 +273,24 @@ class InterpreterSession:
                 self.bench.mark('turn_uncertain_language', language=language)
                 await self._caption(turn, 'und', committed.get('text', ''), '')
                 continue
-            self.turn = asyncio.create_task(self._translate(turn, committed.get('text', ''), language))
+            # A greeting may still be unwinding after barge-in. Do not overlap
+            # two TTS streams or let its cleanup reset the new turn's state.
+            async with self._turn_lock:
+                if self.turn:
+                    self.turn.cancel()
+                    await asyncio.gather(self.turn, return_exceptions=True)
+                self.turn = asyncio.create_task(self._translate(turn, committed.get('text', ''), language,
+                    committed_at=committed.get('_received_monotonic')))
             try:
                 await self.turn
             except asyncio.CancelledError:
+                if asyncio.current_task().cancelling():
+                    raise
                 self.bench.mark('turn_cancelled', turn=turn)
             finally:
                 self.turn = None
 
-    async def _translate(self, turn: int, text: str, language: str):
+    async def _translate(self, turn: int, text: str, language: str, *, committed_at: float | None = None):
         if not text.strip():
             return
         await self._set_state('thinking')
@@ -253,20 +300,24 @@ class InterpreterSession:
 
         async def generate():
             buffer = ''
-            async for delta in self._llm.stream(interpreter_prompt(self.guest, self.staff), text):
-                buffer += delta
-                full.append(delta)
-                clause = pop_clause(buffer)
-                if clause:
-                    await clauses.put(clause)
-                    buffer = buffer[len(clause):]
-            if buffer.strip():
-                await clauses.put(buffer)
-            await clauses.put(None)
+            try:
+                async for delta in self._llm.stream(interpreter_prompt(self.guest, self.staff), text):
+                    buffer += delta
+                    full.append(delta)
+                    while (clause := pop_clause(buffer)):
+                        await clauses.put(clause)
+                        buffer = buffer[len(clause):]
+                if buffer.strip():
+                    await clauses.put(buffer)
+            finally:
+                # Wake synthesis even when the model fails; propagate that
+                # failure after playback settles instead of hanging forever.
+                await clauses.put(None)
 
         producer = asyncio.create_task(generate())
         try:
-            await self._speak_stream(clauses, turn)
+            await self._speak_stream(clauses, turn, committed_at=committed_at)
+            await producer
             translation = ''.join(full).strip()
             await self._caption(turn, language, text, translation)
         finally:
@@ -282,42 +333,123 @@ class InterpreterSession:
         await queue.put(None)
         await self._speak_stream(queue, 0, label=label)
 
-    async def _speak_stream(self, clauses: asyncio.Queue, turn: int, label: str = 'turn'):
+    async def _speak_stream(self, clauses: asyncio.Queue, turn: int, label: str = 'turn',
+                            *, committed_at: float | None = None):
         self.speaking = True
-        await self._set_state('speaking')
-        await self.asr.agent_speaking(True)
         tts = FishTTS(self._fish_key, self._voice)
-        await tts.connect()
-        self._rs = None  # resampler state, per utterance
+        feeder = None
+        pause_task = None
+        gate_lock = asyncio.Lock()
+        started_at = committed_at if committed_at is not None else time.monotonic()
+        paused = False
+        first = True
+        resampler = None
+        raw = bytearray()
+        pcm = bytearray()
         async def feed():
+            first_clause = True
+            pending = False
             while True:
                 clause = await clauses.get()
                 if clause is None:
                     break
                 await tts.send_text(clause)
-            await tts.flush()
+                pending = True
+                if first_clause:
+                    # Force the first meaningful clause through Fish's text
+                    # buffer without waiting for the entire model response.
+                    await tts.flush()
+                    first_clause = False
+                    pending = False
+            if pending:
+                await tts.flush()
             await tts.finish()
-        feeder = asyncio.create_task(feed())
-        first = True
-        try:
-            while True:
-                chunk = await tts.audio.get()
-                if chunk is None:
-                    break
+        async def pause_if_silent(delay: float):
+            nonlocal paused
+            await _wait_for_gate_pause(delay)
+            async with gate_lock:
                 if first:
+                    await self.asr.agent_speaking(False)
+                    paused = True
+                    await self._set_state('thinking')
+                    self.bench.mark('first_audio_wait_paused', turn=turn, label=label)
+        async def start_audio():
+            nonlocal first, paused
+            async with gate_lock:
+                if first:
+                    if paused:
+                        await self.asr.agent_speaking(True)
+                        paused = False
+                        await self._set_state('speaking')
                     first = False
                     self.bench.mark('first_audio_published', turn=turn, label=label)
-                chunk, state = audioop.ratecv(chunk, 2, 1, 24000, 48000, self._rs)
-                self._rs = state
-                for offset in range(0, len(chunk), 960 * 2):
-                    piece = chunk[offset:offset + 960 * 2]
-                    if len(piece) < 960 * 2:
-                        piece = piece + b'\x00' * (960 * 2 - len(piece))
+        try:
+            remaining = FIRST_AUDIO_PAUSE_SECONDS - (time.monotonic() - started_at)
+            if remaining <= 0:
+                # This turn was already delayed by admission/previous cleanup.
+                paused = True
+                await self.asr.agent_speaking(False)
+                await self._set_state('thinking')
+            else:
+                await self._set_state('speaking')
+                await self.asr.agent_speaking(True)
+                # Measured from ASR commitment, including time spent waiting
+                # for model output or opening the TTS websocket.
+                remaining = max(0, FIRST_AUDIO_PAUSE_SECONDS - (time.monotonic() - started_at))
+                pause_task = asyncio.create_task(pause_if_silent(remaining))
+                def pause_done(task):
+                    if not task.cancelled() and task.exception() is not None:
+                        tts.audio.put_nowait(None)
+                pause_task.add_done_callback(pause_done)
+            await tts.connect()
+            feeder = asyncio.create_task(feed())
+            def feed_done(task):
+                if not task.cancelled() and task.exception() is not None:
+                    tts.audio.put_nowait(None)
+            feeder.add_done_callback(feed_done)
+            while True:
+                chunk = await asyncio.wait_for(tts.audio.get(), timeout=30)
+                if chunk is None:
+                    break
+                raw.extend(chunk)
+                aligned = len(raw) & ~1
+                if aligned:
+                    converted, resampler = audioop.ratecv(bytes(raw[:aligned]), 2, 1, 24000, 48000, resampler)
+                    del raw[:aligned]
+                    pcm.extend(converted)
+                while len(pcm) >= 960 * 2:
+                    piece = bytes(pcm[:960 * 2])
+                    del pcm[:960 * 2]
                     frame = rtc.AudioFrame(data=piece, sample_rate=48000, num_channels=1,
                                            samples_per_channel=960)
+                    if first:
+                        await start_audio()
                     await self.source.capture_frame(frame)
+            if pause_task and pause_task.done():
+                await pause_task
+            if raw:
+                raise ValueError('Synthesis returned an incomplete PCM sample')
+            if pcm:
+                piece = bytes(pcm) + b'\x00' * (960 * 2 - len(pcm))
+                if first:
+                    await start_audio()
+                await self.source.capture_frame(rtc.AudioFrame(data=piece, sample_rate=48000,
+                    num_channels=1, samples_per_channel=960))
+            if tts.error:
+                raise RuntimeError('Synthesis provider returned an error')
+            await feeder
+            if first:
+                raise RuntimeError('Synthesis returned no audio')
+            # Keep the provider's echo/turn gate active until locally queued
+            # audio has played out, not merely until synthesis finishes.
+            await self.source.wait_for_playout()
         finally:
-            feeder.cancel()
+            if pause_task:
+                pause_task.cancel()
+                await asyncio.gather(pause_task, return_exceptions=True)
+            if feeder:
+                feeder.cancel()
+                await asyncio.gather(feeder, return_exceptions=True)
             await tts.close()
             self.speaking = False
             await self.asr.agent_speaking(False)
@@ -325,17 +457,23 @@ class InterpreterSession:
                 await self._set_state('listening')
 
     async def _interrupt(self):
-        if not self.speaking:
-            return
-        self.bench.mark('interrupted')
-        if self.turn:
-            self.turn.cancel()
-        if self.source:
-            self.source.clear_queue()
-            self.bench.mark('playback_flushed')
-        self.speaking = False
-        await self.asr.agent_speaking(False)
-        await self._set_state('listening')
+        async with self._turn_lock:
+            if not self.speaking and (not self.turn or self.turn.done()):
+                return
+            self.bench.mark('interrupted')
+            previous = self.turn
+            if previous:
+                previous.cancel()
+            if self.source:
+                self.source.clear_queue()
+                self.bench.mark('playback_flushed')
+            if previous:
+                # Finish the old turn's cleanup before a queued new turn can
+                # set its own echo gate and state. The queue is cleared first.
+                await asyncio.gather(previous, return_exceptions=True)
+            self.speaking = False
+            await self.asr.agent_speaking(False)
+            await self._set_state('listening')
 
     async def _caption(self, turn: int, language: str, original: str, translation: str):
         call_id = f'lk-{self.room_name[-24:]}-{turn}'

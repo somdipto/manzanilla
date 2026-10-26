@@ -17,7 +17,7 @@ adb shell dumpsys webviewupdate > "$evidence/webview.txt"
 adb shell cmd package set-home-activity com.android.launcher3/.Launcher
 adb logcat -c
 trap 'adb logcat -d > "$evidence/logcat.txt"' EXIT
-for fixture in reception-bridge microphone-permission microphone-permission-denied microphone-permission-background; do
+for fixture in reception-bridge microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery; do
   # Reset only this disposable, key-free test app between independent scenarios.
   adb shell pm clear dev.orange.hotel
   timeout 180s adb shell am instrument -w -r -e case "$fixture" \

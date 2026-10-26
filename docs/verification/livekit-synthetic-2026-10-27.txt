@@ -1,0 +1,94 @@
+Local LiveKit synthetic A/B evidence — 2026-10-27
+===================================================
+
+Scope: synthetic development server only, no hotel data, real provider calls,
+credentials, real speech, physical tablet or acoustic capture. The ASR,
+translation and synthesis providers are deterministic in-process fakes. This
+checks actual LiveKit room/media/data transport and the worker's event ordering,
+not speech recognition, echo cancellation, voice quality or human latency.
+
+Server: livekit/livekit-server:v1.13.10
+Image digest: sha256:89ca9ce0791e18d6e03bf6e2c49ceb27e1c754eae8bd50c989386c1a5963791a
+Local Python SDK: livekit 1.1.21, livekit-api 1.2.2
+websockets 17.3; httpx 0.28.1. These local dependencies are not a claim that
+the production Android SDK was exercised.
+
+Baseline: origin/main commit eb6e7fabe4869e2b316384cf3671994ee1db6e19.
+Baseline worker git blobs: session ababda241ae07a40d66c93e174dd9c97d11c34a3,
+asr 76f87254c878cdbea1cbf9063c9df75362937b9a,
+tts 1b3b61b38ace2dd0a7c64bd3fe66422f4048e287.
+Candidate worker git blobs: session eb96985fa69f042c09fe1724aa607f880eaed54a,
+asr edafb83bf9905477aabee6bdd71b1480f1a73e76,
+tts 8da21d55601e217d37de5878c55e9f1fe5e933bd.
+Probe git blob: d5efc331cf1df10471c14962d8ce090e3e2d1b8f.
+
+Both arms used the identical synthetic PCM, server and probe. A device sends
+audio while a fake greeting is still playing. The fake ASR sends the documented
+auto-mode user_turn_taken event, followed by a synthetic committed utterance.
+The old worker used speech_start to interrupt, whereas the candidate uses
+user_turn_taken. This tests both opening-mic ordering and the event correction;
+it does not establish how the real ASR recognizes a guest amid speaker echo.
+
+Baseline: FAIL — worker did not receive microphone audio during greeting.
+Candidate after the silent-synthesis pause fix: PASS — 41 decoded microphone
+frames reached the worker; the device
+received agent audio; interruption cleared the local playback queue; the device
+received the matching synthetic original/translation caption. One measured
+worker event-to-local-queue-clear interval was 1.02 ms. This is a local event
+ordering observation, NOT guest-audible interruption latency or a percentile.
+
+Example reproduction (install the worker requirements in an isolated Python
+environment; this creates only a disposable local development server):
+
+  docker run --rm --name manzanilla-voice-fixture \
+    -p 127.0.0.1:17880:7880 -p 127.0.0.1:17881:7881 \
+    -p 127.0.0.1:17882:7882/udp livekit/livekit-server:v1.13.10 \
+    --dev --bind 0.0.0.0
+  # In another shell:
+  python scripts/livekit_synthetic_probe.py
+  # Stop the disposable container when finished.
+
+For the baseline, extract voice-worker/ into a separate temporary tree and use
+the identical probe, keeping the main repository on PYTHONPATH for its shared
+cloud prompt import. The following uses this workspace's temporary dependency
+directory; in another environment, use the isolated installation instead:
+
+  mkdir -p /tmp/manzanilla-baseline-voice/scripts
+  git archive eb6e7fabe4869e2b316384cf3671994ee1db6e19 voice-worker | tar -x -C /tmp/manzanilla-baseline-voice
+  cp scripts/livekit_synthetic_probe.py /tmp/manzanilla-baseline-voice/scripts/
+  PYTHONPATH=/tmp/manzanilla-voice-review:$PWD python /tmp/manzanilla-baseline-voice/scripts/livekit_synthetic_probe.py
+  PYTHONPATH=/tmp/manzanilla-voice-review:$PWD python scripts/livekit_synthetic_probe.py
+
+Keep the candidate and baseline artifacts separate. Synthetic fixture keys
+devkey/secret are LiveKit development defaults only; they are not deployment
+credentials.
+
+Separate token/deletion observations on the same disposable server:
+- DeleteRoom with only roomAdmin returned 401; roomCreate is required.
+- Deleting a room never created returned 404/not_found.
+- Deleting an existing room returned 200; another client then joined using the
+  exact same still-valid token, recreating that room.
+- A 2-second initial token stayed connected after 4 seconds. Following a server
+  restart, the same Python SDK reported reconnecting then reconnected. A fresh
+  connection with the nominally expired original token was also accepted soon
+  afterwards. The server's expiry tolerance was not measured. This is not an
+  Android reconnect test or proof of immediate token revocation.
+
+Historical live-provider figures in PR #9 were 3.74s and 5.74s from synthetic
+input-end mark to first Fish audio-chunk mark, for one Spanish-to-English
+utterance using the NVIDIA gpt-oss-20b stand-in. No paired old-route baseline or
+physical acoustic comparison was recorded. The prior marker preceded the worker
+capture_frame attempt; it was not an audible speaker boundary. These two values
+cannot establish that the route beats the old route or meets a p95 target.
+Source: https://github.com/somdipto/manzanilla/pull/9
+
+The live-provider probe now scopes appended timing records to the exact room,
+waits for local input SDK playout, and labels its worker capture-frame attempt
+honestly. Its SDK recording includes the greeting and possible silence; it does
+not establish audible translation, correctness or naturalness. The old and new
+timing boundaries differ, so historical numbers are not directly comparable.
+
+Actual comparison requires matched held-out baseline/candidate runs, bilingual
+blind listening and a tablet plus a single calibrated stereo recording clock.
+See docs/voice-latency-plan.md and tools/voice_latency.py. The previously stated
+total $4 paid-test cap and remaining spend must be checked before paid calls.

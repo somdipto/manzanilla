@@ -15,7 +15,7 @@ Usage:
 
 Writes bench.jsonl (raw timing marks) and bench.md (measured table) to --out.
 """
-import argparse, asyncio, json, os, subprocess, sys, time, urllib.request
+import argparse, asyncio, json, math, os, subprocess, sys, time, urllib.request, uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,7 +32,50 @@ DEV_KEY, DEV_SECRET = 'devkey', 'secret'
 # A real guest check-in utterance in Spanish; not curated for the pipeline.
 UTTERANCE_ES = ('Buenas tardes, tengo una reserva a nombre de Garcia para dos noches, '
                 'y queria saber si puedo hacer el check in ahora.')
-UTTERANCE_ES_2 = 'Muchas gracias, donde esta el ascensor?'
+
+
+def read_worker_marks(path: Path, room_name: str) -> dict:
+    """Use only this exact room. JSONL may also contain previous probe runs."""
+    marks = {}
+    if not path.exists():
+        return marks
+    for line in path.read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(row, dict) or row.get('session') != room_name:
+            continue
+        timestamp, event = row.get('ts'), row.get('event')
+        if (not isinstance(timestamp, (float, int)) or isinstance(timestamp, bool)
+                or not math.isfinite(timestamp) or not isinstance(event, str)):
+            continue
+        marks.setdefault(event, []).append(row)
+    return marks
+
+
+def worker_mark(marks: dict, name: str, turn=None):
+    for row in marks.get(name, []):
+        if turn is None or row.get('turn') == turn:
+            return row['ts']
+    return None
+
+
+def probe_errors(caption, first_capture, received_audio_bytes):
+    """Smoke checks only; this never certifies acoustic quality or latency."""
+    failures = []
+    if not isinstance(caption, dict):
+        failures.append('no caption reached the device')
+    else:
+        payload = caption.get('payload')
+        params = payload.get('params') if isinstance(payload, dict) else None
+        if not isinstance(params, dict) or not params.get('translation'):
+            failures.append('caption translation empty')
+    if first_capture is None:
+        failures.append('no first-turn audio capture-frame attempt was recorded')
+    if received_audio_bytes <= 0:
+        failures.append('no agent audio frames reached the SDK')
+    return failures
 
 
 def device_token(identity: str, room: str, metadata: dict) -> str:
@@ -67,6 +110,9 @@ async def play_wav(room: rtc.Room, source: rtc.AudioSource, pcm: bytes, mark, la
         frame = rtc.AudioFrame(data=piece, sample_rate=16000, num_channels=1,
                                samples_per_channel=320)
         await source.capture_frame(frame)
+    # The queue can retain samples after the last capture_frame returns.
+    # This is still a local SDK playout boundary, not tablet acoustic input.
+    await source.wait_for_playout()
     mark('device_input_end', utterance=label)
 
 
@@ -84,14 +130,14 @@ async def run(args):
                       FISH_API_KEY=os.environ['FISH_API_KEY'],
                       FISH_VOICE_ID=os.environ['FISH_VOICE_ID'],
                       LLM_BASE_URL=args.llm_base, LLM_API_KEY=os.environ['LLM_API_KEY'],
-                      LLM_MODEL=args.llm_model, LLM_EXTRA_JSON='{"reasoning_effort": "low"}',
+                      LLM_MODEL=args.llm_model, LLM_EXTRA_JSON=args.llm_extra_json,
                       ROOM_PREFIX='manz-bench-',
                       VOICE_BENCH_LOG=str(out / 'bench.jsonl'))
     worker = subprocess.Popen(
         [sys.executable, '-m', 'voice_worker'], env=worker_env,
         cwd=str(ROOT / 'voice-worker'),
         stdout=open(out / 'worker.log', 'w'), stderr=subprocess.STDOUT)
-    room_name = 'manz-bench-' + str(int(time.time()))
+    room_name = 'manz-bench-' + uuid.uuid4().hex
     try:
         for _ in range(50):
             try:
@@ -101,13 +147,9 @@ async def run(args):
                 await asyncio.sleep(0.2)
         await synthesize(os.environ['FISH_API_KEY'], os.environ['FISH_VOICE_ID'],
                          UTTERANCE_ES, out / 'turn1.wav')
-        await synthesize(os.environ['FISH_API_KEY'], os.environ['FISH_VOICE_ID'],
-                         UTTERANCE_ES_2, out / 'turn2.wav')
 
         room = rtc.Room()
         events: list[dict] = []
-        first_agent_audio: list[float] = []
-        measure_from = [0.0]
         agent_audio = bytearray()
         attributes: list[tuple[float, str]] = []
 
@@ -118,10 +160,6 @@ async def run(args):
             async def consume():
                 stream = rtc.AudioStream(track, sample_rate=48000, num_channels=1)
                 async for frame_event in stream:
-                    # Measure only audio that follows the device utterance; the
-                    # earlier greeting is contract parity, not reply latency.
-                    if not first_agent_audio and measure_from[0] and time.time() >= measure_from[0]:
-                        first_agent_audio.append(time.time())
                     agent_audio.extend(bytes(frame_event.frame.data))
             asyncio.create_task(consume())
 
@@ -151,7 +189,6 @@ async def run(args):
         # caption with original + translation.
         pcm1 = load_wav_16k(str(out / 'turn1.wav'))
         marks.mark('device_input_start', utterance='turn1')
-        measure_from[0] = time.time()
         await asyncio.create_task(play_wav(room, source, pcm1, marks.mark, 'turn1'))
         t_input_end = time.time()
         caption1 = None
@@ -165,35 +202,21 @@ async def run(args):
             await asyncio.sleep(0.05)
         marks.mark('device_turn1_done', caption_received=bool(caption1))
 
-        # Headline timings come from the worker's own JSONL marks: the device's
-        # SDK-side first-frame callback is contaminated by jitter buffering.
-        worker_marks = {}
-        jsonl = out / 'bench.jsonl'
-        if jsonl.exists():
-            for line in jsonl.read_text().splitlines():
-                try:
-                    row = json.loads(line)
-                except ValueError:
-                    continue
-                if row.get('session', '').startswith('manz-bench-'):
-                    worker_marks.setdefault(row['event'], []).append(row)
-        def mark(name, turn=None, state=None):
-            for row in worker_marks.get(name, []):
-                if (turn is None or row.get('turn') == turn) and (state is None or row.get('state') == state):
-                    return row['ts']
-            return None
+        # Only the current, randomly named room may contribute marks: the log
+        # is append-only and may include previous runs in the same directory.
+        worker_marks = read_worker_marks(out / 'bench.jsonl', room_name)
         table = []
-        committed = mark('asr_committed')
-        llm_at = mark('llm_requested', turn=1)
-        first_turn_audio = mark('first_audio_published', turn=1)
-        caption_at = mark('caption_sent', turn=1)
+        committed = worker_mark(worker_marks, 'asr_committed')
+        llm_at = worker_mark(worker_marks, 'llm_requested', turn=1)
+        first_turn_audio = worker_mark(worker_marks, 'first_audio_published', turn=1)
+        caption_at = worker_mark(worker_marks, 'caption_sent', turn=1)
         if committed:
-            table.append(('input end -> ASR commit (s)', round(committed - t_input_end, 2)))
-        if llm_at and first_turn_audio:
-            table.append(('LLM request -> first agent audio chunk (s)',
+            table.append(('local input playout end -> ASR commit (s)', round(committed - t_input_end, 2)))
+        if llm_at is not None and first_turn_audio is not None:
+            table.append(('LLM request -> first worker capture-frame attempt (s)',
                           round(first_turn_audio - llm_at, 2)))
-        if first_turn_audio:
-            table.append(('input end -> first agent audio (s)', round(first_turn_audio - t_input_end, 2)))
+        if first_turn_audio is not None:
+            table.append(('local input playout end -> first worker capture-frame attempt (s)', round(first_turn_audio - t_input_end, 2)))
         if caption_at:
             table.append(('input end -> caption emitted after playback (s)', round(caption_at - t_input_end, 2)))
         if caption1:
@@ -209,20 +232,27 @@ async def run(args):
         states = ', '.join(f'{state}' for _, state in attributes)
         table.append(('lk.agent.state change events observed on device', states or 'none (see note)'))
 
-        (out / 'agent-audio-turn1.wav').write_bytes(wav_bytes(bytes(agent_audio), 48000))
+        # This track includes the greeting and possibly silence: no claim that
+        # these bytes are exclusively the response or acoustically audible.
+        (out / 'agent-audio-session.wav').write_bytes(wav_bytes(bytes(agent_audio), 48000))
         lines = ['# Self-hosted route bench (issue #8)', '',
                  'Every stage below is a real provider call captured from live pipeline',
                  'events; the only fixture is the device input speech, synthesized by',
-                 'Fish TTS because the bench has no human speaker.', '',
+                 'Fish TTS because the bench has no human speaker.',
+                 f'LLM model: {args.llm_model}.',
+                 'Times use local SDK/worker wall-clock marks, not tablet acoustic input',
+                 'or audible speaker onset. The first capture-frame mark is an attempt,',
+                 'not proof of playout. agent-audio-session.wav includes the greeting.',
+                 'No matched hosted baseline, speech correctness or blind naturalness',
+                 'assessment is established by this smoke probe.', '',
                  '| measurement | value |', '| --- | --- |']
         lines += [f'| {k} | {v} |' for k, v in table]
         (out / 'bench.md').write_text('\n'.join(lines) + '\n')
         print('\n'.join(lines))
-        if not caption1:
-            print('FAIL: no caption reached the device', file=sys.stderr)
-            return 1
-        if not caption1['payload']['params']['translation']:
-            print('FAIL: caption translation empty', file=sys.stderr)
+        failures = probe_errors(caption1, first_turn_audio, len(agent_audio))
+        for failure in failures:
+            print('FAIL: ' + failure, file=sys.stderr)
+        if failures:
             return 1
         return 0
     finally:
@@ -235,9 +265,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--llm-base', default='https://integrate.api.nvidia.com/v1')
     parser.add_argument('--llm-model', default='openai/gpt-oss-20b')
+    parser.add_argument('--llm-extra-json', default='{}',
+                        help='Optional provider-specific JSON object; default sends no extra fields')
     parser.add_argument('--livekit-bin', default='/tmp/lkbin/livekit-server')
     parser.add_argument('--out', default='/tmp/bench')
     args = parser.parse_args()
+    try:
+        if not isinstance(json.loads(args.llm_extra_json), dict):
+            raise ValueError('expected an object')
+    except ValueError:
+        parser.error('--llm-extra-json must be a JSON object')
     raise SystemExit(asyncio.run(run(args)))
 
 

@@ -1,6 +1,7 @@
 name: Verify Orange
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:
@@ -31,9 +32,12 @@ jobs:
         with: {python-version: '3.12'}
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest tests/test_release_identity.py -q
-      - name: Enforce publication policy
+      - name: Require increasing versions on release-impacting PR changes
+        if: github.event_name == 'pull_request'
         env:
-          POLICY_BASE: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
+          POLICY_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python scripts/release_policy.py --base "$POLICY_BASE" --head HEAD
+      - name: Check package identity and credential literals
         run: python scripts/release_policy_check.py
 
   android:
@@ -63,12 +67,25 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: bash scripts/run-android-emulator.sh
+      - name: Exercise Android 12 update-session parameters
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          target: default
+          arch: x86_64
+          avd-name: updater-api31
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash scripts/run-updater-emulator.sh
       - name: Retain Android runtime evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-emulator-evidence
-          path: work/android-emulator-qa/
+          path: |
+            work/android-emulator-qa/
+            work/android-update-qa/
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
