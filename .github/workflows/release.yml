@@ -1,25 +1,37 @@
 name: Build verified signed APK
-# TEST BRANCH VARIANT: private diagnostics build. No embedded credentials, no
-# publication. Includes signed 17.0.28->17.0.29 upgrade continuity evidence.
 on:
   workflow_dispatch: {}
+  workflow_call: {}
 permissions:
   contents: read
 jobs:
-  test-apk:
+  verify:
+    uses: ./.github/workflows/verify.yml
+  signed-apk:
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: '17'}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
-      - name: Unit tests
-        working-directory: android
-        run: bash gradlew :hotel:testDebugUnitTest --no-daemon
-      - name: Build signed test APK without embedded credentials
+      - name: Read semantic publication identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < android/VERSION)"
+          tag="v${version}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            test "$GITHUB_REF_NAME" = "$tag"
+          fi
+          printf 'RELEASE_TAG=%s\n' "$tag" >> "$GITHUB_ENV"
+          printf '%s/build-tools/34.0.0\n' "$ANDROID_HOME" >> "$GITHUB_PATH"
+      - name: Build with existing pilot signing key
         env:
           ORANGE_KEYSTORE_BASE64: ${{ secrets.ORANGE_KEYSTORE_BASE64 }}
           ORANGE_STORE_PASSWORD: ${{ secrets.ORANGE_STORE_PASSWORD }}
@@ -30,21 +42,32 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$ORANGE_KEYSTORE_BASE64"
-          # This build must never carry an embedded voice credential.
-          test -z "${FISH_API_KEY:-}"
-          test -z "${FISH_VOICE_ID:-}"
           export ORANGE_KEYSTORE="$RUNNER_TEMP/orange-pilot.jks"
           printf '%s' "$ORANGE_KEYSTORE_BASE64" | base64 --decode > "$ORANGE_KEYSTORE"
           trap 'rm -f "$ORANGE_KEYSTORE"' EXIT
           bash gradlew :hotel:assembleRelease --no-daemon
           mkdir -p "$RUNNER_TEMP/candidate"
-          cp hotel/build/outputs/apk/release/hotel-release.apk "$RUNNER_TEMP/candidate/Manzanilla-Reception-Test.apk"
+          cp hotel/build/outputs/apk/release/hotel-release.apk "$RUNNER_TEMP/candidate/Manzanilla-Reception.apk"
+      - name: Check installed-release continuity and APK identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/previous"
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern '*.apk' --dir "$RUNNER_TEMP/previous"
+          previous=("$RUNNER_TEMP/previous/"*.apk)
+          test "${#previous[@]}" -eq 1
+          python android/release_identity.py \
+            --apk "$RUNNER_TEMP/candidate/Manzanilla-Reception.apk" \
+            --previous-apk "${previous[0]}" --tag "$RELEASE_TAG" \
+            --repository "$GITHUB_REPOSITORY" --output "$RUNNER_TEMP/candidate/release-metadata.json"
       - name: Enable emulator hardware acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Screen-check the diagnostics activity on Android 10
+      - name: Upgrade the previous signed release on Android 10
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29
@@ -53,31 +76,16 @@ jobs:
           profile: pixel_2
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash scripts/screenshot-diagnostics.sh
-      - name: Verify signed 17.0.28 to 17.0.29 upgrade continuity on Android 10
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 29
-          target: default
-          arch: x86_64
-          profile: pixel_2
-          disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash scripts/verify-upgrade-28-to-29.sh
-      - uses: actions/upload-artifact@v4
+          script: bash scripts/verify-signed-upgrade.sh
+      - name: Retain signed upgrade evidence
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: upgrade-evidence
-          path: work/upgrade-evidence/
+          name: signed-upgrade-evidence
+          path: work/signed-upgrade-qa/
           if-no-files-found: ignore
       - uses: actions/upload-artifact@v4
         with:
-          name: fish-diagnostics-test-apk
+          name: orange-signed-pilot-apk
           path: ${{ runner.temp }}/candidate/*
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: diagnostics-screen-evidence
-          path: work/diagnostics-screen/
-          if-no-files-found: ignore
