@@ -146,40 +146,39 @@ class Updater(context: Context, private val onStatus: (String) -> Unit) {
                 ui.post {
                     checking.set(false)
                     if (ownership.generation == refreshGeneration && ownership.active == null) {
-                        onStatus("failed:Could not check for updates. Check your connection and tap to retry.")
+                        onStatus("failed:" + UpdateFailure.describe(e))
                     }
                 }
             }
         }.start()
     }
 
-    private fun getJson(url: String): JSONObject {
+    private fun getJson(url: String, stage: String): JSONObject {
         require(Uri.parse(url).scheme == "https") { "Update metadata requires HTTPS." }
         val request = Request.Builder().url(url).header("Accept", "application/vnd.github+json")
             .header("User-Agent", "Manzanilla").build()
         return http.newCall(request).execute().use {
-            check(it.isSuccessful) { "Release metadata HTTP ${it.code}" }
-            JSONObject(it.body?.string() ?: error("Empty release metadata"))
+            check(it.isSuccessful) { "$stage HTTP ${it.code}" }
+            JSONObject(it.body?.string() ?: error("$stage returned an empty response"))
         }
     }
 
     private fun releaseRequest(): UpdateRequest? {
-        val release = getJson(BuildConfig.FEED_URL)
-        if (release.optBoolean("draft") || release.optBoolean("prerelease")) return null
-        val tag = release.getString("tag_name")
-        if (!ReleaseVersion.valid(tag) || !tag.startsWith("v")) return null
-        val assets = release.getJSONArray("assets")
-        val entries = (0 until assets.length()).map { assets.getJSONObject(it) }
-        val manifest = entries.singleOrNull { it.optString("name") == "release-metadata.json" } ?: return null
-        val request = UpdateRequest.fromJson(getJson(manifest.getString("browser_download_url")))
-        require(request.tag == tag) { "Release tag/metadata mismatch" }
-        val asset = entries.singleOrNull { it.optString("browser_download_url") == request.url && it.optString("name").endsWith(".apk") }
-            ?: error("Release APK/metadata mismatch")
-        require(Uri.parse(request.url).path.orEmpty().contains("/releases/download/$tag/")) { "APK URL is not pinned to its release" }
-        val apiDigest = asset.optString("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")?.lowercase()
-        if (request.sha256 != null && apiDigest != null) require(request.sha256 == apiDigest) { "Release digests disagree" }
-        return request.copy(sha256 = apiDigest ?: request.sha256)
+        var primaryFailure: Exception? = null
+        try {
+            return UpdateFeed.parse(getJson(BuildConfig.FEED_URL, "update feed")) { getJson(it, "release manifest") }
+        } catch (e: Exception) {
+            primaryFailure = e
+            Log.w("UPD", "Primary update feed failed; trying the legacy release API", e)
+        }
+        try {
+            return UpdateFeed.parse(getJson(BuildConfig.LEGACY_FEED_URL, "update feed")) { getJson(it, "release manifest") }
+        } catch (fallbackFailure: Exception) {
+            Log.w("UPD", "Legacy release API failed as well", fallbackFailure)
+            throw primaryFailure
+        }
     }
+
 
     private fun resume(attempt: UpdateAttempt) {
         if (!ownership.owns(attempt)) return
