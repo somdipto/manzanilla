@@ -29,6 +29,8 @@ class FishTTS:
         self._rate = sample_rate
         self._endpoint = endpoint
         self._ws = None
+        self._reader_task: asyncio.Task | None = None
+        self.error = False
         self.audio: asyncio.Queue = asyncio.Queue()   # bytes chunks; None marks the end
         self.first_audio_at: float | None = None
 
@@ -43,11 +45,11 @@ class FishTTS:
         self._ws = await websockets.connect(
             self._endpoint,
             additional_headers={'Authorization': 'Bearer ' + self._key, 'model': MODEL},
-            open_timeout=15, max_size=2**22)
+            open_timeout=15, close_timeout=1, max_size=2**22)
         await self._send({'event': 'start', 'request': {
             'text': '', 'reference_id': self._voice, 'format': 'pcm',
             'sample_rate': self._rate, 'chunk_length': 120, 'normalize': True, 'latency': 'normal'}})
-        asyncio.get_running_loop().create_task(self._reader())
+        self._reader_task = asyncio.create_task(self._reader())
         return self
 
     async def _send(self, message: dict):
@@ -65,6 +67,7 @@ class FishTTS:
         await self._send({'event': 'stop'})
 
     async def _reader(self):
+        finished = False
         try:
             async for frame in self._ws:
                 try:
@@ -77,13 +80,22 @@ class FishTTS:
                         self.first_audio_at = time.time()
                     await self.audio.put(event['audio'])
                 elif kind == 'finish':
+                    if event.get('reason') == 'error':
+                        self.error = True
+                    finished = True
                     break
                 elif kind == 'error':
-                    LOG.warning('synthesis error: %s', event)
+                    # Provider payloads can contain utterance text or credentials.
+                    LOG.warning('synthesis returned an error')
+                    self.error = True
                     break
         except websockets.ConnectionClosed:
             pass
         finally:
+            # A provider that disappears mid-utterance must not look like a
+            # complete translation merely because some audio arrived first.
+            if not finished and self._ws is not None:
+                self.error = True
             await self.audio.put(None)
 
     async def close(self):
@@ -93,6 +105,10 @@ class FishTTS:
                 await ws.close()
             except Exception:
                 pass
+        task, self._reader_task = self._reader_task, None
+        if task:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         # Unblock any consumer still waiting on audio.
         try:
             self.audio.put_nowait(None)

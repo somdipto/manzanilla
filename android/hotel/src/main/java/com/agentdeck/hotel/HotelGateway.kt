@@ -2,6 +2,7 @@ package com.agentdeck.hotel
 
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.Dispatcher
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -24,14 +25,19 @@ class HotelGateway(
     private class Context(val lease: SessionOwner.Lease) {
         val id = UUID.randomUUID().toString()
         val calls = mutableSetOf<Call>()
+        var startCall: Call? = null
+        var startAttempted = false
         var ready = false
         var busy = false
         var closed = false
     }
     private var current: Context? = null
+    private val pendingStarts = mutableSetOf<Call>()
+    private var disposed = false
     val configured get() = base.startsWith("https://") && token.isNotBlank()
 
     @Synchronized fun begin(lease: SessionOwner.Lease) {
+        if (disposed) return
         end()
         current = Context(lease)
     }
@@ -101,7 +107,15 @@ class HotelGateway(
         val request = Request.Builder().url(base.trimEnd('/') + path).header("Authorization", "Bearer $token")
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
         val call = client.newCall(request)
-        synchronized(this) { if (context.closed) return; context.calls.add(call) }
+        synchronized(this) {
+            if (context.closed || disposed) return
+            context.calls.add(call)
+            if (path == "/api/device/operations/start") {
+                context.startAttempted = true
+                context.startCall = call
+                pendingStarts.add(call)
+            }
+        }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) = finish(call, JSONObject().put("status", "unavailable")
                 .put("text", "The hotel service could not be reached. Retry or ask reception for help."))
@@ -118,6 +132,13 @@ class HotelGateway(
             private fun finish(call: Call, value: JSONObject) {
                 synchronized(this@HotelGateway) {
                     context.calls.remove(call)
+                    val wasStart = context.startCall === call
+                    if (wasStart) {
+                        context.startCall = null
+                        pendingStarts.remove(call)
+                    }
+                    if (wasStart && context.closed) endRemote(context.id)
+                    if (disposed && pendingStarts.isEmpty()) client.dispatcher.executorService.shutdown()
                     if (current !== context || context.closed) return
                     callback(value)
                 }
@@ -128,18 +149,34 @@ class HotelGateway(
     @Synchronized fun end() {
         val context = current ?: return
         context.closed = true
-        context.calls.forEach { it.cancel() }
-        context.calls.clear()
+        // A start may already have committed remotely even if its response has
+        // not reached this device. Let it settle, then close this exact ID.
+        context.calls.filter { it !== context.startCall }.forEach { it.cancel() }
+        context.calls.retainAll(listOfNotNull(context.startCall).toSet())
         current = null
-        if (configured && context.ready) {
-            val request = Request.Builder().url(base.trimEnd('/') + "/api/device/operations/${context.id}/end")
-                .header("Authorization", "Bearer $token").post("{}".toRequestBody("application/json".toMediaType())).build()
-            client.newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) = Unit
-                override fun onResponse(call: Call, response: Response) { response.close() }
-            })
-        }
+        if (configured && context.startAttempted && context.startCall == null) endRemote(context.id)
     }
 
-    fun dispose() { end(); client.dispatcher.cancelAll(); client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown() }
+    /** Best-effort closure has its own dispatcher so Activity disposal cannot cancel it.
+     * A network-uncertain start or process death still needs server-side reconciliation.
+     */
+    private fun endRemote(id: String) {
+        val request = Request.Builder().url(base.trimEnd('/') + "/api/device/operations/$id/end")
+            .header("Authorization", "Bearer $token").post("{}".toRequestBody("application/json".toMediaType())).build()
+        val cleanup = client.newBuilder().dispatcher(Dispatcher()).callTimeout(30, TimeUnit.SECONDS).build()
+        cleanup.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) { cleanup.dispatcher.executorService.shutdown() }
+            override fun onResponse(call: Call, response: Response) {
+                response.close()
+                cleanup.dispatcher.executorService.shutdown()
+            }
+        })
+    }
+
+    @Synchronized fun dispose() {
+        end()
+        disposed = true
+        client.connectionPool.evictAll()
+        if (pendingStarts.isEmpty()) client.dispatcher.executorService.shutdown()
+    }
 }

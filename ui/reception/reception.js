@@ -168,10 +168,15 @@
   const sessionAudioText = () => ({ off:'Mic off', recording:'Mic on', muted:'Mic muted', stopping:'Releasing mic', unknown:'Mic state unknown · ask staff' })[state.audio];
   const sessionDock = () => {
     if (state.mode === 'translation') {
+      if (state.terminated) {
+        const safe = !state.active && state.audio === 'off';
+        return `<div class="session-actions" data-stopped="true"><div class="session-control"><div class="session-control-copy"><strong>Conversation stopped</strong><span>${esc(sessionAudioText())}</span></div></div>${action('restart', 'Try again', 'primary', !safe)}</div>`;
+      }
       const bands = state.micLevel > 0 ? state.bands || [state.micLevel, state.micLevel, state.micLevel] : [0, 0, 0];
       const muted = state.audio === 'muted';
       const label = muted ? 'Unmute the microphone' : 'Mute the microphone';
-      return `<button type="button" class="voice-ball" data-action="mute" data-hearing="${state.audio === 'recording'}" aria-pressed="${muted}" aria-label="${label}" style="--level:${state.micLevel};--b0:${bands[0]};--b1:${bands[1]};--b2:${bands[2]}">${muted ? icons.micOff : icons.mic}</button>`;
+      const enabled = state.active && !state.closed && ['recording','muted'].includes(state.audio);
+      return `<button type="button" class="voice-ball" data-action="mute" data-hearing="${state.audio === 'recording'}" aria-pressed="${muted}" aria-label="${label}" ${enabled ? '' : 'disabled'} style="--level:${state.micLevel};--b0:${bands[0]};--b1:${bands[1]};--b2:${bands[2]}">${muted ? icons.micOff : icons.mic}</button>`;
     }
     const stopped = state.closed || state.terminated;
     const restart = state.terminated && !state.active && state.audio === 'off';
@@ -183,6 +188,7 @@
     const button = content.querySelector('.voice-ball');
     if (!button) return;
     const muted = state.audio === 'muted';
+    button.disabled = !state.active || state.closed || !['recording','muted'].includes(state.audio);
     button.dataset.hearing = String(state.audio === 'recording');
     button.setAttribute('aria-pressed', String(muted));
     button.setAttribute('aria-label', muted ? 'Unmute the microphone' : 'Mute the microphone');
@@ -236,6 +242,7 @@
     const focusedElement = document.activeElement;
     const focusedAction = focusedElement?.dataset?.action;
     const focusedSelect = focusedElement?.dataset?.languageSide;
+    const focusedAssist = focusedElement?.id === 'assist-language';
     const focusedInput = focusedElement?.closest('#operation-form') ? { name:focusedElement.name,start:focusedElement.selectionStart,end:focusedElement.selectionEnd } : null;
     const scrollTop = content.scrollTop;
     const scrolls = [...content.querySelectorAll('.session-scroll,.draft,.language-list')].map(element => ({ top: element.scrollTop, follow: element.classList.contains('session-scroll') && element.scrollHeight - element.clientHeight - element.scrollTop < 60 }));
@@ -251,6 +258,7 @@
     });
     if (focusedAction) [...content.querySelectorAll('[data-action]')].find(button => button.dataset.action === focusedAction)?.focus({ preventScroll:true });
     if (focusedSelect) content.querySelector(`[data-language-side="${focusedSelect}"]`)?.focus({ preventScroll:true });
+    if (focusedAssist) content.querySelector('#assist-language')?.focus({ preventScroll:true });
     if (focusedInput) {
       const input = [...content.querySelectorAll('#operation-form input,#operation-form textarea')].find(element => element.name === focusedInput.name);
       input?.focus({ preventScroll:true });
@@ -616,7 +624,7 @@
       state.audio = event.state;
       if (state.audio !== 'recording') state.micLevel = 0;
       if (!finishNavigation()) {
-        if (state.page === 'active' && state.mode === 'translation') {
+        if (state.page === 'active' && state.mode === 'translation' && !state.terminated) {
           // A mic toggle only changes the dock and privacy line; rebuilding the
           // transcript would flicker and drop streaming captions mid-utterance.
           const privacy = document.getElementById('privacy');

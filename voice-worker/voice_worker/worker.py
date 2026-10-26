@@ -9,6 +9,7 @@ connections so a failure tears down one room, never the worker.
 import asyncio
 import logging
 import os
+import time
 
 from livekit import api
 
@@ -16,6 +17,9 @@ from .llm import TranslateStream
 from .session import Bench, InterpreterSession
 
 LOG = logging.getLogger('voice_worker')
+MAX_ROOM_ATTEMPTS = 3
+RETRY_DELAYS = (2.0, 4.0)
+DISCOVERY_INTERVAL = 1.5
 
 
 def config_from_env(env=os.environ) -> dict:
@@ -46,32 +50,60 @@ def config_from_env(env=os.environ) -> dict:
 async def serve_forever(config: dict):
     lk = api.LiveKitAPI(config['livekit_url'], config['api_key'], config['api_secret'])
     active: dict[str, asyncio.Task] = {}
+    attempts: dict[str, int] = {}
+    retry_at: dict[str, float] = {}
     LOG.info('worker online at %s, watching prefix %r', config['livekit_url'], config['prefix'])
-    while True:
-        try:
-            rooms = await lk.room.list_rooms(api.ListRoomsRequest())
-            names = {room.name for room in rooms.rooms if room.name.startswith(config['prefix'])}
-            for name in sorted(names - set(active)):
-                bench = Bench(config['bench_log'], name)
-                session = InterpreterSession(
-                    name, livekit_url=config['livekit_url'], api_key=config['api_key'],
-                    api_secret=config['api_secret'], fish_key=config['fish_key'],
-                    voice_id=config['voice_id'], llm=config['llm'],
-                    greetings=config['greetings'], bench=bench,
-                    max_seconds=config['max_seconds'])
-                active[name] = asyncio.create_task(session.run(), name=f'session:{name}')
-                LOG.info('session started for room %s', name)
-            for name in sorted(set(active) - names):
-                task = active[name]
-                if task.done():
-                    del active[name]
-            for name in [n for n, task in active.items() if task.done()]:
-                active.pop(name)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            LOG.exception('room discovery failed; retrying')
-        await asyncio.sleep(1.5)
+    try:
+        while True:
+            try:
+                rooms = await lk.room.list_rooms(api.ListRoomsRequest())
+                names = {room.name for room in rooms.rooms if room.name.startswith(config['prefix'])}
+                for name, task in list(active.items()):
+                    if name not in names and not task.done() and not task.cancelling():
+                        task.cancel()
+                    if not task.done():
+                        continue
+                    active.pop(name)
+                    if name not in names:
+                        attempts.pop(name, None)
+                        retry_at.pop(name, None)
+                    elif task.cancelled() or task.exception() is not None or task.result() is not True:
+                        count = attempts[name]
+                        if count < MAX_ROOM_ATTEMPTS:
+                            retry_at[name] = time.monotonic() + RETRY_DELAYS[count - 1]
+                        else:
+                            LOG.error('session retry limit reached for room %s', name)
+                    else:
+                        # A complete conversation must not silently restart merely
+                        # because LiveKit has not yet removed its room.
+                        attempts[name] = MAX_ROOM_ATTEMPTS
+                for name in set(attempts) - names - set(active):
+                    attempts.pop(name, None)
+                    retry_at.pop(name, None)
+                now = time.monotonic()
+                for name in sorted(names - set(active)):
+                    if attempts.get(name, 0) >= MAX_ROOM_ATTEMPTS or now < retry_at.get(name, 0):
+                        continue
+                    bench = Bench(config['bench_log'], name)
+                    session = InterpreterSession(
+                        name, livekit_url=config['livekit_url'], api_key=config['api_key'],
+                        api_secret=config['api_secret'], fish_key=config['fish_key'],
+                        voice_id=config['voice_id'], llm=config['llm'],
+                        greetings=config['greetings'], bench=bench,
+                        max_seconds=config['max_seconds'])
+                    active[name] = asyncio.create_task(session.run(), name=f'session:{name}')
+                    attempts[name] = attempts.get(name, 0) + 1
+                    LOG.info('session started for room %s', name)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOG.exception('room discovery failed; retrying')
+            await asyncio.sleep(DISCOVERY_INTERVAL)
+    finally:
+        for task in active.values():
+            task.cancel()
+        await asyncio.gather(*active.values(), return_exceptions=True)
+        await lk.aclose()
 
 
 def main():

@@ -16,7 +16,11 @@ Install the verified signed update in place; do not uninstall existing app data.
 
 Use Hotel assistance to select a language and open microphone-off support. Arrival guidance shows configured instructions only and never completes check-in. Questions use configured knowledge; missing answers direct guests to staff. Messages and taxi requests require exact review and confirmation before a durable inbox write. A receipt means saved in the staff inbox, not staff acknowledgement or a taxi booking. Human-contact options do not claim an answered call.
 
-Live translation uses the Fish interpreter route: the release build carries the CI-injected credential, and a configured hotel service must set FISH_API_KEY for managed session minting. There is no fallback provider; do not add one. Retained local greeting playback is not a live-speech demonstration. Physical-device echo, latency and full-duplex behavior remain unverified; validate them during supervised use.
+The release does not contain a shared Fish credential. Configure the managed hotel backend and its selected voice route, or save a device credential in authenticated staff setup. See [the self-hosted route](selfhosted-voice-route.md) for the separate worker deployment. Retained local greeting playback is not a live-speech demonstration. Physical-device echo, latency and full-duplex behavior remain unverified; validate them during supervised use.
+
+Hotel operation cleanup is best effort if the tablet process dies or a network
+failure leaves a start outcome uncertain. The server also expires stale sessions;
+a durable outbox and server reconciliation are required for stronger guarantees.
 
 ## Before supervised use
 

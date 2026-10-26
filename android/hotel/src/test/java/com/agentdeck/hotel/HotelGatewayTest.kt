@@ -198,6 +198,39 @@ class HotelGatewayTest {
         assertNull(requests.poll(200, TimeUnit.MILLISECONDS))
     }
 
+    @Test fun disposeDoesNotCancelTheExactSessionEnd() {
+        prepareDraft()
+        gateway.dispose()
+        val end = request()
+        assertTrue(end.path.matches(Regex("/api/device/operations/[0-9a-f-]+/end")))
+        assertEquals("Bearer fixture-only-device-credential", end.authorization)
+    }
+
+    @Test fun disposeWaitsForInFlightStartThenClosesItsSessionWithoutDelivering() {
+        val release = CountDownLatch(1)
+        replies.add(Reply(200, JSONObject().put("status", "ready").toString(), release))
+        gateway.action(lease, "message", note)
+        val start = request()
+        val serverSession = start.body.getString("session_id")
+        gateway.dispose()
+        release.countDown()
+        assertEquals("/api/device/operations/$serverSession/end", request().path)
+        assertNull(events.poll(200, TimeUnit.MILLISECONDS))
+        assertNull(requests.poll(200, TimeUnit.MILLISECONDS))
+    }
+
+    @Test fun disposedUncertainStartStillAttemptsScopedCleanup() {
+        val release = CountDownLatch(1)
+        replies.add(Reply(503, "{}", release))
+        gateway.action(lease, "message", note)
+        val start = request()
+        val serverSession = start.body.getString("session_id")
+        gateway.dispose()
+        release.countDown()
+        assertEquals("/api/device/operations/$serverSession/end", request().path)
+        assertNull(events.poll(200, TimeUnit.MILLISECONDS))
+    }
+
     @Test fun plaintextConfigurationCannotReachHotelTransport() {
         gateway.dispose()
         gateway = newGateway("http://localhost:${server.localPort}")

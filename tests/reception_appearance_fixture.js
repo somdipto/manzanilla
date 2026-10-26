@@ -54,6 +54,9 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
   assert(doc.querySelector('.home-action-main').dataset.action === 'reception', 'After-hours reception offers assistance first');
   click('[data-action="reception"]');
   assert(doc.querySelector('#content').dataset.page === 'languages', 'After-hours primary action opens hotel assistance');
+  doc.querySelector('#assist-language').focus();
+  receive({ type: 'connection', connected: true });
+  assert(doc.activeElement?.id === 'assist-language', 'Connection updates preserve assistance language focus');
   click('[data-action="back"]');
   assert(doc.documentElement.dataset.night === 'true', 'Navigating back preserves after-hours reception');
   assert(styles('.wordmark').color === 'rgb(24, 44, 56)', 'Brand is readable on day background');

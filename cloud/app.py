@@ -3,14 +3,14 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from .db import Store
 from .models import Hotel, BookingLookup
 from .gateway import Gateway
 from .realtime import relay
 from .operations import Operations, Start, Action, Confirmation
-from .livekit_route import mint as livekit_mint, end as end_livekit, ROOM_PREFIX as LIVEKIT_ROOM_PREFIX
+from .livekit_route import mint as livekit_mint, end as end_livekit
 from .fish import FishSession, mint, end as end_fish, end_request as end_fish_request, revoke_sessions, NOT_CREATED
 from .models import Strict
 from typing import Literal
@@ -84,7 +84,11 @@ async def revoke(ident: str):
     async def close(ws):
         try: await ws.close(code=4401)
         except (RuntimeError,WebSocketDisconnect): pass
-    await asyncio.gather(revoke_sessions(store,ident),*(close(ws) for ws in closing))
+    results = await asyncio.gather(revoke_sessions(store,ident),*(close(ws) for ws in closing))
+    # Revocation of the credential succeeds independently of upstream room
+    # cleanup. Preserve the retryable lease and tell staff when cleanup is pending.
+    if not results[0]:
+        return JSONResponse(status_code=202, content={'status':'revoked','voice_cleanup':'pending'})
     return {'status':'revoked'}
 
 @app.get('/api/hotels/{hid}/overview')
@@ -180,9 +184,13 @@ async def fish_session(value: FishSession, authorization: str = Header(default='
 
 @app.post('/api/device/fish-session/{session_id}/end')
 async def fish_session_end(session_id: str, authorization: str = Header(default='')):
-    if session_id.startswith(LIVEKIT_ROOM_PREFIX):
-        return await end_livekit(store,device_auth(authorization),session_id)
-    return await end_fish(store,device_auth(authorization),session_id)
+    dev = device_auth(authorization)
+    rows = store.rows('SELECT route FROM fish_sessions WHERE session_id=? AND device=? AND hotel=?',
+                      (session_id, dev['id'], dev['hotel']))
+    if not rows: raise HTTPException(404, 'Interpreter session not found')
+    if rows[0]['route'] == 'livekit': return await end_livekit(store,dev,session_id)
+    if rows[0]['route'] == 'fish': return await end_fish(store,dev,session_id)
+    raise HTTPException(503, 'Interpreter session unavailable')
 
 @app.post('/api/device/fish-session-requests/{request_id}/end')
 async def fish_session_request_end(request_id: str, authorization: str = Header(default='')):

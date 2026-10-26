@@ -6,6 +6,8 @@ fun javaString(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"",
 android {
     namespace = "com.agentdeck.hotel"
     compileSdk = 34
+    // Private same-signer instrumentation is used only for disposable release-upgrade tests.
+    testBuildType = if (project.hasProperty("upgradeFixture")) "release" else "debug"
     defaultConfig {
         fun injected(name: String): String {
             val env = System.getenv(name)
@@ -20,7 +22,8 @@ android {
         applicationId = "dev.orange.hotel"
         minSdk = 26
         targetSdk = 34
-        testInstrumentationRunner = "com.agentdeck.hotel.VoiceLifecycleFixture"
+        testInstrumentationRunner = if (project.hasProperty("upgradeFixture"))
+            "com.agentdeck.hotel.UpgradeDataFixture" else "com.agentdeck.hotel.VoiceLifecycleFixture"
         // Increment explicitly for every published APK; never derive identity from a CI run.
         versionCode = rootProject.file("VERSION_CODE").readText().trim().toInt().also {
             require(it > 34) { "Release candidates must supersede published code 34" }

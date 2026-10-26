@@ -51,6 +51,41 @@ provision_lock = asyncio.Lock()
 SUPPORTED_LANGUAGES = frozenset('en ja zh ko es fr de pt it nl ar hi id tr ru bg sr hr cs sk pl uk ro hu el sv da no fi et lv lt ca he fa ur kk ka hy bn ta te kn mr gu pa ne th vi ms tl af'.split())
 UNAVAILABLE = 'Interpreter session unavailable. Ask staff to check provider configuration, entitlement and quota; no fallback was started.'
 NOT_CREATED = {'X-Manzanilla-Session-Creation':'not-created'}
+# This diagnostic is advisory only. It never establishes whether a session was
+# created; the separate NOT_CREATED header and durable lease remain authoritative.
+VOICE_FAILURE_HEADER = 'X-Manzanilla-Voice-Failure'
+FAILURE_STAGES = frozenset({'configuration','admission','tool_lookup','tool_fetch','tool_create',
+                            'agent_create','agent_publish','session_create','session_ticket'})
+FAILURE_CATEGORIES = frozenset({'http','timeout','network','response','contract',
+                                'unconfigured','budget','conflict','unauthorized'})
+
+def failure_headers(stage, category, status=0):
+    """Bounded public reference: no exception text, response body, URL or credential."""
+    valid_status = type(status) is int and (400 <= status <= 599 if category == 'http' else status == 0)
+    if stage not in FAILURE_STAGES or category not in FAILURE_CATEGORIES or not valid_status:
+        raise ValueError('Invalid voice failure reference')
+    return {VOICE_FAILURE_HEADER:f'{stage}:{category}:{status}'}
+
+class CaptionContractError(ValueError):
+    pass
+
+class StartupDiagnostics:
+    def __init__(self):
+        self.stage = 'admission'
+
+    def enter(self, stage):
+        if stage not in FAILURE_STAGES: raise ValueError('Invalid startup stage')
+        self.stage = stage
+
+    def headers(self, error):
+        if isinstance(error,httpx.HTTPStatusError) and 400 <= error.response.status_code <= 599:
+            return failure_headers(self.stage,'http',error.response.status_code)
+        if isinstance(error,(httpx.TimeoutException,TimeoutError)):
+            return failure_headers(self.stage,'timeout')
+        if isinstance(error,httpx.RequestError):
+            return failure_headers(self.stage,'network')
+        return failure_headers(self.stage,'contract' if isinstance(error,CaptionContractError) else 'response')
+
 # Fish documents these as validation/auth/billing/state refusals, before creation.
 # A received 5xx is not proof that POST /sessions had no effect.
 # https://docs.fish.audio/api-reference/agent-errors
@@ -89,7 +124,8 @@ def duration_cap(name, default):
         if value < 0: raise ValueError('Negative duration cap')
         return value
     except ValueError:
-        raise HTTPException(503,'Interpreter duration budget is not configured correctly') from None
+        raise HTTPException(503,'Interpreter duration budget is not configured correctly',
+                            headers=failure_headers('configuration','contract')) from None
 
 async def terminate(store, lease):
     """Retain the blocking lease if the provider cannot confirm termination."""
@@ -134,6 +170,15 @@ async def end_request(store, dev, request_id):
               (ident,time.time()))
     lease = store.rows('SELECT * FROM fish_sessions WHERE id=?',(ident,))[0]
     if lease['status'] == 'creating': raise HTTPException(503,UNAVAILABLE)
+    if lease['route'] == 'livekit':
+        # The route and room name are persisted at reservation, not inferred
+        # from the current VOICE_ROUTE or a provider's naming convention.
+        from .livekit_route import terminate as terminate_livekit
+        if not lease['session_id'] or not await terminate_livekit(store, lease):
+            raise HTTPException(503,UNAVAILABLE)
+        if not store.auth_device_lease(ident): raise HTTPException(401,'Unauthorized device')
+        return {'status':'ended'}
+    if lease['route'] != 'fish': raise HTTPException(503,UNAVAILABLE)
     if not lease['session_id'] and lease['status'] not in {'ended','expired'}:
         # A lost creation response is not "not created". Fish documents exact end_user_id queries.
         try:
@@ -160,9 +205,16 @@ async def end_request(store, dev, request_id):
 
 async def revoke_sessions(store, device):
     store.run("UPDATE fish_sessions SET status='revoked' WHERE device=? AND status IN ('creating','live','uncertain','ending')",(device,))
-    rows = store.rows("SELECT * FROM fish_sessions WHERE device=? AND session_id IS NOT NULL AND status='revoked'",(device,))
+    rows = store.rows("SELECT * FROM fish_sessions WHERE device=? AND status='revoked'",(device,))
     if rows:
-        await asyncio.gather(*(terminate(store,row) for row in rows))
+        from .livekit_route import terminate as terminate_livekit
+        async def close(row):
+            if not row['session_id']: return False
+            if row['route'] == 'livekit': return await terminate_livekit(store, row)
+            if row['route'] == 'fish': return await terminate(store, row)
+            return False
+        return all(await asyncio.gather(*(close(row) for row in rows)))
+    return True
 
 def agent_config(voice, caption_tool_id=None, report_policy=None):
     return {
@@ -179,21 +231,25 @@ def agent_config(voice, caption_tool_id=None, report_policy=None):
                         'response_wait_ms':300,'response_max_wait_ms':600,
                         'speculative_response':True}}
 
-async def ensure_caption_tool(client, contract=None):
+async def ensure_caption_tool(client, contract=None, diagnostics=None):
     """Reuse the immutable display contract across devices/configurations, never edit it."""
     contract = CAPTION_TOOL if contract is None else contract
+    diagnostics = diagnostics or StartupDiagnostics()
+    diagnostics.enter('tool_lookup')
     response = await client.get(BASE+'/tools',params={'search':contract['name'],'page_size':100})
     response.raise_for_status()
     listing = response.json()
     for summary in listing['tools']:
         if summary.get('name') != contract['name']: continue
         tool_id = provider_id(summary['tool_id'])
+        diagnostics.enter('tool_fetch')
         response = await client.get(BASE+'/tools/'+tool_id)
         response.raise_for_status()
         definition = response.json()
         if all(definition.get(key) == value for key,value in contract.items()): return tool_id
-        raise ValueError('Caption tool contract was changed; do not mutate a live tool')
-    if listing.get('has_more'): raise ValueError('Caption tool search is incomplete')
+        raise CaptionContractError('Caption tool contract was changed; do not mutate a live tool')
+    if listing.get('has_more'): raise CaptionContractError('Caption tool search is incomplete')
+    diagnostics.enter('tool_create')
     response = await client.post(BASE+'/tools',json=contract)
     response.raise_for_status()
     return provider_id(response.json()['tool_id'])
@@ -201,19 +257,21 @@ async def ensure_caption_tool(client, contract=None):
 async def mint(store, dev, value):
     try:
         if value.guest_language == value.staff_language:
-            raise HTTPException(422,'Choose two different interpreter languages')
+            raise HTTPException(422,'Choose two different interpreter languages',
+                                headers=failure_headers('configuration','contract'))
         key, voice = os.getenv('FISH_API_KEY',''), os.getenv('FISH_VOICE_ID','')
         if not key or not voice:
-            raise HTTPException(503,'Interpreter is unavailable. Ask staff to configure the trusted voice backend, or use the operator button.')
+            raise HTTPException(503,'Interpreter is unavailable. Ask staff to configure the trusted voice backend, or use the operator button.',
+                                headers=failure_headers('configuration','unconfigured'))
         # These are reserved conversation seconds, not a dollar ceiling. Retain the full
         # reservation even after early end/failure; pricing and final usage are unknown.
         try:
             ident = store.reserve_fish(dev,MAX_DURATION,duration_cap('FISH_HOTEL_DAILY_SECONDS',1800),
                                        duration_cap('FISH_ACCOUNT_DAILY_SECONDS',3600),CREATION_SECONDS,MAX_JOIN_SECONDS,
                                        reservation=request_lease(dev,value.request_id) if value.request_id else None)
-        except PermissionError: raise HTTPException(401,'Unauthorized device') from None
-        except ValueError: raise HTTPException(409,'Interpreter session already outstanding') from None
-        except OverflowError: raise HTTPException(429,'Interpreter daily duration budget exhausted') from None
+        except PermissionError: raise HTTPException(401,'Unauthorized device',headers=failure_headers('admission','unauthorized')) from None
+        except ValueError: raise HTTPException(409,'Interpreter session already outstanding',headers=failure_headers('admission','conflict')) from None
+        except OverflowError: raise HTTPException(429,'Interpreter daily duration budget exhausted',headers=failure_headers('admission','budget')) from None
     except HTTPException as exc:
         # A reused identity may belong to an earlier possibly-created session.
         # Preflight refusal of this call cannot settle that original request.
@@ -243,9 +301,10 @@ async def mint(store, dev, value):
     result = None
     failure = None
     succeeded = False
+    diagnostics = StartupDiagnostics()
     def authorized():
         if not store.fish_authorized(ident,creating=True):
-            raise HTTPException(401,'Interpreter session expired or device revoked')
+            raise HTTPException(401,'Interpreter session expired or device revoked',headers=failure_headers('admission','unauthorized'))
     try:
         async with asyncio.timeout(CREATION_SECONDS):
             async with httpx.AsyncClient(timeout=20, headers={'Authorization':'Bearer '+key}) as client:
@@ -254,8 +313,9 @@ async def mint(store, dev, value):
                     rows = store.rows('SELECT * FROM provider_agents WHERE provider=?',(namespace,))
                     if not rows:
                         if value.caption_protocol:
-                            config = agent_config(voice, await ensure_caption_tool(client, caption_tool), report_policy)
+                            config = agent_config(voice, await ensure_caption_tool(client, caption_tool, diagnostics), report_policy)
                             authorized()
+                        diagnostics.enter('agent_create')
                         response = await client.post(BASE+'/agents',json={'name':'Manzanilla interpreter','config':config})
                         response.raise_for_status()
                         agent_id = provider_id(response.json()['agent_id'])
@@ -265,12 +325,14 @@ async def mint(store, dev, value):
                     agent = rows[0]
                     authorized()
                     if not agent['published']:
+                        diagnostics.enter('agent_publish')
                         response = await client.post(BASE+'/agents/'+provider_id(agent['agent_id'])+'/publish')
                         response.raise_for_status()
                         store.run('UPDATE provider_agents SET published=1 WHERE provider=?',(namespace,))
                         authorized()
                 authorized()
                 attempted = True
+                diagnostics.enter('session_create')
                 response = await client.post(BASE+'/sessions',json={
                     'agent_id':agent['agent_id'],'end_user_id':ident,'timezone':store.hotel(dev['hotel'])['timezone'],
                     'overrides':{'system_prompt':prompt,'language':value.staff_language,'first_message':GREETINGS[value.guest_language],
@@ -281,6 +343,7 @@ async def mint(store, dev, value):
                     'record_audio':False,'tool_events':False,'world_context':False})
                 creation_rejected = response.status_code in CREATION_REJECTIONS
                 response.raise_for_status()
+                diagnostics.enter('session_ticket')
                 data = response.json()
                 session_id = provider_id(data['session_id'])
                 # Store ownership before validating or returning any transport secrets.
@@ -303,13 +366,14 @@ async def mint(store, dev, value):
         activated = store.run("""UPDATE fish_sessions SET status='live' WHERE id=? AND status='creating'
             AND creation_deadline>? AND expires>? AND EXISTS(SELECT 1 FROM credentials c
             WHERE c.id=fish_sessions.device AND c.hotel=fish_sessions.hotel AND c.role='device' AND c.hash=fish_sessions.credential_hash)""",(ident,time.time(),time.time()))
-        if not activated.rowcount: raise HTTPException(401,'Interpreter session expired or device revoked')
+        if not activated.rowcount:
+            raise HTTPException(401,'Interpreter session expired or device revoked',headers=failure_headers('admission','unauthorized'))
         succeeded = True
         return result
     except HTTPException as exc:
         failure = exc
-    except (httpx.HTTPError,KeyError,ValueError,TypeError,TimeoutError):
-        failure = HTTPException(503,UNAVAILABLE)
+    except (httpx.HTTPError,KeyError,ValueError,TypeError,TimeoutError) as exc:
+        failure = HTTPException(503,UNAVAILABLE,headers=diagnostics.headers(exc))
     finally:
         if not succeeded:
             if not attempted or creation_rejected:

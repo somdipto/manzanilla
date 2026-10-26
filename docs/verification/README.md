@@ -4,6 +4,37 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.31 full-duplex and delivery candidate
+
+Base merged main `eb6e7fa`, version 17.0.31/code 61. This is a source candidate,
+not a published release or a deployed backend. See the [local synthetic LiveKit
+A/B evidence](livekit-synthetic-2026-10-27.txt) for exact artifacts and scope.
+
+- Full Python suite: **401 passed**, with two dependency deprecation warnings;
+  local worker dependencies were installed separately in a temporary directory.
+- Node: **14 passed**; generated reception assets match source. All **five**
+  isolated Chromium154 scenarios passed, including stopped-session retry and
+  assistance-language focus preservation.
+- Android JVM: **138 passed**, zero failures/errors/skips. Debug lint: **zero
+  errors**, 14 warnings. Debug and instrumentation APK assembly passed with
+  the pinned-source AudioSwitch substitution described below.
+- LiveKit 1.13.10 with synthetic audio and fake speech/model providers: the
+  prior main worker did not receive the microphone during its greeting; this
+  candidate received it, handled a simulated user-turn interruption, emitted
+  audio and delivered a matching caption. No provider or acoustic claim follows.
+- An isolated 19-chunk PCM fixture went from 380 ms of padded frames to 60 ms
+  with the same resampled samples and one terminal pad. This is a deterministic
+  pipeline fixture, not a measured speech-to-speech latency improvement.
+
+Current Fish and language-model credentials or verified remaining paid-test
+budget were not available locally. No paid calls, real guest data, physical
+tablet, live voice-quality comparison or deployed-service change was involved.
+Android12 unattended-update eligibility and Android reconnect after a short
+initial LiveKit token need their respective CI/physical-device checks; Android
+still controls mandatory installation confirmation. The self-hosted route
+currently requires a single worker per room namespace and has additional
+[revocation and language-attribution limits](../selfhosted-voice-route.md).
+
 ## 17.0.28 Android startup and release delivery
 
 Base merged main `02dce27`, version 17.0.28/code58. See

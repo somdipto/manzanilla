@@ -26,6 +26,20 @@ class Store:
         CREATE UNIQUE INDEX IF NOT EXISTS fish_device_lease ON fish_sessions(device) WHERE status IN ('creating','live','uncertain','ending','revoked');
         CREATE INDEX IF NOT EXISTS fish_daily_budget ON fish_sessions(created,hotel);
         ''')
+        # Older ledgers used the room prefix to distinguish transports. Record the
+        # route durably so a later configuration flip cannot redirect cleanup to
+        # another provider. A legacy row without a room ID remains conservatively
+        # classified as Fish: its provider outcome cannot be inferred safely.
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            columns = {row['name'] for row in self.db.execute('PRAGMA table_info(fish_sessions)')}
+            if 'route' not in columns:
+                self.db.execute("ALTER TABLE fish_sessions ADD COLUMN route TEXT NOT NULL DEFAULT 'fish'")
+                self.db.execute("UPDATE fish_sessions SET route='livekit' WHERE substr(session_id,1,5)='manz-'")
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
         self.db.commit()
     def run(self, sql, args=()):
         with self.lock:
@@ -58,7 +72,10 @@ class Store:
         rows = self.rows('SELECT id,hotel,role FROM credentials WHERE hash=? AND role=?',
                          (hashlib.sha256(token.encode()).hexdigest(), role))
         return rows[0] if rows else None
-    def reserve_fish(self, dev, duration, hotel_cap, account_cap, creation_seconds, token_seconds, reservation=None):
+    def reserve_fish(self, dev, duration, hotel_cap, account_cap, creation_seconds, token_seconds,
+                     reservation=None, *, route='fish', session_id_for=None):
+        if route not in {'fish', 'livekit'}:
+            raise ValueError('Unknown interpreter route')
         now = time.time()
         day = int(now // 86400) * 86400
         with self.lock:
@@ -79,9 +96,10 @@ class Store:
                 ident = reservation or str(uuid.uuid4())
                 # Only a validated live response establishes a trustworthy expiry. A
                 # lost creation response stays blocking until termination is confirmed.
-                self.db.execute('INSERT INTO fish_sessions(id,hotel,device,credential_hash,session_id,created,creation_deadline,expires,reserved_seconds,status) VALUES(?,?,?,?,?,?,?,?,?,?)',
-                    (ident,dev['hotel'],dev['id'],credential['hash'],None,now,now+creation_seconds,
-                     now+creation_seconds+token_seconds+duration,duration,'creating'))
+                session_id = session_id_for(ident) if session_id_for else None
+                self.db.execute('INSERT INTO fish_sessions(id,hotel,device,credential_hash,session_id,created,creation_deadline,expires,reserved_seconds,status,route) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                    (ident,dev['hotel'],dev['id'],credential['hash'],session_id,now,now+creation_seconds,
+                     now+creation_seconds+token_seconds+duration,duration,'creating',route))
                 self.db.commit()
                 return ident
             except BaseException:

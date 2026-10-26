@@ -133,6 +133,14 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
     assert(bubbles()[3].classList.contains('caption-guest'), `${guest}/${staff}: guest stays left`);
     assert(bubbles()[0].getBoundingClientRect().right > bubbles()[3].getBoundingClientRect().right, `${guest}/${staff}: physical bubble positions match sides`);
   }
+  const originalSession = scope.session_id;
+  receive({ ...scope, type: 'reception_event', phase: 'error', text: 'Simulated service failure' });
+  assert(!doc.querySelector('.voice-ball'), 'A stopped conversation has no nonfunctional mute button');
+  assert(doc.querySelector('[data-action="restart"]')?.disabled, 'Retry waits while microphone release is uncertain');
+  receive({ ...scope, type: 'audio_state', state: 'off' });
+  click('[data-action="restart"]');
+  const restarted = messages.filter(message => message.action === 'start').at(-1);
+  assert(restarted.session_id !== originalSession && bubbles().length === 4, 'Retry starts a new session while retaining visible history');
   win.__lastScope = scope;
   return { frame, replayMs, assertions: 'Model language, repeats, unknown continuity, late language, finality, escaping, scrolling, session fencing, eight language orientations and physical positions' };
 }

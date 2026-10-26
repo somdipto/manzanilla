@@ -19,6 +19,7 @@ import websockets
 
 ENDPOINT = 'wss://api.fish.audio/v1/asr/realtime'
 MODEL = 'transcribe-stream-1'
+START_TIMEOUT_SECONDS = 15
 LOG = logging.getLogger('voice_worker.asr')
 
 
@@ -40,6 +41,7 @@ class FishASR:
         self._key = api_key
         self._endpoint = endpoint
         self._ws = None
+        self._reader_task: asyncio.Task | None = None
         self.events: asyncio.Queue = asyncio.Queue()
         self.session_id: str | None = None
 
@@ -55,22 +57,23 @@ class FishASR:
             self._endpoint,
             additional_headers={'Authorization': 'Bearer ' + self._key, 'model': MODEL},
             open_timeout=15, max_size=2**20)
-        await self._send({'type': 'config',
-                          'audio': {'format': 'pcm_s16le', 'sample_rate': 16000, 'channels': 1},
-                          'turn_detection': {'mode': 'auto', 'eager': True},
-                          'results': {'drafts': False, 'vad_events': False}})
-        asyncio.get_running_loop().create_task(self._reader())
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            event = await self.events.get()
-            if event.get('type') == 'session_started':
-                self.session_id = event.get('session_id')
-                return self
-            if event.get('type') == 'error':
-                await self.close()
-                raise RuntimeError('speech recognition rejected the session: ' + str(event.get('message')))
-        await self.close()
-        raise TimeoutError('speech recognition session did not start')
+        try:
+            await self._send({'type': 'config',
+                              'audio': {'format': 'pcm_s16le', 'sample_rate': 16000, 'channels': 1},
+                              'turn_detection': {'mode': 'auto', 'eager': True},
+                              'results': {'drafts': False, 'vad_events': False}})
+            self._reader_task = asyncio.create_task(self._reader())
+            async with asyncio.timeout(START_TIMEOUT_SECONDS):
+                while True:
+                    event = await self.events.get()
+                    if event.get('type') == 'session_started':
+                        self.session_id = event.get('session_id')
+                        return self
+                    if event.get('type') in ('error', 'closed'):
+                        raise RuntimeError('speech recognition closed or rejected the session')
+        except BaseException:
+            await self.close()
+            raise
 
     async def _send(self, message: dict):
         if self._ws is not None:
@@ -105,3 +108,7 @@ class FishASR:
                 await ws.close()
             except Exception:
                 pass
+        task, self._reader_task = self._reader_task, None
+        if task:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

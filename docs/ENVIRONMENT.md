@@ -17,11 +17,11 @@ Application-level inbox payloads are not encrypted by the database layer. Config
 
 Authenticated staff setup accepts the actual HTTPS hotel service URL and a device credential. They are stored as one encrypted bundle through `HotelConnection` / `SecretStore`, using authenticated encryption and a device-keystore key. Replacing the bundle cannot accidentally pair a new token with an old URL. The URL cannot contain login information, query parameters or a fragment.
 
-The signed release compiles `FISH_API_KEY` from the CI secret when the device store is empty. No backend URL, device token, or administrator credential is compiled into the APK. Legacy saved voice credentials remain encrypted. Old local-only notes are not automatically uploaded or erased; they must not be interpreted as staff delivery.
+Current signed releases do not embed a shared Fish credential, backend URL, device token or administrator credential. A staff-saved voice credential remains encrypted. Devices that depended solely on an older embedded credential need an enrolled hotel backend or a staff-saved credential before translation can start. Old local-only notes are not automatically uploaded or erased; they must not be interpreted as staff delivery.
 
 ## Live audio route
 
-Live translation runs through the Fish interpreter route only; there is no fallback to another provider and no automatic provider switching. The release APK compiles the CI-injected Fish credential; a staff-saved credential overrides it on one device. With a configured hotel service the device requests a managed session from the backend mint endpoint, which requires the service-side FISH_API_KEY; without that variable the endpoint refuses with 503 and no provider call. The legacy generic relay admission endpoint and its websocket stay disabled. Staff-led operational endpoints remain available, and existing session-end/revocation handling is retained so known sessions can still be cleaned up.
+Direct translation uses a staff-saved Fish credential. An enrolled device instead requests a managed session from the backend: `VOICE_ROUTE=fish` uses the hosted Fish agent, while `VOICE_ROUTE=livekit` uses the separately deployed worker described in [the self-hosted route](selfhosted-voice-route.md). Provider credentials stay on that worker/backend. The legacy generic relay remains disabled. Staff-led operational endpoints remain available.
 
 Provider usage is billed to the owner's provider account. Internal provider component tests intercept all network requests explicitly.
 
@@ -31,9 +31,9 @@ Timing logs contain endpoint names, sequences and monotonic timestamps, not gues
 
 ## Signing and publication
 
-Signing uses `ORANGE_KEYSTORE`, `ORANGE_STORE_PASSWORD`, `ORANGE_KEY_ALIAS` and `ORANGE_KEY_PASSWORD`; CI also reads `ORANGE_KEYSTORE_BASE64`. The signed release job also reads `FISH_API_KEY` and `FISH_VOICE_ID` from repository secrets and compiles the Fish key into the APK for the owner's test install. These values stay in CI. Never commit them. A published APK makes that Fish key extractable.
+Signing uses `ORANGE_KEYSTORE`, `ORANGE_STORE_PASSWORD`, `ORANGE_KEY_ALIAS` and `ORANGE_KEY_PASSWORD`; CI also reads `ORANGE_KEYSTORE_BASE64`. The signed release job does not inject `FISH_API_KEY` or `FISH_VOICE_ID`. Never commit credentials. Any key compiled into a published APK is extractable.
 
-`android/VERSION` and `android/VERSION_CODE` advance explicitly. Publication must preserve `dev.orange.hotel` and the existing signer, supersede the previous public APK and reproduce `release-metadata.json` from the exact artifact. Ordinary file-installed apps still require system confirmation to update.
+`android/VERSION` and `android/VERSION_CODE` advance explicitly. Publication must preserve `dev.orange.hotel` and the existing signer, supersede the previous public APK and reproduce `release-metadata.json` from the exact artifact. Android may require system confirmation for file-installed apps.
 
 The credential embedded in earlier pilot APKs must be rotated/revoked by its account owner. Removing embedding in this version does not revoke previously exposed copies. Never print or attach that credential while investigating.
 

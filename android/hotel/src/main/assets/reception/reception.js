@@ -162,10 +162,15 @@
   const sessionAudioText = () => ({ off: "Mic off", recording: "Mic on", muted: "Mic muted", stopping: "Releasing mic", unknown: "Mic state unknown · ask staff" })[state.audio];
   const sessionDock = () => {
     if (state.mode === "translation") {
+      if (state.terminated) {
+        const safe = !state.active && state.audio === "off";
+        return '<div class="session-actions" data-stopped="true"><div class="session-control"><div class="session-control-copy"><strong>Conversation stopped</strong><span>'.concat(esc(sessionAudioText()), "</span></div></div>").concat(action("restart", "Try again", "primary", !safe), "</div>");
+      }
       const bands = state.micLevel > 0 ? state.bands || [state.micLevel, state.micLevel, state.micLevel] : [0, 0, 0];
       const muted = state.audio === "muted";
       const label = muted ? "Unmute the microphone" : "Mute the microphone";
-      return '<button type="button" class="voice-ball" data-action="mute" data-hearing="'.concat(state.audio === "recording", '" aria-pressed="').concat(muted, '" aria-label="').concat(label, '" style="--level:').concat(state.micLevel, ";--b0:").concat(bands[0], ";--b1:").concat(bands[1], ";--b2:").concat(bands[2], '">').concat(muted ? icons.micOff : icons.mic, "</button>");
+      const enabled = state.active && !state.closed && ["recording", "muted"].includes(state.audio);
+      return '<button type="button" class="voice-ball" data-action="mute" data-hearing="'.concat(state.audio === "recording", '" aria-pressed="').concat(muted, '" aria-label="').concat(label, '" ').concat(enabled ? "" : "disabled", ' style="--level:').concat(state.micLevel, ";--b0:").concat(bands[0], ";--b1:").concat(bands[1], ";--b2:").concat(bands[2], '">').concat(muted ? icons.micOff : icons.mic, "</button>");
     }
     const stopped = state.closed || state.terminated;
     const restart = state.terminated && !state.active && state.audio === "off";
@@ -176,6 +181,7 @@
     const button = content.querySelector(".voice-ball");
     if (!button) return;
     const muted = state.audio === "muted";
+    button.disabled = !state.active || state.closed || !["recording", "muted"].includes(state.audio);
     button.dataset.hearing = String(state.audio === "recording");
     button.setAttribute("aria-pressed", String(muted));
     button.setAttribute("aria-label", muted ? "Unmute the microphone" : "Mute the microphone");
@@ -192,7 +198,7 @@
     renderNotices();
   }
   function render() {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     document.documentElement.dataset.appearance = appearance;
     document.documentElement.dataset.translation = state.page === "active" && state.mode === "translation" ? "live" : "";
     document.documentElement.lang = ["idle", "languages", "translation_languages"].includes(state.page) ? "en" : state.language;
@@ -219,12 +225,12 @@
       translation_languages: () => '<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">Guest ↔ Receptionist</p></div><button class="back" data-action="back">'.concat(icons.back, 'Back</button></div><div class="language-pair">').concat(languagePicker("language", "Guest")).concat(languagePicker("staff_language", "Receptionist"), '</div><p id="translation-readiness" class="setup-feedback" role="status">').concat(esc(translationReadiness()), '</p><button type="button" class="primary setup-start" data-action="start" aria-describedby="translation-readiness" ').concat(!state.audioAvailable || sameLanguage() || state.audio !== "off" ? "disabled" : "", ">Start translation</button>"),
       active: () => state.mode === "translation" ? '<button class="translate-back" data-action="back" aria-label="Back">'.concat(icons.back, '</button><p class="pair-title">').concat(esc(langName(state.language)), " → ").concat(esc(langName(state.staff_language)), '</p><div class="session-scroll"><div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">').concat(conversation(), "</div></div>").concat(sessionDock()) : '<div class="status-line session-top"><div><h2>Hotel assistance</h2><p>'.concat(esc(phaseLabel()), '</p></div><button class="back" data-action="back">').concat(icons.back, "Back</button></div>").concat(state.error ? '<div class="notice error">'.concat(esc(state.error), "</div>") : "", '<div class="session-scroll">').concat(!state.closed ? '<div class="shortcut-list">'.concat(shortcuts.map((id, i) => action(id, '<span class="key">'.concat(i + 1, "</span><strong>").concat(esc(concierge()[i]), "</strong>"), "choice shortcut", ["connecting", "greeting"].includes(state.phase))).join(""), "</div>") : "", '<div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">').concat(conversation(), "</div>").concat(state.metrics ? '<p class="metrics">'.concat(esc(state.metrics), "</p>") : "", "</div>").concat(sessionDock()),
       operation_form: () => {
-        var _a2, _b2, _c2, _d2, _e, _f, _g;
-        return '<div class="status-line"><h2>'.concat(esc(((_a2 = state.operation) == null ? void 0 : _a2.action) === "message" ? "Message staff" : concierge()[shortcuts.indexOf((_b2 = state.operation) == null ? void 0 : _b2.action)] || "Hotel request"), '</h2><button class="back" data-action="back">').concat(icons.back, 'Back</button></div><form id="operation-form" class="operation-form" aria-busy="').concat(!!((_c2 = state.operation) == null ? void 0 : _c2.pending), '">').concat((((_d2 = state.operation) == null ? void 0 : _d2.fields) || []).map(operationField).join(""), '<div class="button-row"><button type="submit" class="primary" ').concat(((_e = state.operation) == null ? void 0 : _e.pending) ? "disabled" : "", ">").concat(((_f = state.operation) == null ? void 0 : _f.pending) ? "Reviewing…" : "Review", "</button>").concat(action("cancel-operation", esc(t().cancel), "secondary", (_g = state.operation) == null ? void 0 : _g.pending), "</div></form>").concat(action("stop", "End", "stop"));
+        var _a2, _b2, _c2, _d2, _e2, _f, _g;
+        return '<div class="status-line"><h2>'.concat(esc(((_a2 = state.operation) == null ? void 0 : _a2.action) === "message" ? "Message staff" : concierge()[shortcuts.indexOf((_b2 = state.operation) == null ? void 0 : _b2.action)] || "Hotel request"), '</h2><button class="back" data-action="back">').concat(icons.back, 'Back</button></div><form id="operation-form" class="operation-form" aria-busy="').concat(!!((_c2 = state.operation) == null ? void 0 : _c2.pending), '">').concat((((_d2 = state.operation) == null ? void 0 : _d2.fields) || []).map(operationField).join(""), '<div class="button-row"><button type="submit" class="primary" ').concat(((_e2 = state.operation) == null ? void 0 : _e2.pending) ? "disabled" : "", ">").concat(((_f = state.operation) == null ? void 0 : _f.pending) ? "Reviewing…" : "Review", "</button>").concat(action("cancel-operation", esc(t().cancel), "secondary", (_g = state.operation) == null ? void 0 : _g.pending), "</div></form>").concat(action("stop", "End", "stop"));
       },
       confirming: () => {
-        var _a2, _b2, _c2, _d2, _e, _f;
-        return '<div class="status-line"><h2>Confirm request?</h2><button class="back" data-action="back">'.concat(icons.back, 'Back</button></div><div class="draft" dir="auto">').concat(esc(((_a2 = state.draft) == null ? void 0 : _a2.message) || ""), "</div>").concat(fine(((_b2 = state.draft) == null ? void 0 : _b2.attempted) ? state.draft.approved === false ? "No cancellation receipt yet. Retry to check the result." : "No receipt yet. Retry the same request to check its result." : "Confirm only if the details are correct."), '<div class="button-row">').concat(action(((_c2 = state.draft) == null ? void 0 : _c2.attempted) ? "retry-draft" : "confirm", state.confirmed ? ((_d2 = state.draft) == null ? void 0 : _d2.approved) === false ? "Cancelling…" : "Sending…" : ((_e = state.draft) == null ? void 0 : _e.attempted) ? "Retry" : "Confirm", "primary", state.confirmed)).concat(state.operation ? action("edit-draft", "Edit", "secondary", state.confirmed || ((_f = state.draft) == null ? void 0 : _f.attempted)) : "").concat(action("cancel-draft", esc(t().cancel), "secondary", state.confirmed), "</div>");
+        var _a2, _b2, _c2, _d2, _e2, _f;
+        return '<div class="status-line"><h2>Confirm request?</h2><button class="back" data-action="back">'.concat(icons.back, 'Back</button></div><div class="draft" dir="auto">').concat(esc(((_a2 = state.draft) == null ? void 0 : _a2.message) || ""), "</div>").concat(fine(((_b2 = state.draft) == null ? void 0 : _b2.attempted) ? state.draft.approved === false ? "No cancellation receipt yet. Retry to check the result." : "No receipt yet. Retry the same request to check its result." : "Confirm only if the details are correct."), '<div class="button-row">').concat(action(((_c2 = state.draft) == null ? void 0 : _c2.attempted) ? "retry-draft" : "confirm", state.confirmed ? ((_d2 = state.draft) == null ? void 0 : _d2.approved) === false ? "Cancelling…" : "Sending…" : ((_e2 = state.draft) == null ? void 0 : _e2.attempted) ? "Retry" : "Confirm", "primary", state.confirmed)).concat(state.operation ? action("edit-draft", "Edit", "secondary", state.confirmed || ((_f = state.draft) == null ? void 0 : _f.attempted)) : "").concat(action("cancel-draft", esc(t().cancel), "secondary", state.confirmed), "</div>");
       },
       saved: () => {
         var _a2, _b2;
@@ -235,6 +241,7 @@
     const focusedElement = document.activeElement;
     const focusedAction = (_a = focusedElement == null ? void 0 : focusedElement.dataset) == null ? void 0 : _a.action;
     const focusedSelect = (_b = focusedElement == null ? void 0 : focusedElement.dataset) == null ? void 0 : _b.languageSide;
+    const focusedAssist = (focusedElement == null ? void 0 : focusedElement.id) === "assist-language";
     const focusedInput = (focusedElement == null ? void 0 : focusedElement.closest("#operation-form")) ? { name: focusedElement.name, start: focusedElement.selectionStart, end: focusedElement.selectionEnd } : null;
     const scrollTop = content.scrollTop;
     const scrolls = [...content.querySelectorAll(".session-scroll,.draft,.language-list")].map((element) => ({ top: element.scrollTop, follow: element.classList.contains("session-scroll") && element.scrollHeight - element.clientHeight - element.scrollTop < 60 }));
@@ -252,6 +259,7 @@
     });
     if (focusedAction) (_c = [...content.querySelectorAll("[data-action]")].find((button) => button.dataset.action === focusedAction)) == null ? void 0 : _c.focus({ preventScroll: true });
     if (focusedSelect) (_d = content.querySelector('[data-language-side="'.concat(focusedSelect, '"]'))) == null ? void 0 : _d.focus({ preventScroll: true });
+    if (focusedAssist) (_e = content.querySelector("#assist-language")) == null ? void 0 : _e.focus({ preventScroll: true });
     if (focusedInput) {
       const input = [...content.querySelectorAll("#operation-form input,#operation-form textarea")].find((element) => element.name === focusedInput.name);
       input == null ? void 0 : input.focus({ preventScroll: true });
@@ -728,7 +736,7 @@
       state.audio = event.state;
       if (state.audio !== "recording") state.micLevel = 0;
       if (!finishNavigation()) {
-        if (state.page === "active" && state.mode === "translation") {
+        if (state.page === "active" && state.mode === "translation" && !state.terminated) {
           const privacy = document.getElementById("privacy");
           if (privacy) privacy.innerHTML = '<span class="mic-dot'.concat(state.audio === "recording" ? " mic-live" : "", '"></span>').concat(esc(sessionAudioText()));
           syncMic();
