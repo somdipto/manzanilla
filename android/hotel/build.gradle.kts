@@ -25,10 +25,11 @@ android {
         versionCode = rootProject.file("VERSION_CODE").readText().trim().toInt().also {
             require(it > 34) { "Release candidates must supersede published code 34" }
         }
-        buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://api.github.com/repos/somdipto/manzanilla/releases/latest"))
+        buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://github.com/somdipto/manzanilla/releases/latest/download/release-metadata.json"))
+        buildConfigField("String", "LEGACY_FEED_URL", javaString(project.findProperty("legacyFeedUrl") as String? ?: "https://api.github.com/repos/somdipto/manzanilla/releases/latest"))
         buildConfigField("String", "FISH_API_KEY", javaString(injected("FISH_API_KEY")))
         buildConfigField("String", "FISH_VOICE_ID", javaString(injected("FISH_VOICE_ID")))
-        manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl")) "true" else "false"
+        manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl") || project.hasProperty("legacyFeedUrl")) "true" else "false"
         versionName = rootProject.file("VERSION").readText().trim()
     }
     androidResources { noCompress += "wav" }
