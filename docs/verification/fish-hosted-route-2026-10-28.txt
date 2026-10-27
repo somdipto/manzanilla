@@ -30,3 +30,47 @@ route-level turn/pause handling, not one model's quirk.
 TIMING (measured): greeting ~1.6s; reply to a 2s control utterance: not timed precisely this run;
 case A reply: 2.0s after utterance end (TTS included). Precise hosted end-to-end reply latency
 still to be measured across several utterances.
+
+EXTENDED FIX-CANDIDATE MATRIX (2026-10-28 ~02:36-02:41 IST, throwaway agents, case A = 600ms pause
+between "I am not" and "saying the room is dirty." unless noted; split = sentence boundary in the
+provider-history user turn; wrong = assistant reply changed the guest's meaning):
+
+  config (everything else = production CONFIG_REV 15)      user turn (verbatim)                     reply                                                    verdict
+  scribe 300/600 (production) rep1                          "I am not. And the room is dirty."      "No lo estoy. Y la habitacion esta sucia."                 split, WRONG
+  scribe 300/600 (production) rep2                          "I am not. Saying the room is dirty."   "No estoy diciendo que la habitacion este sucia."          split, correct
+  scribe wait 900 / max auto (rep1)                         "I am not. Saying the room is dirty."   correct                                                    split persists
+  transcribe-stream-1 300/600                               "I am not. Saying the room is dirty."   correct                                                    split persists
+  deepgram:nova-3 300/600                                   turn2 "I am not" + turn3 "Dang. The room is dirty."  "No me llamo Dang, y la habitacion esta sucia."  WORSE: 2 turns, WRONG
+  scribe 300/600 + prompt hint (frag-rejoin note) rep1      "I am not. Saying the room is dirty."   correct                                                    split persists
+  scribe 300/600 + prompt hint rep2                         "I am not. Dang, the room is dirty."    "No lo estoy. Rayos, la habitacion esta sucia."            hint does NOT recover mangled word, WRONG
+  scribe 300/600, ROOM-TONE pause (n600) rep1               "I am not. Saying the room is dirty."   correct                                                    no mangling
+  scribe 300/600, ROOM-TONE pause (n600) rep2               "I am not. Saying the room is dirty."   correct                                                    no mangling
+
+CONCLUSIONS:
+1. The sentence-boundary split at a 600ms pause is universal on the hosted route: every ASR model
+   (scribe_v2_realtime, transcribe-stream-1, nova-3) and every response_wait setting tested (300,
+   900) split. The hosted agents config surface exposes NO endpointing/VAD knob (agents API asr =
+   model/multilingual/strict_language/keyterms; conversation = response_wait/response_max_wait/
+   eagerness/interruptible/interruption_sensitivity/echo_guard/speculative_response). turn_detection
+   knobs exist only in the streaming STT websocket API, not the hosted agents API.
+2. response_wait_ms does not affect user-turn text assembly (900ms still split). Production's 300ms
+   wait is already the minimum and does not cause the split; raising it adds reply latency for nothing.
+3. Meaning loss happens only when the ASR also mangles the first word after the pause ("saying" ->
+   "And" or "Dang", 3/6 hard-cut runs). When the word survives, gemini-3.8-flash stitches the split
+   fragments into the correct meaning on its own (5/5 "Saying" runs, hint or not).
+4. Prompt hardening (explicit fragment-rejoin instruction) does not recover a mangled word
+   ("Dang" -> "Rayos" literal translation). Not an effective fix.
+5. nova-3 is strictly worse for this case (fragments into separate turns, worse mangling). Production's
+   scribe choice for broad pairs stands. transcribe-stream-1 shows no advantage on the hosted route.
+6. The word mangling appears tied to the synthetic HARD-CUT digital-silence pause: with a room-tone
+   pause (low-level noise), 2/2 runs transcribed "Saying" correctly. The synthetic test likely
+   overstates the real-world failure rate; the real rate on device mics is unknown but non-zero
+   (the user's original event happened on a real phone).
+7. No premature/wrong-partial audio observed in any run: every assistant reply arrived after the
+   complete utterance. This does not universally rule out premature draft voicing, only none observed
+   in 9 hosted runs.
+RESIDUAL OPTIONS (none yet applied to production):
+  a. Accept current behavior: split is cosmetic in history; meaning survives when words survive.
+  b. Ask Fish for endpointing control on hosted agents (external contact - needs owner approval).
+  c. Reproduce on a real device mic to establish the true real-world rate before any change.
+  d. Self-hosted pipeline (Gemini leg) remains held (tier unverified).

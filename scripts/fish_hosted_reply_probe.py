@@ -36,6 +36,20 @@ AGENT_CONFIG = {
                      "response_max_wait_ms": 600, "speculative_response": True},
 }
 
+# candidate-config overrides for fix-specific A/B (throwaway agents only)
+_w = os.environ.get("PROBE_WAIT_MS")
+if _w:
+    AGENT_CONFIG["conversation"]["response_wait_ms"] = int(_w)
+_mw = os.environ.get("PROBE_MAX_WAIT_MS")
+if _mw:
+    AGENT_CONFIG["conversation"]["response_max_wait_ms"] = None if _mw == "null" else int(_mw)
+_asr = os.environ.get("PROBE_ASR_MODEL")
+if _asr:
+    AGENT_CONFIG["asr"]["model"] = _asr
+_extra = os.environ.get("PROBE_APPEND_PROMPT")
+if _extra:
+    AGENT_CONFIG["prompt"]["system_prompt"] = PROMPT + "\n" + _extra
+
 def api(method, path, body=None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(API + path, data=data, method=method,
@@ -70,8 +84,8 @@ async def main():
         "metadata": {"manzanilla_config_rev": "15", "guest_language": "en", "staff_language": "es",
                      "asr_model": "elevenlabs:scribe_v2_realtime",
                      "llm_model": "google/gemini-3.8-flash", "tts_model": "s2.1-pro"},
-        "overrides": {"system_prompt": PROMPT, "language": "es",
-                      "asr": {"model": "elevenlabs:scribe_v2_realtime"}}})
+        "overrides": {"system_prompt": AGENT_CONFIG["prompt"]["system_prompt"], "language": "es",
+                      "asr": {"model": AGENT_CONFIG["asr"]["model"]}}})
     sid = session["session_id"]
     log(f"session {sid} transport={session.get('transport')}")
 
@@ -125,7 +139,15 @@ async def main():
             a = load16k(int(tok))
             parts.append(a)
             cursor += len(a) / 48000.0
-        else:  # pause in ms
+        elif tok.startswith("n") and tok[1:].isdigit():  # room-tone pause in ms
+            n = int(48000 * int(tok[1:]) / 1000)
+            noise = (np.random.default_rng(7).standard_normal(n) * 90).astype(np.int16)
+            parts.append(noise)
+            if cursor > 0 and frag4_end == 0.0:
+                frag4_end = cursor
+            cursor += int(tok[1:]) / 1000.0
+            frag5_start = cursor
+        else:  # pause in ms (digital silence)
             parts.append(np.zeros(int(48000 * int(tok) / 1000), dtype=np.int16))
             if cursor > 0 and frag4_end == 0.0:
                 frag4_end = cursor
@@ -173,6 +195,12 @@ async def main():
         await room.disconnect()
     except Exception:
         pass
+    try:
+        time.sleep(2)
+        hist = api("GET", f"/v1/agent/sessions/{sid}")
+        print("HISTORY " + json.dumps(hist.get("items", []), ensure_ascii=False), flush=True)
+    except Exception as e:
+        log(f"history fetch failed: {e}")
     try:
         api("POST", f"/v1/agent/sessions/{sid}/end", {})
         log("session ended")
