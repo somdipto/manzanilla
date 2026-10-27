@@ -50,6 +50,7 @@ _extra = os.environ.get("PROBE_APPEND_PROMPT")
 if _extra:
     AGENT_CONFIG["prompt"]["system_prompt"] = PROMPT + "\n" + _extra
 
+LAST_DATE = [None]
 def api(method, path, body=None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(API + path, data=data, method=method,
@@ -57,6 +58,7 @@ def api(method, path, body=None):
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = r.read()
+            LAST_DATE[0] = (r.headers.get("Date"), time.monotonic())
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"{method} {path} -> {e.code}: {e.read()[:200]}")
     return json.loads(raw) if raw else {}
@@ -87,6 +89,16 @@ async def main():
         "overrides": {"system_prompt": AGENT_CONFIG["prompt"]["system_prompt"], "language": "es",
                       "asr": {"model": AGENT_CONFIG["asr"]["model"]}}})
     sid = session["session_id"]
+    from datetime import datetime, timezone
+    import email.utils
+    srv0 = None
+    t_session_local = None
+    if LAST_DATE[0] and LAST_DATE[0][0]:
+        srv0 = email.utils.parsedate_to_datetime(LAST_DATE[0][0]).timestamp()
+        t_session_local = LAST_DATE[0][1]
+    def srv_to_local(iso):
+        if not srv0 or not iso: return None
+        return t_session_local + (datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() - srv0)
     log(f"session {sid} transport={session.get('transport')}")
 
     room = rtc.Room()
@@ -160,10 +172,35 @@ async def main():
     frag4_end = t_start + frag4_end
     frag5_start = t_start + frag5_start
     log(f"utterance pushed: frag4_end=+{frag4_end-t_start:.2f}s frag5_start=+{frag5_start-t_start:.2f}s end=+{t_end-t_start:.2f}s")
-    # keep mic alive with silence while waiting for the reply
-    wait_until = time.monotonic() + 18
+    # keep mic alive with silence while waiting for the reply; energy-track agent speech
+    ispec = sys.argv[2] if len(sys.argv) > 2 else ""
+    i_delay = float(ispec[1:ispec.index(":")]) if ispec else None
+    i_frags = ispec[ispec.index(":")+1:] if ispec else ""
+    wait_until = time.monotonic() + 25
     sil = np.zeros(4800, dtype=np.int16)
+    speech_tl = []  # (t, loud) for frames after t_start
+    first_audio_t = None
+    interrupt_done = False
+    i_t0 = i_t1 = None
     while time.monotonic() < wait_until:
+        now = time.monotonic()
+        for t, a_ in agent_frames[len(speech_tl):]:
+            if t >= t_start - 0.1:
+                loud = float(np.sqrt(np.mean(a_.astype(np.float64)**2))) > 300
+                speech_tl.append((t, loud))
+        for t, loud in speech_tl:
+            if loud and first_audio_t is None and t >= t_end - 0.2:
+                first_audio_t = t
+                log(f"first agent audio at +{t - t_start:.2f}s (eos->audio {t - t_end:.2f}s)")
+                break
+        if i_delay is not None and first_audio_t and not interrupt_done and now >= first_audio_t + i_delay:
+            parts_i = [load16k(int(x)) for x in i_frags.split(",") if x.isdigit()]
+            i_t0 = time.monotonic()
+            for a_ in parts_i:
+                await push(a_)
+            i_t1 = time.monotonic()
+            interrupt_done = True
+            log(f"interrupt pushed +{i_t0 - t_start:.2f}s..+{i_t1 - t_start:.2f}s")
         await source.capture_frame(rtc.AudioFrame(data=sil.tobytes(), sample_rate=48000, num_channels=1, samples_per_channel=4800))
         await asyncio.sleep(0.098)
 
@@ -186,6 +223,18 @@ async def main():
                     "end_rel_utterance": round(e - t_start, 2), "rms": round(rms),
                     "seconds": round(len(pcm) / 48000, 2), "file": path,
                     "during_pause_or_frag5": s - t_start < (len(utter) / 48000.0)})
+    # energy-based speech segments
+    esegs = []
+    for t, loud in speech_tl:
+        if loud:
+            if esegs and t - esegs[-1][1] < 0.5:
+                esegs[-1][1] = t
+            else:
+                esegs.append([t, t])
+    latency = {"eos_to_first_audio_s": round(first_audio_t - t_end, 2) if first_audio_t else None,
+               "energy_speech_segments_rel_eos": [[round(a_ - t_end, 2), round(b_ - t_end, 2)] for a_, b_ in esegs],
+               "interrupt_pushed_rel_eos": [round(i_t0 - t_end, 2), round(i_t1 - t_end, 2)] if i_t0 else None}
+    print("LATENCY " + json.dumps(latency), flush=True)
     result = {"session_id": sid, "agent_id": agent_id, "frag4_end": round(frag4_end - t_start, 2),
               "frag5_start": round(frag5_start - t_start, 2), "utterance_len": round(len(utter)/48000, 2),
               "agent_segments": out}
@@ -198,7 +247,10 @@ async def main():
     try:
         time.sleep(2)
         hist = api("GET", f"/v1/agent/sessions/{sid}")
-        print("HISTORY " + json.dumps(hist.get("items", []), ensure_ascii=False), flush=True)
+        its = hist.get("items", [])
+        for it in its:
+            it["created_local_rel_eos"] = round(srv_to_local(it["created_at"]) - t_end, 2) if srv_to_local(it.get("created_at")) else None
+        print("HISTORY " + json.dumps(its, ensure_ascii=False), flush=True)
     except Exception as e:
         log(f"history fetch failed: {e}")
     try:

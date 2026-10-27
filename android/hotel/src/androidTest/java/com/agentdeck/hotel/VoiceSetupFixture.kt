@@ -87,7 +87,7 @@ internal object VoiceSetupFixture {
                 if (seen != null && seen !== cancelled) setup = seen
                 setup != null
             }
-            if (setup == null) error("Translation setup retry did not open")
+            val settled: KeyEntryActivity = setup ?: error("Translation setup retry did not open")
             // Wait for Android's real credential screen before typing its test PIN.
             await("retry credential screen") { windowRoot("com.android.settings") != null }
             var pin: AccessibilityNodeInfo? = null
@@ -114,7 +114,7 @@ internal object VoiceSetupFixture {
             val save = windowRoot(context.packageName)?.findAccessibilityNodeInfosByText("Save and return")
                 ?.firstOrNull() ?: error("Save and return is missing")
             check(save.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
-            await("saved setup closes") { setup.isFinishing || setup.isDestroyed }
+            await("saved setup closes") { settled.isFinishing || settled.isDestroyed }
             check(store.load() == "fixture-only-not-a-provider-key")
             await("ready Start button") { js("!!document.querySelector('[data-action=start]')") == "true" }
             check(js("document.querySelector('[data-action=start]').disabled") == "false")
