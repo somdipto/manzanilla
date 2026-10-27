@@ -73,7 +73,15 @@ internal object VoiceSetupFixture {
             check(store.status() == SecretStore.Status.ABSENT)
             await("setup retry button") { js("!!document.querySelector('[data-action=setup-translation]')") == "true" }
             js("document.querySelector('[data-action=setup-translation]').click()")
-            val setup = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
+            // Race fix (2026-10-28, CI run 40577058119): ActivityMonitor already holds the
+            // cancelled setup instance, and waitForActivityWithTimeout can return that stale
+            // hit immediately when the slow emulator has not registered the retry launch yet;
+            // the "PIN accepted" await then polls a finishing activity forever. KeyEntryDiag
+            // proved the retry instance authenticates correctly (result=-1, accepted=true,
+            // configuration shown). Wait for a NEW hit that is not the cancelled instance.
+            val hitsBeforeRetry = monitor.hits
+            await("retry setup activity") { monitor.hits > hitsBeforeRetry && monitor.lastActivity !== cancelled }
+            val setup = monitor.lastActivity as? KeyEntryActivity
                 ?: error("Translation setup retry did not open")
             // Wait for Android's real credential screen before typing its test PIN.
             await("retry credential screen") { windowRoot("com.android.settings") != null }
