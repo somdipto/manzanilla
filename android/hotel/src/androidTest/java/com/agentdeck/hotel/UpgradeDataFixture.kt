@@ -39,12 +39,22 @@ class UpgradeDataFixture : Instrumentation() {
             val file = File(targetContext.filesDir, "upgrade-data-fixture.bin")
             val alias = "manzanilla-upgrade-fixture-$marker"
             val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            // Invoke each installed APK's actual credential implementation. This
+            // fixture also runs on the previous release, so do not link candidate
+            // production classes into the test APK. Only synthetic data is used.
+            val secretClass = targetContext.classLoader.loadClass("com.agentdeck.hotel.SecretStore")
+            val voiceStore = secretClass.getConstructor(Context::class.java, String::class.java)
+                .newInstance(targetContext, "fish")
+            val voiceMarker = "fixture-only-voice-$marker"
 
             when (case) {
                 "seed" -> {
                     check(!fixture.contains("marker") && !file.exists() && !store.containsAlias(alias))
                     // Refuse to overwrite existing application preferences, even on an emulator.
                     check(PREFERENCES.keys.none(deck::contains))
+                    check(secretClass.getMethod("status").invoke(voiceStore).toString() == "ABSENT")
+                    check(secretClass.getMethod("save", String::class.java).invoke(voiceStore, voiceMarker) == true)
+                    check(secretClass.getMethod("load").invoke(voiceStore) == voiceMarker)
                     val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
                     generator.init(KeyGenParameterSpec.Builder(alias,
                         KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
@@ -73,10 +83,12 @@ class UpgradeDataFixture : Instrumentation() {
                     val cipher = Cipher.getInstance("AES/GCM/NoPadding")
                     cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
                     check(String(cipher.doFinal(encrypted), Charsets.UTF_8) == marker)
+                    check(secretClass.getMethod("load").invoke(voiceStore) == voiceMarker)
+                    check(secretClass.getMethod("status").invoke(voiceStore).toString() == "READY")
                 }
                 else -> error("Unknown fixture case")
             }
-            result.putString("stream", "PASS case=$case preferences=true private_file=true encrypted_marker=true\n")
+            result.putString("stream", "PASS case=$case preferences=true private_file=true encrypted_marker=true voice_credential=true\n")
             finish(-1, result)
         } catch (_: Throwable) {
             // Never print values from device storage, credentials, or arbitrary exception text.

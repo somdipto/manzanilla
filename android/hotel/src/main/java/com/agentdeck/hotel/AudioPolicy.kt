@@ -1,14 +1,21 @@
 package com.agentdeck.hotel
 
 /**
- * The live audio route is the Fish-hosted interpreter only.
- * Never fall back to another provider. The release credential is injected into the
- * APK at build time; a staff-saved credential overrides it on one device; a
- * configured hotel service mints managed sessions instead.
+ * Public APKs use a staff-saved device credential or an enrolled hotel service.
+ * A configured hotel service mints managed sessions instead of exposing its key.
  */
 object AudioPolicy {
     const val LIVE_AUDIO_ENABLED = true
     const val BLOCK_REASON = "Live translation is unavailable. Ask staff to check the audio credential in Settings."
+
+    /** Local setup readiness only; it does not establish provider access. */
+    fun blockReason(backendConfigured: Boolean, directKey: SecretStore.Status, bundledKeyAvailable: Boolean): String {
+        if (!LIVE_AUDIO_ENABLED) return BLOCK_REASON
+        if (backendConfigured || directKey == SecretStore.Status.READY || bundledKeyAvailable) return ""
+        return if (directKey == SecretStore.Status.ERROR)
+            "The saved voice key could not be opened. Unlock this device, then open Staff setup to retry."
+        else "This device needs a voice key. Open Staff setup to connect Fish Audio or your hotel service."
+    }
 
     /** Evaluate before permission/capture, credential loading, ticket minting or provider connect. */
     fun allowStart(blocked: (String) -> Unit): Boolean {
