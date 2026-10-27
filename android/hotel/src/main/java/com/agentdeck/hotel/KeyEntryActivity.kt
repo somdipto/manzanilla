@@ -29,6 +29,9 @@ import android.widget.Toast
 
 /** Staff setup trusts only Android's enrolled device credential, never an Intent or shared PIN. */
 class KeyEntryActivity : Activity() {
+    // Presentation only: this flag never grants access or skips authentication.
+    private val voiceOnly get() = intent.getBooleanExtra("voice_only", false)
+    private val setupTitle get() = if (voiceOnly) "Translation setup" else "Staff setup"
     private val keyguard by lazy { getSystemService(KeyguardManager::class.java) }
     private var authenticated = false
     private var authenticationInFlight = false
@@ -52,7 +55,7 @@ class KeyEntryActivity : Activity() {
         window.navigationBarColor = background
         if (light) window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        lockedView("Use this device's screen lock to open staff setup.")
+        lockedView("Use your normal device PIN, password or pattern to open setup. No separate staff account is required.")
     }
 
     override fun onResume() {
@@ -95,7 +98,7 @@ class KeyEntryActivity : Activity() {
         dialog = null
         fields.forEach { it.setText("") }
         fields.clear()
-        lockedView("Staff setup is locked. Device credential confirmation is required.")
+        lockedView("Setup is locked. Confirm this device's screen lock to continue.")
     }
 
     @Suppress("DEPRECATION")
@@ -105,7 +108,7 @@ class KeyEntryActivity : Activity() {
             lockedView("Staff setup is unavailable: no device screen-lock credential is enrolled. A tablet administrator must set a PIN, password or pattern through the tablet's managed Android Security settings, then return and authenticate. Guest setup cannot enroll or reset a credential.")
             return
         }
-        val confirmation = keyguard.createConfirmDeviceCredentialIntent("Staff setup", "Confirm the device screen lock to manage the hotel connection.")
+        val confirmation = keyguard.createConfirmDeviceCredentialIntent(setupTitle, "Use your normal device PIN, password or pattern. No separate staff account is required.")
         if (confirmation == null) {
             lockedView("Android could not open device credential confirmation. Unlock the tablet and retry Staff setup.", retry = true)
             return
@@ -128,7 +131,7 @@ class KeyEntryActivity : Activity() {
 
     private fun lockedView(message: String, retry: Boolean = false) {
         val column = column()
-        column.addView(label("Staff setup", 24f))
+        column.addView(label(setupTitle, 24f))
         column.addView(label(message))
         if (retry) column.addView(button("Authenticate again") { requestAuthentication() })
         column.addView(button("Close") { finish() })
@@ -138,6 +141,14 @@ class KeyEntryActivity : Activity() {
     private fun showConfiguration() {
         if (!authorized()) return
         val column = column()
+        if (voiceOnly) {
+            column.addView(label(setupTitle, 24f))
+            column.addView(label("Save your Fish Audio API key to enable translation on this device. The key stays encrypted here. After saving, return to your selected languages and tap Start translation."))
+            addProvider(column, "Fish Audio", "fish", returnAfterSave = true)
+            column.addView(button("Cancel") { finish() })
+            setContentView(ScrollView(this).apply { isSaveEnabled = false; addView(column) })
+            return
+        }
         column.addView(label("Staff setup", 24f))
         column.addView(label("Live translation needs a Fish Audio API key on this device or a hotel connection. Check the saved-key status below. Keys stay encrypted on this device; a saved key still needs provider access to start a conversation."))
         addProvider(column, "Fish Audio", "fish")
@@ -168,7 +179,8 @@ class KeyEntryActivity : Activity() {
         })
     }
 
-    private fun addProvider(column: LinearLayout, provider: String, prefsName: String, connectionUrl: EditText? = null) {
+    private fun addProvider(column: LinearLayout, provider: String, prefsName: String, connectionUrl: EditText? = null,
+                            returnAfterSave: Boolean = false) {
         // Called only after credential confirmation; no storage read happens on a locked screen.
         if (!authorized()) return
         val store = SecretStore(this, prefsName)
@@ -237,7 +249,7 @@ class KeyEntryActivity : Activity() {
         }
         fields.add(field)
         column.addView(field)
-        column.addView(button("Save $provider key") {
+        column.addView(button(if (returnAfterSave) "Save and return" else "Save $provider key") {
             if (!authorized()) return@button
             val value = field.text.toString().trim()
             if (value.isEmpty() || value.any { it.isWhitespace() }) {
@@ -246,6 +258,7 @@ class KeyEntryActivity : Activity() {
                 field.setText("")
                 refresh()
                 Toast.makeText(this, "$provider key securely saved.", Toast.LENGTH_SHORT).show()
+                if (returnAfterSave) finish()
             } else {
                 status.text = "$provider: ${connection?.errorMessage ?: store.errorMessage}"
             }

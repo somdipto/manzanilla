@@ -10,7 +10,7 @@ class AudioPolicyTest {
     @Test fun unreadableSavedKeyIsNotReportedAsMissingSetup() {
         val missing = AudioPolicy.blockReason(false, SecretStore.Status.ABSENT, false)
         val unreadable = AudioPolicy.blockReason(false, SecretStore.Status.ERROR, false)
-        assertTrue(missing.contains("needs a voice key"))
+        assertTrue(missing.contains("One-time setup"))
         assertTrue(unreadable.contains("saved voice key could not be opened"))
         assertNotEquals(missing, unreadable)
         assertEquals("", AudioPolicy.blockReason(false, SecretStore.Status.READY, false))

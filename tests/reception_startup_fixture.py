@@ -67,16 +67,26 @@ def run_startup_fixture(browser, legacy_object_api=False):
         receive({"type": "reception_info", "audio_available": False, "local_audio_state": "off", "audio_gate": "Configure translation in Staff setup."})
         assert "Configure translation" in page.locator("#translation-readiness").inner_text()
         assert page.locator("#settings").is_visible(), "Configuration help must remain reachable"
-        assert page.locator('[data-action="start"]').is_disabled()
-        page.locator('[data-action="settings"]').click()
-        assert page.evaluate("fixtureMessages.filter(event => event.action === 'settings').length") == 1
+        assert page.locator('.setup-start').count() == 1, "Setup must have one primary action"
+        assert page.locator('[data-action="start"]').count() == 0, "Do not render a second disabled Start"
+        page.locator('[data-action="setup-translation"]').click()
+        assert page.evaluate("fixtureMessages.filter(event => event.action === 'voice_setup').length") == 1
         assert not page.evaluate("fixtureMessages.some(event => event.action === 'start')")
+        receive({"type": "visibility", "visible": False})
+        receive({"type": "visibility", "visible": True})
+        receive({"type": "translation_setup_return"})
+        assert page.locator('#language').input_value() == "en"
+        assert page.locator('#staff_language').input_value() == "en"
+        assert page.locator('[data-action="setup-translation"]').is_enabled(), "Cancelled setup must return to language selection"
         receive({"type": "reception_info", "audio_available": False, "local_audio_state": "off",
                  "audio_gate": "The saved voice key could not be opened. Unlock this device, then open Staff setup to retry."})
         assert "saved voice key could not be opened" in page.locator("#translation-readiness").inner_text()
-        assert page.locator('[data-action="settings"]').is_enabled()
+        assert page.locator('[data-action="setup-translation"]').is_enabled()
+        receive({"type": "visibility", "visible": False})
+        receive({"type": "visibility", "visible": True})
         receive({"type": "reception_info", "audio_available": True, "local_audio_state": "off"})
-        assert page.locator('[data-action="settings"]').count() == 0
+        receive({"type": "translation_setup_return"})
+        assert page.locator('[data-action="setup-translation"]').count() == 0
         page.locator('#language').select_option("es")
         assert page.locator('[data-action="start"]').is_enabled(), "Distinct languages with configured audio cannot start"
         page.locator('[data-action="start"]').click()

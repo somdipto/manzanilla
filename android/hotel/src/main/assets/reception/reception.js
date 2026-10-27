@@ -81,7 +81,7 @@
   const languagePicker = (side, label) => '<section class="language-side" data-keypad="'.concat(languageSide === side, '"><label for="').concat(side, '">').concat(label, '</label><select id="').concat(side, '" data-language-side="').concat(side, '" lang="').concat(state[side], '" dir="').concat(languageDir(state[side]), '" aria-describedby="').concat(side, '-hint" ').concat(state.audio !== "off" ? "disabled" : "", ">").concat(Object.entries(translationLanguages).map(([id, item]) => '<option value="'.concat(id, '" lang="').concat(id, '" dir="').concat(languageDir(id), '" ').concat(state[side] === id ? "selected" : "", ">").concat(esc(item.native), "</option>")).join(""), '</select><small id="').concat(side, '-hint">').concat(side === "language" ? "The language you speak" : "The language reception speaks", "</small></section>");
   const send = (action2, detail = {}) => {
     if (!native) return;
-    const scope = state.sessionId && !["start", "info", "languages", "appearance", "night", "settings", "apply_update", "check_updates"].includes(action2) ? { session_id: state.sessionId, ...state.generation === null ? {} : { generation: state.generation } } : {};
+    const scope = state.sessionId && !["start", "info", "languages", "appearance", "night", "settings", "voice_setup", "apply_update", "check_updates"].includes(action2) ? { session_id: state.sessionId, ...state.generation === null ? {} : { generation: state.generation } } : {};
     window.ManzaniaNative.postMessage(JSON.stringify({ action: action2, ...scope, ...detail }));
   };
   const action = (name, label, className = "primary", disabled = false) => '<button type="button" class="'.concat(className, '" data-action="').concat(name, '" ').concat(disabled ? "disabled" : "", ">").concat(label, "</button>");
@@ -217,12 +217,12 @@
     document.getElementById("connection-text").textContent = state.connected ? "Hotel connected" : "Hotel setup needed";
     document.getElementById("hotel-label").textContent = state.hotel || "Hotel reception";
     document.getElementById("privacy").innerHTML = '<span class="mic-dot'.concat(state.audio === "recording" ? " mic-live" : "", '"></span>').concat(esc(sessionAudioText()));
-    document.getElementById("hardware-hint").textContent = state.active ? "Green or red to stop" : state.page === "translation_languages" ? "Digits: first ten · " + (state.audioAvailable ? "Green: start · " : "") + "Red: back" : state.night ? "Green: hotel assistance" : "Green: translation";
+    document.getElementById("hardware-hint").textContent = state.active ? "Green or red to stop" : state.page === "translation_languages" ? "Digits: first ten · " + (state.audioAvailable ? "Green: start · " : "Green: setup · ") + "Red: back" : state.night ? "Green: hotel assistance" : "Green: translation";
     const homeAction = (name, icon, label, note = "") => '<button class="home-action'.concat(name === (state.night ? "reception" : "translation") ? " home-action-main" : "", '" data-action="').concat(name, '">').concat(name === (state.night ? "reception" : "translation") ? '<span class="orb">' + icons.arrow + "</span>" : icon, "<span>").concat(label, "</span>").concat(note ? "<small>" + note + "</small>" : "", "</button>");
     const html = {
       idle: () => '<div class="welcome"><h1>Welcome.</h1><p>'.concat(state.night ? "Self-service hotel assistance." : "Guest and staff support.", '</p></div><nav class="home-actions" aria-label="Reception services">').concat(state.night ? homeAction("reception", icons.bell, "Hotel assistance", "Self-service support") + homeAction("translation", icons.translate, "Live translation", state.audioAvailable ? "Talk to each other" : "Audio unavailable") : homeAction("translation", icons.translate, "Live translation", state.audioAvailable ? "Talk to each other" : "Audio unavailable") + homeAction("reception", icons.bell, "Hotel assistance")).concat(homeAction("request:checkin", icons.bed, "Arrival guide")).concat(homeAction("request:taxi", icons.car, "Taxi request")).concat(homeAction("request:message", icons.message, "Message staff"), '</nav><div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="Switch to ').concat(appearance === "dark" ? "day" : "night", ' mode" title="Day / night mode · keypad 1">').concat(themeIcon(), "</button></div>"),
       languages: () => '<div class="status-line"><div><h2 class="language-heading">Hotel assistance</h2></div><button class="back" data-action="back">'.concat(icons.back, 'Back</button></div><label class="assist-label" for="assist-language">Language</label><select id="assist-language" class="assist-language" lang="').concat(state.language, '" dir="').concat(languageDir(state.language), '">').concat(Object.entries(languages).map(([id, item]) => '<option value="'.concat(id, '" lang="').concat(id, '" dir="').concat(languageDir(id), '" ').concat(state.language === id ? "selected" : "", ">").concat(esc(item.native), "</option>")).join(""), "</select>").concat(action("assist-go", "Continue", "primary assist-go")),
-      translation_languages: () => '<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">Guest ↔ Receptionist</p></div><button class="back" data-action="back">'.concat(icons.back, 'Back</button></div><div class="language-pair">').concat(languagePicker("language", "Guest")).concat(languagePicker("staff_language", "Receptionist"), '</div><p id="translation-readiness" class="setup-feedback" role="status">').concat(esc(translationReadiness()), "</p>").concat(native && !state.audioAvailable ? '<button type="button" class="primary" data-action="settings">Check voice setup</button>' : "", '<button type="button" class="primary setup-start" data-action="start" aria-describedby="translation-readiness" ').concat(!state.audioAvailable || sameLanguage() || state.audio !== "off" ? "disabled" : "", ">Start translation</button>"),
+      translation_languages: () => '<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">Guest ↔ Receptionist</p></div><button class="back" data-action="back">'.concat(icons.back, 'Back</button></div><div class="language-pair">').concat(languagePicker("language", "Guest")).concat(languagePicker("staff_language", "Receptionist"), '</div><p id="translation-readiness" class="setup-feedback" role="status">').concat(esc(translationReadiness()), '</p><button type="button" class="primary setup-start" data-action="').concat(native && !state.audioAvailable ? "setup-translation" : "start", '" aria-describedby="translation-readiness" ').concat(state.audio !== "off" || (!native || state.audioAvailable) && sameLanguage() ? "disabled" : "", ">").concat(native && !state.audioAvailable ? "Set up translation" : "Start translation", "</button>"),
       active: () => state.mode === "translation" ? '<button class="translate-back" data-action="back" aria-label="Back">'.concat(icons.back, '</button><p class="pair-title">').concat(esc(langName(state.language)), " → ").concat(esc(langName(state.staff_language)), '</p><div class="session-scroll"><div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">').concat(conversation(), "</div></div>").concat(sessionDock()) : '<div class="status-line session-top"><div><h2>Hotel assistance</h2><p>'.concat(esc(phaseLabel()), '</p></div><button class="back" data-action="back">').concat(icons.back, "Back</button></div>").concat(state.error ? '<div class="notice error">'.concat(esc(state.error), "</div>") : "", '<div class="session-scroll">').concat(!state.closed ? '<div class="shortcut-list">'.concat(shortcuts.map((id, i) => action(id, '<span class="key">'.concat(i + 1, "</span><strong>").concat(esc(concierge()[i]), "</strong>"), "choice shortcut", ["connecting", "greeting"].includes(state.phase))).join(""), "</div>") : "", '<div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">').concat(conversation(), "</div>").concat(state.metrics ? '<p class="metrics">'.concat(esc(state.metrics), "</p>") : "", "</div>").concat(sessionDock()),
       operation_form: () => {
         var _a2, _b2, _c2, _d2, _e2, _f, _g;
@@ -334,12 +334,13 @@
   function start(restart = false) {
     var _a, _b;
     if (state.active || state.phase === "ending" || state.audio !== "off") return;
-    if (sameLanguage()) {
-      toast("Choose a different guest language for translation.");
+    if (state.mode === "translation" && !state.audioAvailable) {
+      if (native) send("voice_setup");
+      else toast(state.audioGate);
       return;
     }
-    if (state.mode === "translation" && !state.audioAvailable) {
-      toast(state.audioGate);
+    if (sameLanguage()) {
+      toast("Choose a different guest language for translation.");
       return;
     }
     if (!native) {
@@ -471,8 +472,8 @@
       case "start":
         start();
         break;
-      case "settings":
-        if (native && !state.active) send("settings");
+      case "setup-translation":
+        if (native && !state.active && state.audio === "off") send("voice_setup");
         break;
       case "mute":
         if (state.mode === "translation" && state.active && !state.closed && ["recording", "muted"].includes(state.audio)) {
@@ -677,6 +678,13 @@
     }
     if (!event || typeof event !== "object") return;
     const type = event.type;
+    if (type === "translation_setup_return") {
+      if (!state.active && state.audio === "off") {
+        state.mode = "translation";
+        page("translation_languages");
+      }
+      return;
+    }
     if (type === "navigation" && event.action === "back") {
       if (state.active && !matchesSession(event)) return;
       goBack();

@@ -16,10 +16,13 @@ adb install -r android/hotel/build/outputs/apk/androidTest/debug/hotel-debug-and
 adb shell dumpsys webviewupdate > "$evidence/webview.txt"
 adb shell cmd package set-home-activity com.android.launcher3/.Launcher
 adb logcat -c
-trap 'adb logcat -d > "$evidence/logcat.txt"' EXIT
-for fixture in reception-bridge microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery; do
+trap 'adb logcat -d > "$evidence/logcat.txt"; adb shell locksettings clear --old 2468 > /dev/null 2>&1 || true' EXIT
+for fixture in reception-bridge microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery voice-setup; do
   # Reset only this disposable, key-free test app between independent scenarios.
   adb shell pm clear dev.orange.hotel
+  if [[ "$fixture" == voice-setup ]]; then
+    adb shell locksettings set-pin 2468
+  fi
   timeout 180s adb shell am instrument -w -r -e case "$fixture" \
     dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture | tee "$evidence/$fixture.txt"
   # adb itself returns zero even when an instrumentation assertion fails.
