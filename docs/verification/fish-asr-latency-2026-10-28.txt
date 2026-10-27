@@ -1,0 +1,42 @@
+Fish realtime ASR (transcribe-stream-1) turn-finalization timing - 2026-10-28
+=============================================================================
+
+Scope: provider-ASR-only timing with SYNTHESIZED input speech (Fish TTS s2-pro,
+16 kHz pcm_s16le, played at speaker pace with trailing silence frames, as a real
+microphone sends). NOT end-to-end, acoustic, or device speed; no LLM or reply
+stage. Small n=4. Scripts: scripts/fish_asr_latency_probe.py, run with the
+self-hosted route's own client (voice-worker/voice_worker/asr.py, auto mode,
+eager on). Cost: existing Fish API credit, ASR session seconds + ~1 KB TTS.
+
+Method finding: the provider's turn detection does NOT treat "no packets" as
+silence. A client that stops sending frames at end of speech leaves the turn
+open (observed 40+ s, audio_committed_ms frozen at 0 in progress events).
+Trailing silence frames are required - a live microphone always sends them;
+this matters for any scripted fixture, not for production mic streaming.
+
+Results (end of speech audio -> committed transcript):
+
+  "Hello, I have a reservation for tonight."   en   1529 ms   user_turn=true
+  "¿A qué hora es el desayuno por la mañana?"  es   1530 ms   user_turn=true
+  "What time do I need to check out tomorrow?" en   1529 ms   user_turn=true
+  "¿Puede llamarme un taxi para las ocho?"     es   1530 ms   user_turn=true
+
+  Median end->committed: 1530 ms. eager_end_of_turn arrived AT the commit
+  instant in all four turns (no eager head start with these short complete
+  sentences). Per-turn language detection correct; speaker tags present.
+
+Interpretation limits:
+- Auto mode's semantic turn detector, not the silence safety net (auto
+  silence_timeout_ms default 5000 is only a fallback per docs). Docs state a
+  speaker who stops mid-sentence is ended "about 2 seconds" later; complete
+  sentences can end sooner - 1.53 s is consistent.
+- transcribe-stream-1 is NOT the hosted agents route's ASR (scribe_v2_realtime
+  / nova-3). The hosted route's documented finalization (~0.9 s Scribe,
+  ~0.4 s Nova, unmeasured by us) and this number are different stacks; do not
+  compare directly without measuring the hosted route on-device.
+- Consequence for the self-hosted route (issue #8): ~1.5 s of ASR finalization
+  precedes any translation or synthesis. Combined with LLM + TTS stages this
+  must be measured end-to-end (bench) before any route-switch claim.
+- Possible follow-ups (documented, unmeasured): vad mode at >=500 ms (faster
+  endpointing, documented sentence-splitting risk), results.drafts/eot_events
+  for earlier LLM start, eager head start on longer or mid-pause utterances.
