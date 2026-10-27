@@ -1,0 +1,40 @@
+Fish realtime ASR A/B: auto mode vs vad_threshold=500ms
+Date: 2026-10-28 ~01:25 IST. Model: transcribe-stream-1. Input: synthesized Fish TTS PCM (16kHz mono),
+streamed in real time with 100ms trailing silence frames. PROVIDER-ASR-ONLY, SYNTHESIZED INPUT.
+Not a device measurement; no app code in the path. n=1 per case per mode (small n, no default change implied).
+
+Balance (live SDK account read): before sessions 178.805219, after both modes 178.792314.
+Actual draw for 2 sessions (16 utterance runs): ~$0.013. (Earlier same-day first-measurement + TTS synthesis
+drew 178.850344 -> 178.805219, ~$0.045.)
+
+Per-case results (end_to_committed_ms = last audio frame sent -> committed transcript received):
+
+PLAIN UTTERANCES (correct transcripts, single turn, both modes):
+  auto:   613, 776, 782, 700 ms (median of all-8 auto: 776)
+  vad500: 618, 536, 777, 713 ms (median of all-8 vad500: 713)
+  Languages detected correctly (en/es). user_turn=true on all plain cases.
+
+A/B CASES:
+1. negation-pause-600ms: "I am not" + 600ms silence + "saying the room is dirty."
+   auto:   SPLIT INTO 2 COMMITTED TURNS ("I am not." / "The room is dirty."), both user_turn=true,
+           first commit 856ms after fragment end. eager fired DURING the pause (end_to_eager=-1747ms).
+   vad500: ALSO SPLIT INTO 2 TURNS, second turn user_turn=FALSE, first commit 1635ms.
+   => A 600ms mid-sentence pause after "I am not" commits "I am not." as a complete turn IN BOTH MODES.
+      On a route that starts LLM on each committed/eager turn, the negated sentence is answered as its
+      opposite partial. This is a provider-side end-of-turn decision, reproducible with synthesized input.
+2. pause-700ms: "Could I" + 700ms + "get a late checkout on Sunday?"
+   auto: 1 turn, 615ms, text "check out" (wording variant). vad500: 1 turn, 697ms, "check-out".
+   => 700ms pause did NOT split here; splitting is content/prosody dependent, not a pure threshold.
+3. long-utterance (~14s): both modes: 1 turn, 857/777ms, transcript ends "...without any pr" (missing "oblem.").
+   Same truncation point in both modes; likely probe artifact (stream/tail handling) OR provider commit
+   cutting the final word. UNRESOLVED, flagged, not used for any claim.
+4. double-negation-400ms: both modes: 1 turn, 701/639ms, full correct transcript with both negations.
+   => 400ms pause survived; both "not"s preserved.
+
+TAKEAWAYS (measured, provider-side only):
+- Endpoint latency for complete short sentences: ~540-780ms committed, eager 190-430ms. vad500 not faster
+  than auto on these cases (medians 713 vs 776ms, overlapping ranges, n=4 plain).
+- The negation-split failure reproduces at the provider with a 600ms pause; vad_threshold=500 does not fix it
+  (600>500). A longer vad threshold or app-side turn-stitching would be needed; NOT tested further here.
+- eager fires at the pause boundary (negative end_to_eager on split cases): any route consuming eager as
+  turn-start will generate from the wrong partial on paused negations.
