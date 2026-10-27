@@ -4,6 +4,8 @@ import android.app.Instrumentation
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.os.Build
+import android.os.Bundle
+import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.WebView
 import android.widget.EditText
 import com.agentdeck.ui.ReceptionView
@@ -19,7 +21,8 @@ internal object VoiceSetupFixture {
         check(BuildConfig.FISH_API_KEY.isEmpty() && store.status() == SecretStore.Status.ABSENT)
         check(HotelConnection(context).load() == null)
         test.uiAutomation.serviceInfo = test.uiAutomation.serviceInfo.apply {
-            flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
         }
         fun windowRoot(packageName: String) = test.uiAutomation.windows.mapNotNull { it.root }
             .firstOrNull { it.packageName?.toString() == packageName }
@@ -74,7 +77,18 @@ internal object VoiceSetupFixture {
                 ?: error("Translation setup retry did not open")
             // Wait for Android's real credential screen before typing its test PIN.
             await("retry credential screen") { windowRoot("com.android.settings") != null }
-            shell("input text 2468")
+            var pin: AccessibilityNodeInfo? = null
+            await("focused Android PIN field") {
+                pin = windowRoot("com.android.settings")
+                    ?.findAccessibilityNodeInfosByViewId("com.android.settings:id/password_entry")?.firstOrNull()
+                pin?.let { it.isEditable && it.isEnabled && it.isFocused } == true
+            }
+            // The window can exist before its PIN field gains focus. Set text
+            // through Android's editable UI action, then submit normally; the
+            // actual system credential verifier must still accept the test PIN.
+            check(pin!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "2468")
+            })) { "Android PIN field did not accept the test input" }
             shell("input keyevent 66")
             await("PIN accepted") { authenticated.get(setup) == true }
             val fields = KeyEntryActivity::class.java.getDeclaredField("fields").apply { isAccessible = true }
