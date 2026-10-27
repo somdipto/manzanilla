@@ -62,6 +62,10 @@ internal object VoiceSetupFixture {
             check(authenticated.get(cancelled) == false) { "Setup bypassed device authentication" }
             await("cancel credential screen") { windowRoot("com.android.settings") != null }
             shell("input keyevent 4")
+            // Back first dismisses the PIN keyboard on some Android images.
+            Thread.sleep(600)
+            if (!cancelled.isFinishing && !cancelled.isDestroyed && windowRoot("com.android.settings") != null)
+                shell("input keyevent 4")
             await("cancelled setup closes") { cancelled.isFinishing || cancelled.isDestroyed }
             check(store.status() == SecretStore.Status.ABSENT)
             await("setup retry button") { js("!!document.querySelector('[data-action=setup-translation]')") == "true" }
