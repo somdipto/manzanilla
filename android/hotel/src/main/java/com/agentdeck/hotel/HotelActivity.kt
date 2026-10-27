@@ -54,6 +54,7 @@ class HotelActivity : Activity() {
     private var destroyed = false
     private var backCallback: OnBackInvokedCallback? = null
     private var pendingPermission: SessionOwner.Lease? = null
+    private var returnToTranslation = false
     private var audioState = "off"
     private var lastActivity = 0L
     private val watchdog = object : Runnable {
@@ -238,8 +239,13 @@ class HotelActivity : Activity() {
     }
 
     private fun openStaffSetup(voiceOnly: Boolean = false) = stopSession(done = {
-        if (!destroyed && foreground) startActivity(Intent(this, KeyEntryActivity::class.java)
-            .putExtra("voice_only", voiceOnly))
+        if (!destroyed && foreground) {
+            val setup = Intent(this, KeyEntryActivity::class.java).putExtra("voice_only", voiceOnly)
+            if (voiceOnly) {
+                @Suppress("DEPRECATION")
+                startActivityForResult(setup, 41)
+            } else startActivity(setup)
+        }
     })
 
     private fun openDialer(number: String): String {
@@ -377,6 +383,10 @@ class HotelActivity : Activity() {
         foreground = true
         reception?.setShown(true)
         pushState()
+        if (returnToTranslation) {
+            returnToTranslation = false
+            reception?.push(JSONObject().put("type", "translation_setup_return"))
+        }
         // Permission results can arrive before onResume. Start only after this
         // window is foreground again, and consume the pending request once.
         pendingPermission?.takeIf {
@@ -389,6 +399,13 @@ class HotelActivity : Activity() {
         updater.check()
         ui.removeCallbacks(updatePoll)
         ui.postDelayed(updatePoll, 10 * 60_000L)
+    }
+    @Deprecated("Receives the internal translation setup result for API 26 compatibility")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        // Restore only non-sensitive language selection, never a prior conversation.
+        // Both Save and Cancel return here; neither starts microphone capture.
+        if (requestCode == 41) returnToTranslation = true
     }
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, permissions, results)

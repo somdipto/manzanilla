@@ -678,6 +678,13 @@
     }
     if (!event || typeof event !== "object") return;
     const type = event.type;
+    if (type === "translation_setup_return") {
+      if (!state.active && state.audio === "off") {
+        state.mode = "translation";
+        page("translation_languages");
+      }
+      return;
+    }
     if (type === "navigation" && event.action === "back") {
       if (state.active && !matchesSession(event)) return;
       goBack();
