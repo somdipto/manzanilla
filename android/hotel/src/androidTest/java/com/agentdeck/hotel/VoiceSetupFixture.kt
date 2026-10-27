@@ -72,17 +72,22 @@ internal object VoiceSetupFixture {
             await("cancelled setup closes") { cancelled.isFinishing || cancelled.isDestroyed }
             check(store.status() == SecretStore.Status.ABSENT)
             await("setup retry button") { js("!!document.querySelector('[data-action=setup-translation]')") == "true" }
+            // Retry launch: use a FRESH monitor plus the original one. CI run 40577058119
+            // showed the original monitor's waitForActivityWithTimeout can return the stale
+            // cancelled instance; run 40582626895 showed the same monitor can also miss the
+            // retry hit entirely on the slow emulator. KeyEntryDiag proves the retry instance
+            // itself launches and authenticates correctly. Poll both monitors for a non-stale
+            // instance and fail loudly if neither observes it.
+            val retryMonitor = test.addMonitor(KeyEntryActivity::class.java.name, null, true)
             js("document.querySelector('[data-action=setup-translation]').click()")
-            // Race fix (2026-10-28, CI run 40577058119): ActivityMonitor already holds the
-            // cancelled setup instance, and waitForActivityWithTimeout can return that stale
-            // hit immediately when the slow emulator has not registered the retry launch yet;
-            // the "PIN accepted" await then polls a finishing activity forever. KeyEntryDiag
-            // proved the retry instance authenticates correctly (result=-1, accepted=true,
-            // configuration shown). Wait for a NEW hit that is not the cancelled instance.
-            val hitsBeforeRetry = monitor.hits
-            await("retry setup activity") { monitor.hits > hitsBeforeRetry && monitor.lastActivity !== cancelled }
-            val setup = monitor.lastActivity as? KeyEntryActivity
-                ?: error("Translation setup retry did not open")
+            var setup: KeyEntryActivity? = null
+            await("retry setup activity") {
+                val fresh = retryMonitor.waitForActivityWithTimeout(150) as? KeyEntryActivity
+                val seen = (fresh ?: monitor.lastActivity) as? KeyEntryActivity
+                if (seen != null && seen !== cancelled) setup = seen
+                setup != null
+            }
+            if (setup == null) error("Translation setup retry did not open")
             // Wait for Android's real credential screen before typing its test PIN.
             await("retry credential screen") { windowRoot("com.android.settings") != null }
             var pin: AccessibilityNodeInfo? = null
