@@ -47,10 +47,14 @@ OTHER CASES:
   double-negation-400ms: no split, both negations preserved, every run.
   long-utterance (~8s): full correct transcript in all modes once the input PCM was complete.
     TRUNCATION CORRECTION: the earlier "...without any pr" truncation was TWO probe artifacts,
-    neither provider-side: (1) the first 8.pcm was TTS-truncated mid-word (energy analysis:
-    speech present in the final audio window), fixed by synthesizing in two calls; (2) my
-    results field sliced transcripts at 120 chars. With complete audio and full comparison,
-    transcript_matches_input=true. No provider truncation observed.
+    neither provider-side: (1) the first 8.pcm was TTS-truncated mid-word, fixed by synthesizing
+    in two calls; (2) my results field sliced transcripts at 120 chars. With complete audio and
+    full supplied-text comparison, transcript_matches_input=true (verified in 2 sessions).
+    TTS-truncation proof chain: original single-call synthesis returned 7.75s of audio ending
+    mid-word (speech energy in the final window) and ASR faithfully committed "...pr"; a repeat
+    single-call synthesis of the same text returned 8.45s ending in silence (complete); the
+    two-call PCM committed the complete supplied text. So the TTS cut was a non-deterministic
+    synthesis-side truncation; no provider truncation observed anywhere.
 
 ENDPOINT-LATENCY TRADEOFF (medians, end-of-audio -> committed):
   auto:   776 / 698 / 701 ms (3 sessions; eager at 272-351ms when it fires after end)
@@ -67,10 +71,20 @@ CANDIDATE MITIGATIONS (tested here, provider-side only; merits/gaps):
      as user_turn, including non-speech sounds - main's interruption/overlap concerns would
      need app-side filtering); threshold above a real end-of-turn pause adds up to
      (threshold - natural pause) latency on genuinely finished turns; n=2.
-  2. Keep auto, do NOT consume eager as turn start for generation (or require the subsequent
-     commit to confirm): removes the deterministic wrong-partial generation on paused
-     negations at zero endpoint-latency cost. Gap: loses the ~400ms eager head start that the
-     worker currently uses; does not fix the 1/3 commit-split case (still needs stitching).
+  2. ROUTE SEMANTICS CHECK (code read, 2026-10-28): the self-hosted worker REQUESTS eager in
+     its ASR config but never consumes eager_end_of_turn events - generation starts only on
+     committed turns with user_turn=true (session.py:204-214), and interruption starts only on
+     user_turn_taken (session.py:200-202), which cancels generation and flushes queued audio
+     (already-played audio is not retracted). So on the worker route: eager-at-pause is inert;
+     the wrong-partial path is the 1/3 split-commit case, where turn 1 ("I am not.") generates
+     and may briefly play before turn 2's user_turn_taken cancels it.
+     The app's hosted route sets speculative_response=true (FishPlan.kt:160): Fish's server
+     drafts a reply during response_wait_ms=300 (max 600ms) and discards the draft if speech
+     continues. The app consumes no eager events client-side (no eager handling in
+     HotelGateway.kt or FishSessionAdmission.kt). A 600ms mid-sentence pause lands exactly at
+     the 600ms max-wait boundary: whether the drafted wrong reply becomes audible depends on
+     which side of the boundary the resumed speech arrives - undetermined from code/docs,
+     needs a hosted-route live test.
   3. App/worker-side turn-stitching window after commit: NOT implemented/tested here. Would
      cover the residual auto split but adds a wait on every turn end (full-duplex harm main
      warned about) unless made conditional; no measured design yet.
