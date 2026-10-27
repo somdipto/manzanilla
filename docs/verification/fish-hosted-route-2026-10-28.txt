@@ -1,0 +1,32 @@
+Hosted-route probe: production Fish Agents session, negation-pause case
+Date: 2026-10-28 ~02:29-02:33 IST. Sessions via POST /v1/agent/sessions with a throwaway agent
+using the EXACT production agentConfig (FishPlan.kt, CONFIG_REV 15: scribe_v2_realtime ASR,
+gemini-3.8-flash LLM, s2.1-pro TTS, interruptible, sensitivity high, echo_guard web_voice off,
+response_wait_ms 300, response_max_wait_ms 600, speculative_response true) and the exact
+sessionBody overrides (en guest, es staff, interpreter prompt rendered from FishPlan.prompt).
+Input: synthesized Fish TTS PCM published over LiveKit as a microphone-source track.
+Probe agent deleted after each run. Existing Fish credit only (session + LLM ~$0.004 + TTS).
+Evidence: provider session history items via GET /v1/agent/sessions/{id} (verbatim below).
+
+CASE A - "I am not" + 600ms pause + "saying the room is dirty." (session sess_0659edf9):
+  Provider history user turn: "I am not. And the room is dirty."
+  Assistant reply (one turn, one LLM call, turn_id 2): "No lo estoy. Y la habitacion esta sucia."
+  Agent audio: single speech segment starting 2.0s AFTER the complete utterance ended.
+  => The 600ms mid-sentence pause destroyed the negation AT THE ASR/TURN-ASSEMBLY STAGE,
+     before the LLM ("saying" became "And", sentence boundary after "not"). The LLM translated
+     the corrupted text faithfully. THE USER'S NEGATION-LOSS SYMPTOM REPRODUCES END-TO-END ON
+     THE PRODUCTION ROUTE CONFIG. No premature/wrong-partial audio: the speculative draft was
+     discarded or never voiced; the single reply came after the full utterance.
+CASE B - control, same sentence with no pause (session sess_9871ec1a):
+  Provider history user turn: "I am not saying the room is dirty."
+  Assistant reply: "No digo que la habitacion este sucia." (correct, negation preserved).
+  => Route is healthy without the pause; the pause handling is the failure point.
+
+n=1 per case. Consistent with the transcribe-stream-1 A/B finding (pause becomes a sentence
+boundary in the committed text), but NOTE the hosted route uses elevenlabs:scribe_v2_realtime,
+not transcribe-stream-1 - same failure shape at a different ASR provider, so the lever is
+route-level turn/pause handling, not one model's quirk.
+
+TIMING (measured): greeting ~1.6s; reply to a 2s control utterance: not timed precisely this run;
+case A reply: 2.0s after utterance end (TTS included). Precise hosted end-to-end reply latency
+still to be measured across several utterances.
