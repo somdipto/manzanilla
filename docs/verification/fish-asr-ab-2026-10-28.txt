@@ -1,40 +1,78 @@
-Fish realtime ASR A/B: auto mode vs vad_threshold=500ms
-Date: 2026-10-28 ~01:25 IST. Model: transcribe-stream-1. Input: synthesized Fish TTS PCM (16kHz mono),
-streamed in real time with 100ms trailing silence frames. PROVIDER-ASR-ONLY, SYNTHESIZED INPUT.
-Not a device measurement; no app code in the path. n=1 per case per mode (small n, no default change implied).
+Fish realtime ASR: auto vs vad mode, endpoint latency, pause/negation splitting
+Date: 2026-10-28 ~01:25-01:42 IST. Model: transcribe-stream-1. Input: synthesized Fish TTS PCM
+(16kHz mono) streamed in real time with trailing silence frames. PROVIDER-ASR-ONLY, SYNTHESIZED
+INPUT. Not a device measurement; no app code in the path; no LLM/TTS reply stage.
+Small n (1-3 sessions per mode). NOT confirmed as the root cause of the original on-phone
+negation loss: that ran the hosted route with a real mic; this isolates the provider.
 
-Balance (live SDK account read): before sessions 178.805219, after both modes 178.792314.
-Actual draw for 2 sessions (16 utterance runs): ~$0.013. (Earlier same-day first-measurement + TTS synthesis
-drew 178.850344 -> 178.805219, ~$0.045.)
+CREDIT DRAW (live SDK account reads, existing credit only, no card):
+  178.850344 (baseline 01:14) -> 178.805219 (after first measurement + TTS synthesis)
+  -> 178.792314 (after first auto+vad500 pair) -> 178.765439 (after 4 more sessions + re-synthesis)
+  Total today: ~$0.085 actual. Estimate was ~$0.006/session; actual ~$0.006-0.013/session. Matches.
 
-Per-case results (end_to_committed_ms = last audio frame sent -> committed transcript received):
+LATENCY RECONCILIATION (first run reported median 1530ms; A/B runs report ~700ms):
+  The 1530ms was a PROBE PROTOCOL ARTIFACT, not real latency. The first probe sent 1.5s of
+  silence frames BEFORE it started reading events, so the commit (which actually arrived during
+  the silence window) sat in the queue and was timestamped when read. The A/B probe timestamps
+  events at arrival via a concurrent collector. Corrected committed latency for plain short
+  sentences: ~540-780ms end-of-audio -> committed, stable across 3 auto sessions (medians
+  776, 698, 701) and 2 vad900 sessions (734, 746). No improvement claim: same provider, same
+  route, only the measurement protocol changed.
 
-PLAIN UTTERANCES (correct transcripts, single turn, both modes):
-  auto:   613, 776, 782, 700 ms (median of all-8 auto: 776)
-  vad500: 618, 536, 777, 713 ms (median of all-8 vad500: 713)
-  Languages detected correctly (en/es). user_turn=true on all plain cases.
+MODE SEMANTICS (Fish docs, llms-full.txt):
+  auto: semantic turn judgement; "a short pause mid-sentence usually does not end the turn";
+        silence_timeout_ms (default 5000, min 3000) is only a safety net. eager only in auto.
+  vad:  turn ends after silence_timeout_ms of silence (default 700, allowed 300-60000);
+        every turn is a user turn; no eager events.
+  A session must START in vad for clean vad semantics; a mid-session switch from auto keeps
+  auto's judgement artifacts (first vad500 run used a mid-session switch and produced
+  user_turn=false, contradicting vad semantics - discarded as protocol-invalid).
 
-A/B CASES:
-1. negation-pause-600ms: "I am not" + 600ms silence + "saying the room is dirty."
-   auto:   SPLIT INTO 2 COMMITTED TURNS ("I am not." / "The room is dirty."), both user_turn=true,
-           first commit 856ms after fragment end. eager fired DURING the pause (end_to_eager=-1747ms).
-   vad500: ALSO SPLIT INTO 2 TURNS, second turn user_turn=FALSE, first commit 1635ms.
-   => A 600ms mid-sentence pause after "I am not" commits "I am not." as a complete turn IN BOTH MODES.
-      On a route that starts LLM on each committed/eager turn, the negated sentence is answered as its
-      opposite partial. This is a provider-side end-of-turn decision, reproducible with synthesized input.
-2. pause-700ms: "Could I" + 700ms + "get a late checkout on Sunday?"
-   auto: 1 turn, 615ms, text "check out" (wording variant). vad500: 1 turn, 697ms, "check-out".
-   => 700ms pause did NOT split here; splitting is content/prosody dependent, not a pure threshold.
-3. long-utterance (~14s): both modes: 1 turn, 857/777ms, transcript ends "...without any pr" (missing "oblem.").
-   Same truncation point in both modes; likely probe artifact (stream/tail handling) OR provider commit
-   cutting the final word. UNRESOLVED, flagged, not used for any claim.
-4. double-negation-400ms: both modes: 1 turn, 701/639ms, full correct transcript with both negations.
-   => 400ms pause survived; both "not"s preserved.
+NEGATION-PAUSE CASE ("I am not" + 600ms silence + "saying the room is dirty."):
+  auto run 1: SPLIT into 2 committed turns ("I am not." / "The room is dirty."), both
+              user_turn=true. A route that generates per committed turn answers the wrong
+              (negation-less) statement.
+  auto run 2, 3: single turn, all words present. Split rate observed: 1/3 auto sessions.
+  ALL auto runs: eager_end_of_turn fired DURING the 600ms pause (end_to_eager -1.4 to -1.7s),
+              i.e. eager consistently treats the pause as turn end even when the final commit
+              does not split. Any route that starts generation on eager (the self-hosted worker
+              does) will generate from the wrong partial on paused negations, deterministically.
+  vad900 (clean start, silence_timeout 900ms): 2/2 sessions single turn, all words present,
+              committed 676-680ms on this case. No split, as expected (600 < 900).
 
-TAKEAWAYS (measured, provider-side only):
-- Endpoint latency for complete short sentences: ~540-780ms committed, eager 190-430ms. vad500 not faster
-  than auto on these cases (medians 713 vs 776ms, overlapping ranges, n=4 plain).
-- The negation-split failure reproduces at the provider with a 600ms pause; vad_threshold=500 does not fix it
-  (600>500). A longer vad threshold or app-side turn-stitching would be needed; NOT tested further here.
-- eager fires at the pause boundary (negative end_to_eager on split cases): any route consuming eager as
-  turn-start will generate from the wrong partial on paused negations.
+OTHER CASES:
+  pause-700ms "Could I ... get a late checkout on Sunday?": no split in any mode/run
+    (splitting is content/prosody dependent, not a pure threshold). Provider inserts a
+    "[pause]"/"..." marker at the gap; word content complete.
+  double-negation-400ms: no split, both negations preserved, every run.
+  long-utterance (~8s): full correct transcript in all modes once the input PCM was complete.
+    TRUNCATION CORRECTION: the earlier "...without any pr" truncation was TWO probe artifacts,
+    neither provider-side: (1) the first 8.pcm was TTS-truncated mid-word (energy analysis:
+    speech present in the final audio window), fixed by synthesizing in two calls; (2) my
+    results field sliced transcripts at 120 chars. With complete audio and full comparison,
+    transcript_matches_input=true. No provider truncation observed.
+
+ENDPOINT-LATENCY TRADEOFF (medians, end-of-audio -> committed):
+  auto:   776 / 698 / 701 ms (3 sessions; eager at 272-351ms when it fires after end)
+  vad900: 734 / 746 ms (2 sessions; no eager events in vad mode)
+  On these cases vad900 did NOT add committed latency vs auto, because auto's semantic judge
+  also waited ~700ms after speech end here. vad mode removes eager, so a route that relies on
+  eager for early LLM start loses that head start (auto eager fired 272-351ms after end on
+  plain sentences, i.e. ~400ms before commit).
+
+CANDIDATE MITIGATIONS (tested here, provider-side only; merits/gaps):
+  1. vad mode with silence_timeout ~900ms: held paused negations together 2/2, no measured
+     committed-latency cost on these cases, deterministic threshold behavior. Gaps: loses
+     eager head start and auto's user_turn/backchannel classification (vad commits every turn
+     as user_turn, including non-speech sounds - main's interruption/overlap concerns would
+     need app-side filtering); threshold above a real end-of-turn pause adds up to
+     (threshold - natural pause) latency on genuinely finished turns; n=2.
+  2. Keep auto, do NOT consume eager as turn start for generation (or require the subsequent
+     commit to confirm): removes the deterministic wrong-partial generation on paused
+     negations at zero endpoint-latency cost. Gap: loses the ~400ms eager head start that the
+     worker currently uses; does not fix the 1/3 commit-split case (still needs stitching).
+  3. App/worker-side turn-stitching window after commit: NOT implemented/tested here. Would
+     cover the residual auto split but adds a wait on every turn end (full-duplex harm main
+     warned about) unless made conditional; no measured design yet.
+NOT confirmed: that any of these fixes the original phone symptom (hosted route, real mic,
+acoustic echo). No production default or route change made or proposed from this n.

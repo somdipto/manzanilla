@@ -56,8 +56,10 @@ async def main():
     key = os.environ["FISH_API_KEY"]
     speech = []
     mode = "auto"
-    if "--vad500" in sys.argv:
-        mode = "vad500"
+    vad_ms = None
+    if "--vad" in sys.argv:
+        vad_ms = int(sys.argv[sys.argv.index("--vad") + 1])
+        mode = f"vad{vad_ms}"
     if "--asr-only" in sys.argv or "--ab" in sys.argv:
         all_texts = UTTERANCES + AB_FRAGMENTS
         pcm_by_index = {}
@@ -80,12 +82,20 @@ async def main():
 
     results = []
     ab_expected = {name: full for name, _, full in AB_CASES}
-    async with FishASR(key) as asr:
-        if mode == "vad500":
-            await asr._send({'type': 'config',
-                             'audio': {'format': 'pcm_s16le', 'sample_rate': 16000, 'channels': 1},
-                             'turn_detection': {'mode': 'vad', 'silence_timeout_ms': 500},
-                             'results': {'drafts': False, 'vad_events': False}})
+    asr = FishASR(key)
+    if vad_ms is not None:
+        # session must START in vad mode: mid-session switches keep auto's judgement
+        # semantics per Fish docs; rewrite the initial config instead of a second config.
+        orig_send = asr._send
+        sent_first = False
+        async def send_with_vad(message):
+            nonlocal sent_first
+            if not sent_first and message.get('type') == 'config':
+                message['turn_detection'] = {'mode': 'vad', 'silence_timeout_ms': vad_ms}
+                sent_first = True
+            await orig_send(message)
+        asr._send = send_with_vad
+    async with asr:
         session_t0 = time.time()
         for text, pcm in speech:
             events = []
@@ -115,21 +125,21 @@ async def main():
             collector.cancel()
             commits = [(t, e) for t, e in events if e.get("type") == "committed"]
             eager = next((t for t, e in events if e.get("type") == "eager_end_of_turn"), None)
-            joined = " ".join(e.get("text", "") for _, e in commits)
+            joined = clean(" ".join(e.get("text", "") for _, e in commits))
             last_commit_at = commits[-1][0] if commits else None
             r = {
                 "input": text,
                 "end_to_eager_ms": round((eager - end_of_audio) * 1000) if eager else None,
                 "end_to_committed_ms": round((last_commit_at - end_of_audio) * 1000) if last_commit_at else None,
-                "transcript": clean(joined)[:120],
+                "transcript": joined if text in ab_expected else joined[:120],
                 "language": commits[-1][1].get("language_code") if commits else None,
                 "user_turn": commits[-1][1].get("user_turn") if commits else None,
                 "turns_committed": len(commits),
                 "commit_reasons": [e.get("reason") for _, e in commits],
             }
             if text in ab_expected:
-                got = re.sub(r"[^a-zñáéíóú¿? ]", "", r["transcript"].lower()).strip()
-                want = re.sub(r"[^a-zñáéíóú¿? ]", "", ab_expected[text].lower()).strip()
+                norm = lambda s: re.sub(r" +", " ", re.sub(r"[^a-zñáéíóú¿? ]", "", s.lower())).strip()
+                got, want = norm(r["transcript"]), norm(ab_expected[text])
                 r["expected"] = ab_expected[text]
                 r["transcript_matches_input"] = got == want
             results.append(r)
@@ -138,7 +148,7 @@ async def main():
         await asr.finish()
     summary = {"mode": mode, "n": len(results), "session_wall_s": round(time.time() - session_t0, 1),
                "median_end_to_committed_ms": sorted(r["end_to_committed_ms"] for r in results)[len(results)//2],
-               "median_end_to_eager_ms": sorted(r["end_to_eager_ms"] for r in results if r["end_to_eager_ms"])[max(0, len([r for r in results if r['end_to_eager_ms']])//2)]}
+               "median_end_to_eager_ms": (lambda e: sorted(e)[len(e)//2] if e else None)([r["end_to_eager_ms"] for r in results if r["end_to_eager_ms"] is not None])}
     print("SUMMARY " + json.dumps(summary))
 
 asyncio.run(main())
