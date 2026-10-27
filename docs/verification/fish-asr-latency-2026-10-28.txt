@@ -40,3 +40,9 @@ Interpretation limits:
 - Possible follow-ups (documented, unmeasured): vad mode at >=500 ms (faster
   endpointing, documented sentence-splitting risk), results.drafts/eot_events
   for earlier LLM start, eager head start on longer or mid-pause utterances.
+
+CORRECTION (2026-10-28, this branch): the 1530 ms median above is a probe protocol
+artifact - that run sent 1.5 s of silence frames before draining the event queue, so
+commits were timestamped on read, not on arrival. Corrected committed latency for the
+same utterances is ~540-780 ms. See fish-asr-ab-2026-10-28.txt for the reconciliation
+and the corrected measurements.
