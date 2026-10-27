@@ -237,8 +237,9 @@ class HotelActivity : Activity() {
         } catch (_: Exception) { ringing.set(false) }
     }
 
-    private fun openStaffSetup() = stopSession(done = {
-        if (!destroyed && foreground) startActivity(Intent(this, KeyEntryActivity::class.java))
+    private fun openStaffSetup(voiceOnly: Boolean = false) = stopSession(done = {
+        if (!destroyed && foreground) startActivity(Intent(this, KeyEntryActivity::class.java)
+            .putExtra("voice_only", voiceOnly))
     })
 
     private fun openDialer(number: String): String {
@@ -302,6 +303,7 @@ class HotelActivity : Activity() {
             }
             "bell" -> ringBell()
             "settings" -> openStaffSetup()
+            "voice_setup" -> openStaffSetup(voiceOnly = true)
             "info" -> pushState()
             "start" -> {
                 val id = message.optString("session_id")

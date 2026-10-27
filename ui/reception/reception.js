@@ -82,7 +82,7 @@
   const languagePicker = (side, label) => `<section class="language-side" data-keypad="${languageSide === side}"><label for="${side}">${label}</label><select id="${side}" data-language-side="${side}" lang="${state[side]}" dir="${languageDir(state[side])}" aria-describedby="${side}-hint" ${state.audio !== 'off' ? 'disabled' : ''}>${Object.entries(translationLanguages).map(([id,item]) => `<option value="${id}" lang="${id}" dir="${languageDir(id)}" ${state[side] === id ? 'selected' : ''}>${esc(item.native)}</option>`).join('')}</select><small id="${side}-hint">${side === 'language' ? 'The language you speak' : 'The language reception speaks'}</small></section>`;
   const send = (action, detail = {}) => {
     if (!native) return;
-    const scope = state.sessionId && !['start','info','languages','appearance','night','settings','apply_update','check_updates'].includes(action)
+    const scope = state.sessionId && !['start','info','languages','appearance','night','settings','voice_setup','apply_update','check_updates'].includes(action)
       ? { session_id: state.sessionId, ...(state.generation === null ? {} : { generation: state.generation }) } : {};
     window.ManzaniaNative.postMessage(JSON.stringify({ action, ...scope, ...detail }));
   };
@@ -225,12 +225,12 @@
     document.getElementById('connection-text').textContent = state.connected ? 'Hotel connected' : 'Hotel setup needed';
     document.getElementById('hotel-label').textContent = state.hotel || 'Hotel reception';
     document.getElementById('privacy').innerHTML = `<span class="mic-dot${state.audio === 'recording' ? ' mic-live' : ''}"></span>${esc(sessionAudioText())}`;
-    document.getElementById('hardware-hint').textContent = state.active ? 'Green or red to stop' : state.page === 'translation_languages' ? 'Digits: first ten · ' + (state.audioAvailable ? 'Green: start · ' : '') + 'Red: back' : state.night ? 'Green: hotel assistance' : 'Green: translation';
+    document.getElementById('hardware-hint').textContent = state.active ? 'Green or red to stop' : state.page === 'translation_languages' ? 'Digits: first ten · ' + (state.audioAvailable ? 'Green: start · ' : 'Green: setup · ') + 'Red: back' : state.night ? 'Green: hotel assistance' : 'Green: translation';
     const homeAction = (name, icon, label, note = '') => `<button class="home-action${name === (state.night ? 'reception' : 'translation') ? ' home-action-main' : ''}" data-action="${name}">${name === (state.night ? 'reception' : 'translation') ? '<span class="orb">' + icons.arrow + '</span>' : icon}<span>${label}</span>${note ? '<small>' + note + '</small>' : ''}</button>`;
     const html = {
       idle: () => `<div class="welcome"><h1>Welcome.</h1><p>${state.night ? 'Self-service hotel assistance.' : 'Guest and staff support.'}</p></div><nav class="home-actions" aria-label="Reception services">${state.night ? homeAction('reception',icons.bell,'Hotel assistance','Self-service support') + homeAction('translation',icons.translate,'Live translation',state.audioAvailable ? 'Talk to each other' : 'Audio unavailable') : homeAction('translation',icons.translate,'Live translation',state.audioAvailable ? 'Talk to each other' : 'Audio unavailable') + homeAction('reception',icons.bell,'Hotel assistance')}${homeAction('request:checkin',icons.bed,'Arrival guide')}${homeAction('request:taxi',icons.car,'Taxi request')}${homeAction('request:message',icons.message,'Message staff')}</nav><div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="Switch to ${appearance === 'dark' ? 'day' : 'night'} mode" title="Day / night mode · keypad 1">${themeIcon()}</button></div>`,
       languages: () => `<div class="status-line"><div><h2 class="language-heading">Hotel assistance</h2></div><button class="back" data-action="back">${icons.back}Back</button></div><label class="assist-label" for="assist-language">Language</label><select id="assist-language" class="assist-language" lang="${state.language}" dir="${languageDir(state.language)}">${Object.entries(languages).map(([id,item]) => `<option value="${id}" lang="${id}" dir="${languageDir(id)}" ${state.language === id ? 'selected' : ''}>${esc(item.native)}</option>`).join('')}</select>${action('assist-go','Continue','primary assist-go')}`,
-      translation_languages: () => `<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">Guest ↔ Receptionist</p></div><button class="back" data-action="back">${icons.back}Back</button></div><div class="language-pair">${languagePicker('language','Guest')}${languagePicker('staff_language','Receptionist')}</div><p id="translation-readiness" class="setup-feedback" role="status">${esc(translationReadiness())}</p>${native && !state.audioAvailable ? '<button type="button" class="primary" data-action="settings">Check voice setup</button>' : ''}<button type="button" class="primary setup-start" data-action="start" aria-describedby="translation-readiness" ${!state.audioAvailable || sameLanguage() || state.audio !== 'off' ? 'disabled' : ''}>Start translation</button>`,
+      translation_languages: () => `<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">Guest ↔ Receptionist</p></div><button class="back" data-action="back">${icons.back}Back</button></div><div class="language-pair">${languagePicker('language','Guest')}${languagePicker('staff_language','Receptionist')}</div><p id="translation-readiness" class="setup-feedback" role="status">${esc(translationReadiness())}</p><button type="button" class="primary setup-start" data-action="${native && !state.audioAvailable ? 'setup-translation' : 'start'}" aria-describedby="translation-readiness" ${state.audio !== 'off' || ((!native || state.audioAvailable) && sameLanguage()) ? 'disabled' : ''}>${native && !state.audioAvailable ? 'Set up translation' : 'Start translation'}</button>`,
       active: () => state.mode === 'translation'
         ? `<button class="translate-back" data-action="back" aria-label="Back">${icons.back}</button><p class="pair-title">${esc(langName(state.language))} → ${esc(langName(state.staff_language))}</p><div class="session-scroll"><div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">${conversation()}</div></div>${sessionDock()}`
         : `<div class="status-line session-top"><div><h2>Hotel assistance</h2><p>${esc(phaseLabel())}</p></div><button class="back" data-action="back">${icons.back}Back</button></div>${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}<div class="session-scroll">${!state.closed ? `<div class="shortcut-list">${shortcuts.map((id,i) => action(id, `<span class="key">${i + 1}</span><strong>${esc(concierge()[i])}</strong>`, 'choice shortcut', ['connecting','greeting'].includes(state.phase))).join('')}</div>` : ''}<div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">${conversation()}</div>${state.metrics ? `<p class="metrics">${esc(state.metrics)}</p>` : ''}</div>${sessionDock()}`,
@@ -328,8 +328,11 @@
   }
   function start(restart = false) {
     if (state.active || state.phase === 'ending' || state.audio !== 'off') return;
+    if (state.mode === 'translation' && !state.audioAvailable) {
+      if (native) send('voice_setup'); else toast(state.audioGate);
+      return;
+    }
     if (sameLanguage()) { toast('Choose a different guest language for translation.'); return; }
-    if (state.mode === 'translation' && !state.audioAvailable) { toast(state.audioGate); return; }
     if (!native) { state.error = 'Voice conversations require the reception tablet. No microphone has been opened.'; page('error'); return; }
     silence();
     if (!restart) clearGuest();
@@ -430,7 +433,7 @@
         break;
       }
       case 'start': start(); break;
-      case 'settings': if (native && !state.active) send('settings'); break;
+      case 'setup-translation': if (native && !state.active && state.audio === 'off') send('voice_setup'); break;
       case 'mute':
         if (state.mode === 'translation' && state.active && !state.closed && ['recording','muted'].includes(state.audio)) {
           activity();

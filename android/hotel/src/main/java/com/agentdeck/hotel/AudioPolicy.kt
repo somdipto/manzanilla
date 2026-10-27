@@ -13,8 +13,8 @@ object AudioPolicy {
         if (!LIVE_AUDIO_ENABLED) return BLOCK_REASON
         if (backendConfigured || directKey == SecretStore.Status.READY || bundledKeyAvailable) return ""
         return if (directKey == SecretStore.Status.ERROR)
-            "The saved voice key could not be opened. Unlock this device, then open Staff setup to retry."
-        else "This device needs a voice key. Open Staff setup to connect Fish Audio or your hotel service."
+            "The saved voice key could not be opened. Tap Set up translation to check it using your device screen lock."
+        else "One-time setup: save your Fish Audio API key. Use your normal device PIN or pattern to open setup."
     }
 
     /** Evaluate before permission/capture, credential loading, ticket minting or provider connect. */
