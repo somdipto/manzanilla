@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.view.ActionMode
@@ -39,6 +40,11 @@ class KeyEntryActivity : Activity() {
     private var foreground = false
     private val fields = ArrayList<EditText>()
     private var dialog: AlertDialog? = null
+    // Diagnostics for the voice-setup fixture flake: lifecycle/result booleans and instance
+    // identity only. NEVER log credentials, PINs, key material, or audio here.
+    private val diagTag = "KeyEntryDiag"
+    private val diagId get() = Integer.toHexString(System.identityHashCode(this))
+    private fun diag(event: String) = Log.d(diagTag, "[$diagId] $event secure=${keyguard.isDeviceSecure} locked=${keyguard.isKeyguardLocked} inFlight=$authenticationInFlight accepted=$authenticationAccepted authed=$authenticated fg=$foreground finishing=$isFinishing")
     private val light by lazy { getSharedPreferences("deck", MODE_PRIVATE).getString("reception_appearance", "dark") == "light" }
     private val background get() = if (light) Color.rgb(243, 245, 242) else Color.rgb(8, 15, 21)
     private val ink get() = if (light) Color.rgb(24, 44, 56) else Color.rgb(229, 237, 243)
@@ -55,12 +61,14 @@ class KeyEntryActivity : Activity() {
         window.navigationBarColor = background
         if (light) window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        diag("onCreate voiceOnly=$voiceOnly")
         lockedView("Use your normal device PIN, password or pattern to open setup. No separate staff account is required.")
     }
 
     override fun onResume() {
         super.onResume()
         foreground = true
+        diag("onResume")
         if (authenticationAccepted && keyguard.isDeviceSecure && !keyguard.isKeyguardLocked) {
             authenticationAccepted = false
             authenticated = true
@@ -78,6 +86,7 @@ class KeyEntryActivity : Activity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        diag("onNewIntent")
         lock()
         if (foreground && !authenticationInFlight) requestAuthentication()
     }
@@ -85,9 +94,11 @@ class KeyEntryActivity : Activity() {
     @Deprecated("Uses Android device credential confirmation for API 26 compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        diag("onActivityResult request=$requestCode result=$resultCode")
         if (requestCode != AUTH_REQUEST || !authenticationInFlight) return
         authenticationInFlight = false
         authenticationAccepted = resultCode == RESULT_OK && keyguard.isDeviceSecure
+        diag("resultHandled accepted=$authenticationAccepted")
         if (!authenticationAccepted) finish()
     }
 
@@ -114,6 +125,7 @@ class KeyEntryActivity : Activity() {
             return
         }
         authenticationInFlight = true
+        diag("requestAuthentication launch")
         try {
             startActivityForResult(confirmation, AUTH_REQUEST)
         } catch (_: Exception) {
