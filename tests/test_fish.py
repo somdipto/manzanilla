@@ -381,9 +381,17 @@ def test_staff_language_is_set_for_each_session(fish_api):
 def test_provider_creation_hang_is_bounded_and_keeps_uncertain_lease(fish_api,monkeypatch):
     store,client,headers,_,_,state=fish_api
     monkeypatch.setattr(fish,'CREATION_SECONDS',0.05)
+    reserve = store.reserve_fish
+    def reserve_with_generous_deadline(dev,duration,hotel_cap,account_cap,creation_seconds,token_seconds,**kwargs):
+        # Test the async provider timeout independently of the lease deadline:
+        # slow CI setup must not expire the lease before the provider is called.
+        assert creation_seconds == 0.05
+        return reserve(dev,duration,hotel_cap,account_cap,60,token_seconds,**kwargs)
+    monkeypatch.setattr(store,'reserve_fish',reserve_with_generous_deadline)
     async def hang(): await asyncio.sleep(3600)
     state['on_session']=hang
     assert client.post('/api/device/fish-session',headers=headers,json=REQUEST).status_code==503
+    assert state['session_count']==1
     assert store.rows('SELECT status FROM fish_sessions')[0]['status']=='uncertain'
     assert client.post('/api/device/fish-session',headers=headers,json=REQUEST).status_code==409
 
