@@ -27,7 +27,7 @@ class UpgradeDataFixture : Instrumentation() {
 
     override fun onStart() {
         val result = Bundle()
-        val case = args?.getString("case").takeIf { it == "seed" || it == "verify" } ?: "unknown"
+        val case = args?.getString("case").takeIf { it in setOf("seed", "verify", "bundled") } ?: "unknown"
         try {
             check(args?.getString("isolated") == "1")
             check(Build.HARDWARE in setOf("ranchu", "goldfish"))
@@ -86,9 +86,30 @@ class UpgradeDataFixture : Instrumentation() {
                     check(secretClass.getMethod("load").invoke(voiceStore) == voiceMarker)
                     check(secretClass.getMethod("status").invoke(voiceStore).toString() == "READY")
                 }
+                "bundled" -> {
+                    // Only the exact synthetic key seeded above can be removed;
+                    // this instrumentation also refuses to run outside an emulator.
+                    check(secretClass.getMethod("load").invoke(voiceStore) == voiceMarker)
+                    secretClass.getMethod("clear").invoke(voiceStore)
+                    val absent = secretClass.getMethod("status").invoke(voiceStore)
+                    check(absent.toString() == "ABSENT")
+                    // Check the installed candidate, never the test APK's inlined
+                    // BuildConfig. Do not log, copy or compare credential values.
+                    val buildConfig = targetContext.classLoader.loadClass("com.agentdeck.hotel.BuildConfig")
+                    val bundled = buildConfig.getField("FISH_API_KEY").get(null) as String
+                    check(bundled.isNotBlank())
+                    val statusClass = targetContext.classLoader.loadClass("com.agentdeck.hotel.SecretStore\$Status")
+                    val policy = targetContext.classLoader.loadClass("com.agentdeck.hotel.AudioPolicy")
+                    val gate = policy.getMethod("blockReason", Boolean::class.javaPrimitiveType,
+                        statusClass, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
+                        .invoke(policy.getField("INSTANCE").get(null), false, absent, true, false)
+                    check(gate == "")
+                }
                 else -> error("Unknown fixture case")
             }
-            result.putString("stream", "PASS case=$case preferences=true private_file=true encrypted_marker=true voice_credential=true\n")
+            val evidence = if (case == "bundled") "bundled_key=true direct_ready=true" else
+                "preferences=true private_file=true encrypted_marker=true voice_credential=true"
+            result.putString("stream", "PASS case=$case $evidence\n")
             finish(-1, result)
         } catch (_: Throwable) {
             // Never print values from device storage, credentials, or arbitrary exception text.

@@ -1,8 +1,8 @@
 package com.agentdeck.hotel
 
 /**
- * Public APKs use a staff-saved device credential or an enrolled hotel service.
- * A configured hotel service mints managed sessions instead of exposing its key.
+ * Local readiness accepts a saved device credential, an embedded testing key,
+ * or an enrolled hotel service. An embedded key is visible to APK recipients.
  */
 object AudioPolicy {
     const val LIVE_AUDIO_ENABLED = true
