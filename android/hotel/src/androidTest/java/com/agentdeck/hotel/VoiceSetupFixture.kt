@@ -4,10 +4,12 @@ import android.app.Instrumentation
 import android.app.KeyguardManager
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.WebView
+import android.widget.EditText
 import com.agentdeck.ui.ReceptionView
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -27,14 +29,16 @@ internal object VoiceSetupFixture {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
         }
-        fun windowRoot(packageName: String) = test.uiAutomation.windows.mapNotNull { it.root }
+        var setupWindowId: Int? = null
+        fun windowRoot(packageName: String, windowId: Int? = null) = test.uiAutomation.windows
+            .filter { windowId == null || it.id == windowId }.mapNotNull { it.root }
             .firstOrNull { it.packageName?.toString() == packageName }
         fun descendants(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
             val result = arrayListOf(node)
             for (index in 0 until node.childCount) node.getChild(index)?.let { result.addAll(descendants(it)) }
             return result
         }
-        fun appNodes() = windowRoot(context.packageName)?.let(::descendants).orEmpty()
+        fun appNodes() = windowRoot(context.packageName, setupWindowId)?.let(::descendants).orEmpty()
         fun keyField() = appNodes().singleOrNull {
             it.isEditable && it.contentDescription?.toString() == "New Fish Audio key, masked"
         }
@@ -95,10 +99,61 @@ internal object VoiceSetupFixture {
             return checkNotNull(found) { "Setup control disappeared: $stage" }
         }
         val authenticated = KeyEntryActivity::class.java.getDeclaredField("authenticated").apply { isAccessible = true }
+        val foreground = KeyEntryActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }
+        val fields = KeyEntryActivity::class.java.getDeclaredField("fields").apply { isAccessible = true }
+        val previousSetups = mutableSetOf<KeyEntryActivity>()
+        fun openSetup(stage: String, personal: Boolean = true, open: () -> Unit): KeyEntryActivity {
+            // ActivityMonitor matches both onCreate and onResume. Reusing one
+            // across launches can return an already destroyed older Activity.
+            val monitor = test.addMonitor(KeyEntryActivity::class.java.name, null, false)
+            setupWindowId = null
+            var candidate: KeyEntryActivity? = null
+            try {
+                open()
+                await(stage) {
+                    val observed = monitor.waitForActivityWithTimeout(100) as? KeyEntryActivity
+                    if (observed != null && observed !in previousSetups) candidate = observed
+                    var ready = false
+                    candidate?.let { setup ->
+                        test.runOnMainSync {
+                            ready = !setup.isDestroyed && !setup.isFinishing && setup !in previousSetups &&
+                                (!personal || (foreground.getBoolean(setup) && setup.hasWindowFocus() &&
+                                    setup.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE))
+                        }
+                    }
+                    ready
+                }
+                return checkNotNull(candidate).also { previousSetups.add(it) }
+            } finally {
+                test.removeMonitor(monitor)
+            }
+        }
+        fun inputLength(setup: KeyEntryActivity): Int {
+            var length = -1
+            test.runOnMainSync {
+                @Suppress("UNCHECKED_CAST")
+                val inputs = fields.get(setup) as List<EditText>
+                check(inputs.size == 1) { "Personal setup must own exactly one key field" }
+                length = inputs.single().text.length
+            }
+            return length
+        }
         fun personalSetupReady(setup: KeyEntryActivity, stage: String) {
             await(stage) {
                 check(windowRoot("com.android.settings") == null) { "Personal translation setup requested a device credential" }
-                keyField()?.let { it.isEnabled && it.isVisibleToUser } == true
+                var resumed = false
+                test.runOnMainSync {
+                    @Suppress("UNCHECKED_CAST")
+                    val input = (fields.get(setup) as List<EditText>).singleOrNull()
+                    resumed = !setup.isDestroyed && !setup.isFinishing && foreground.getBoolean(setup) &&
+                        setup.hasWindowFocus() && input?.isAttachedToWindow == true
+                    if (resumed) {
+                        val node = input!!.createAccessibilityNodeInfo()
+                        setupWindowId = node.windowId
+                        node.recycle()
+                    }
+                }
+                resumed && keyField()?.let { it.isEnabled && it.isVisibleToUser } == true
             }
             check(authenticated.get(setup) == false) { "Personal translation setup granted Staff authorization" }
             check(appNodes().count { it.isEditable } == 1) { "Translation setup exposed unrelated hotel fields" }
@@ -131,7 +186,6 @@ internal object VoiceSetupFixture {
             check(owner.current == null) { "Saving setup started a voice session" }
             check(TranslationSettings(context).directFishSelected) { "Direct Fish selection was not persisted" }
         }
-        val monitor = test.addMonitor(KeyEntryActivity::class.java.name, null, false)
         try {
             await("initial page") { js("!!document.querySelector('[data-action=translation]')") == "true" }
             js("document.querySelector('[data-action=translation]').click()")
@@ -139,18 +193,18 @@ internal object VoiceSetupFixture {
             js("document.querySelector('#staff_language').value='es'; document.querySelector('#staff_language').dispatchEvent(new Event('change',{bubbles:true}))")
             check(js("document.querySelectorAll('.setup-start').length") == "1")
             check(js("!!document.querySelector('[data-action=start]')") == "false")
-            js("document.querySelector('[data-action=setup-translation]').click()")
-            val cancelled = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
-                ?: error("Translation setup did not open")
+            val cancelled = openSetup("personal setup launch") {
+                js("document.querySelector('[data-action=setup-translation]').click()")
+            }
             personalSetupReady(cancelled, "personal key field before cancel")
             click("Cancel")
             await("cancelled setup closes") { cancelled.isFinishing || cancelled.isDestroyed }
             check(store.status() == SecretStore.Status.ABSENT)
             check(!TranslationSettings(context).directFishSelected) { "Cancel changed the voice route" }
             await("setup retry button") { js("!!document.querySelector('[data-action=setup-translation]')") == "true" }
-            js("document.querySelector('[data-action=setup-translation]').click()")
-            val setup = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
-                ?: error("Translation setup retry did not open")
+            val setup = openSetup("personal setup retry launch") {
+                js("document.querySelector('[data-action=setup-translation]').click()")
+            }
             personalSetupReady(setup, "personal key field on retry")
             val syntheticKey = "fixture-only-not-a-provider-key"
             enterKey(syntheticKey)
@@ -161,24 +215,32 @@ internal object VoiceSetupFixture {
 
             // The translation gear must reopen this same personal setup even
             // after a key exists, without redirecting to Staff authentication.
-            js("document.getElementById('settings').click()")
-            val reopened = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
-                ?: error("Saved translation setup did not reopen")
+            val reopened = openSetup("saved-key personal setup launch") {
+                js("document.getElementById('settings').click()")
+            }
             personalSetupReady(reopened, "saved-key personal setup")
             findSetupNode("visible saved-key status") { it.text?.toString()?.contains("a key is securely saved") == true }
-            enterKey("fixture-unsaved-key-must-not-survive-recreation")
+            val unsavedKey = "fixture-unsaved-key-must-not-survive-recreation"
+            enterKey(unsavedKey)
+            check(inputLength(reopened) == unsavedKey.length) { "Synthetic input did not reach the current setup Activity" }
             // Recreate the actual Activity to exercise the same saved-instance
             // and resume path as a configuration change, without bypassing auth.
-            test.runOnMainSync { reopened.recreate() }
-            val recreated = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
-                ?: error("Personal setup did not recreate")
+            val recreated = openSetup("personal setup recreation") {
+                test.runOnMainSync { reopened.recreate() }
+            }
             check(recreated !== reopened)
+            await("previous setup destroyed after recreation") { reopened.isDestroyed }
             personalSetupReady(recreated, "recreated personal setup")
+            val recreatedLength = inputLength(recreated)
+            check(recreatedLength == 0) { "Recreated Fish key field retained $recreatedLength characters" }
             check(store.load() == syntheticKey) { "Recreation changed the saved key" }
             // An empty Save must stay on setup: the unsaved input was discarded.
             click("Save and return")
             test.waitForIdleSync()
-            check(!recreated.isFinishing && !recreated.isDestroyed) { "Unsaved key text survived recreation" }
+            check(!recreated.isFinishing && !recreated.isDestroyed && inputLength(recreated) == 0) {
+                "Empty Save unexpectedly closed or changed the recreated personal setup"
+            }
+            check(store.load() == syntheticKey) { "Empty Save changed the saved key" }
             // Reuse the encrypted key without asking for a replacement. This
             // must also override a previously selected hotel voice route.
             check(TranslationSettings(context).selectHotelConnection())
@@ -195,9 +257,9 @@ internal object VoiceSetupFixture {
             await("hotel assistance Staff setup") {
                 js("document.getElementById('night-toggle').getAttribute('aria-pressed')==='true' && document.getElementById('settings').getAttribute('aria-label')==='Staff setup'") == "true"
             }
-            js("document.getElementById('settings').click()")
-            val staff = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
-                ?: error("Staff setup did not open")
+            val staff = openSetup("Staff setup launch", personal = false) {
+                js("document.getElementById('settings').click()")
+            }
             if (secureDevice) {
                 await("Staff credential confirmation") { windowRoot("com.android.settings") != null }
                 check(authenticated.get(staff) == false && keyField() == null)
@@ -215,7 +277,6 @@ internal object VoiceSetupFixture {
             await("Staff setup closes without authorization") { staff.isFinishing || staff.isDestroyed }
             check(store.load() == syntheticKey && TranslationSettings(context).directFishSelected)
         } finally {
-            test.removeMonitor(monitor)
             test.runOnMainSync { activity.finish() }
         }
     }
