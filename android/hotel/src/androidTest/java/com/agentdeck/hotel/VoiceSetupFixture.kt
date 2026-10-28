@@ -1,18 +1,18 @@
 package com.agentdeck.hotel
 
 import android.app.Instrumentation
+import android.app.KeyguardManager
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.WebView
-import android.widget.EditText
 import com.agentdeck.ui.ReceptionView
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** Disposable emulator with the synthetic PIN 2468. No provider or microphone calls. */
+/** Disposable emulator, both without a screen lock and with synthetic PIN 2468. No provider calls. */
 internal object VoiceSetupFixture {
     fun verify(test: Instrumentation) {
         check(Build.HARDWARE in setOf("ranchu", "goldfish"))
@@ -20,12 +20,24 @@ internal object VoiceSetupFixture {
         val store = SecretStore(context, "fish")
         check(BuildConfig.FISH_API_KEY.isEmpty() && store.status() == SecretStore.Status.ABSENT)
         check(HotelConnection(context).load() == null)
+        check(!TranslationSettings(context).directFishSelected)
+        val secureDevice = context.getSystemService(KeyguardManager::class.java).isDeviceSecure
+        test.sendStatus(0, Bundle().apply { putString("stream", "VOICE_SETUP deviceSecure=$secureDevice\n") })
         test.uiAutomation.serviceInfo = test.uiAutomation.serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
         }
         fun windowRoot(packageName: String) = test.uiAutomation.windows.mapNotNull { it.root }
             .firstOrNull { it.packageName?.toString() == packageName }
+        fun descendants(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
+            val result = arrayListOf(node)
+            for (index in 0 until node.childCount) node.getChild(index)?.let { result.addAll(descendants(it)) }
+            return result
+        }
+        fun appNodes() = windowRoot(context.packageName)?.let(::descendants).orEmpty()
+        fun keyField() = appNodes().singleOrNull {
+            it.isEditable && it.contentDescription?.toString() == "New Fish Audio key, masked"
+        }
         val activity = test.startActivitySync(Intent(context, HotelActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val reception = HotelActivity::class.java.getDeclaredField("reception").apply { isAccessible = true }
@@ -50,6 +62,44 @@ internal object VoiceSetupFixture {
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
             }
         }
+        val authenticated = KeyEntryActivity::class.java.getDeclaredField("authenticated").apply { isAccessible = true }
+        fun personalSetupReady(setup: KeyEntryActivity, stage: String) {
+            await(stage) {
+                check(windowRoot("com.android.settings") == null) { "Personal translation setup requested a device credential" }
+                keyField()?.let { it.isEnabled && it.isVisibleToUser } == true
+            }
+            check(authenticated.get(setup) == false) { "Personal translation setup granted Staff authorization" }
+            check(appNodes().count { it.isEditable } == 1) { "Translation setup exposed unrelated hotel fields" }
+            check(appNodes().none { it.text?.toString() == "Hotel service" })
+        }
+        fun enterKey(value: String) {
+            check(keyField()?.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
+            }) == true) { "Fish key field did not accept synthetic input" }
+        }
+        fun click(label: String) {
+            var node = appNodes().firstOrNull { it.text?.toString() == label && it.isClickable }
+            if (node == null) {
+                appNodes().firstOrNull { it.isScrollable }
+                    ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                test.waitForIdleSync()
+                node = appNodes().firstOrNull { it.text?.toString() == label && it.isClickable }
+            }
+            check(node != null) { "Setup button is missing: $label" }
+            check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) { "Setup button did not respond: $label" }
+        }
+        fun readyTranslation() {
+            await("ready Start button") { js("!!document.querySelector('[data-action=start]')") == "true" }
+            check(js("document.querySelector('[data-action=start]').disabled") == "false")
+            check(js("document.querySelector('#language').value") == "\"fr\"")
+            check(js("document.querySelector('#staff_language').value") == "\"es\"")
+            check(js("document.documentElement.dataset.captureActive") != "\"true\"")
+            check(js("document.querySelectorAll('.setup-start').length") == "1")
+            val owner = HotelActivity::class.java.getDeclaredField("owner").apply { isAccessible = true }
+                .get(activity) as SessionOwner
+            check(owner.current == null) { "Saving setup started a voice session" }
+            check(TranslationSettings(context).directFishSelected) { "Direct Fish selection was not persisted" }
+        }
         val monitor = test.addMonitor(KeyEntryActivity::class.java.name, null, false)
         try {
             await("initial page") { js("!!document.querySelector('[data-action=translation]')") == "true" }
@@ -61,54 +111,78 @@ internal object VoiceSetupFixture {
             js("document.querySelector('[data-action=setup-translation]').click()")
             val cancelled = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
                 ?: error("Translation setup did not open")
-            val authenticated = KeyEntryActivity::class.java.getDeclaredField("authenticated").apply { isAccessible = true }
-            check(authenticated.get(cancelled) == false) { "Setup bypassed device authentication" }
-            await("cancel credential screen") { windowRoot("com.android.settings") != null }
-            shell("input keyevent 4")
-            // Back first dismisses the PIN keyboard on some Android images.
-            Thread.sleep(600)
-            if (!cancelled.isFinishing && !cancelled.isDestroyed && windowRoot("com.android.settings") != null)
-                shell("input keyevent 4")
+            personalSetupReady(cancelled, "personal key field before cancel")
+            click("Cancel")
             await("cancelled setup closes") { cancelled.isFinishing || cancelled.isDestroyed }
             check(store.status() == SecretStore.Status.ABSENT)
+            check(!TranslationSettings(context).directFishSelected) { "Cancel changed the voice route" }
             await("setup retry button") { js("!!document.querySelector('[data-action=setup-translation]')") == "true" }
             js("document.querySelector('[data-action=setup-translation]').click()")
             val setup = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
                 ?: error("Translation setup retry did not open")
-            // Wait for Android's real credential screen before typing its test PIN.
-            await("retry credential screen") { windowRoot("com.android.settings") != null }
-            var pin: AccessibilityNodeInfo? = null
-            await("focused Android PIN field") {
-                pin = windowRoot("com.android.settings")
-                    ?.findAccessibilityNodeInfosByViewId("com.android.settings:id/password_entry")?.firstOrNull()
-                pin?.let { it.isEditable && it.isEnabled && it.isFocused } == true
-            }
-            // The window can exist before its PIN field gains focus. Set text
-            // through Android's editable UI action, then submit normally; the
-            // actual system credential verifier must still accept the test PIN.
-            check(pin!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
-                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "2468")
-            })) { "Android PIN field did not accept the test input" }
-            shell("input keyevent 66")
-            await("PIN accepted") { authenticated.get(setup) == true }
-            val fields = KeyEntryActivity::class.java.getDeclaredField("fields").apply { isAccessible = true }
-            test.runOnMainSync {
-                @Suppress("UNCHECKED_CAST")
-                val inputs = fields.get(setup) as List<EditText>
-                check(inputs.size == 1) { "Translation setup exposed unrelated hotel fields" }
-                inputs.single().setText("fixture-only-not-a-provider-key")
-            }
-            val save = windowRoot(context.packageName)?.findAccessibilityNodeInfosByText("Save and return")
-                ?.firstOrNull() ?: error("Save and return is missing")
-            check(save.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
+            personalSetupReady(setup, "personal key field on retry")
+            val syntheticKey = "fixture-only-not-a-provider-key"
+            enterKey(syntheticKey)
+            click("Save and return")
             await("saved setup closes") { setup.isFinishing || setup.isDestroyed }
-            check(store.load() == "fixture-only-not-a-provider-key")
-            await("ready Start button") { js("!!document.querySelector('[data-action=start]')") == "true" }
-            check(js("document.querySelector('[data-action=start]').disabled") == "false")
-            check(js("document.querySelector('#language').value") == "\"fr\"")
-            check(js("document.querySelector('#staff_language').value") == "\"es\"")
-            check(js("document.documentElement.dataset.captureActive") != "\"true\"")
-            check(js("document.querySelectorAll('.setup-start').length") == "1")
+            check(store.load() == syntheticKey)
+            readyTranslation()
+
+            // The translation gear must reopen this same personal setup even
+            // after a key exists, without redirecting to Staff authentication.
+            js("document.getElementById('settings').click()")
+            val reopened = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
+                ?: error("Saved translation setup did not reopen")
+            personalSetupReady(reopened, "saved-key personal setup")
+            check(appNodes().any { it.text?.toString()?.contains("a key is securely saved") == true })
+            enterKey("fixture-unsaved-key-must-not-survive-recreation")
+            // Recreate the actual Activity to exercise the same saved-instance
+            // and resume path as a configuration change, without bypassing auth.
+            test.runOnMainSync { reopened.recreate() }
+            val recreated = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
+                ?: error("Personal setup did not recreate")
+            check(recreated !== reopened)
+            personalSetupReady(recreated, "recreated personal setup")
+            check(store.load() == syntheticKey) { "Recreation changed the saved key" }
+            // An empty Save must stay on setup: the unsaved input was discarded.
+            click("Save and return")
+            test.waitForIdleSync()
+            check(!recreated.isFinishing && !recreated.isDestroyed) { "Unsaved key text survived recreation" }
+            // Reuse the encrypted key without asking for a replacement. This
+            // must also override a previously selected hotel voice route.
+            check(TranslationSettings(context).selectHotelConnection())
+            check(!TranslationSettings(context).directFishSelected)
+            click("Use saved key")
+            await("re-enrolled setup closes") { recreated.isFinishing || recreated.isDestroyed }
+            check(store.load() == syntheticKey)
+            readyTranslation()
+
+            // Hotel assistance retains its separate Staff credential gate.
+            js("document.querySelector('[data-action=back]').click()")
+            await("home after translation") { js("!!document.querySelector('[data-action=translation]')") == "true" }
+            js("document.getElementById('night-toggle').click()")
+            await("hotel assistance Staff setup") {
+                js("document.getElementById('night-toggle').getAttribute('aria-pressed')==='true' && document.getElementById('settings').getAttribute('aria-label')==='Staff setup'") == "true"
+            }
+            js("document.getElementById('settings').click()")
+            val staff = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
+                ?: error("Staff setup did not open")
+            if (secureDevice) {
+                await("Staff credential confirmation") { windowRoot("com.android.settings") != null }
+                check(authenticated.get(staff) == false && keyField() == null)
+                shell("input keyevent 4")
+                Thread.sleep(600)
+                if (!staff.isFinishing && !staff.isDestroyed && windowRoot("com.android.settings") != null)
+                    shell("input keyevent 4")
+            } else {
+                await("Staff lock enrollment requirement") {
+                    appNodes().any { it.text?.toString()?.contains("no device screen-lock credential") == true }
+                }
+                check(authenticated.get(staff) == false && keyField() == null)
+                click("Close")
+            }
+            await("Staff setup closes without authorization") { staff.isFinishing || staff.isDestroyed }
+            check(store.load() == syntheticKey && TranslationSettings(context).directFishSelected)
         } finally {
             test.removeMonitor(monitor)
             test.runOnMainSync { activity.finish() }

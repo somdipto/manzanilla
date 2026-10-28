@@ -27,9 +27,9 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 
-/** Staff setup trusts only Android's enrolled device credential, never an Intent or shared PIN. */
+/** Personal Fish setup is open; hotel administration still requires the device credential. */
 class KeyEntryActivity : Activity() {
-    // Presentation only: this flag never grants access or skips authentication.
+    // This internal entry point exposes only the personal Fish key, never hotel administration.
     private val voiceOnly get() = intent.getBooleanExtra("voice_only", false)
     private val setupTitle get() = if (voiceOnly) "Translation setup" else "Staff setup"
     private val keyguard by lazy { getSystemService(KeyguardManager::class.java) }
@@ -55,13 +55,15 @@ class KeyEntryActivity : Activity() {
         window.navigationBarColor = background
         if (light) window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        lockedView("Use your normal device PIN, password or pattern to open setup. No separate staff account is required.")
+        if (!voiceOnly) lockedView("Use your normal device PIN, password or pattern to open setup. No separate staff account is required.")
     }
 
     override fun onResume() {
         super.onResume()
         foreground = true
-        if (authenticationAccepted && keyguard.isDeviceSecure && !keyguard.isKeyguardLocked) {
+        if (voiceOnly) {
+            showConfiguration()
+        } else if (authenticationAccepted && keyguard.isDeviceSecure && !keyguard.isKeyguardLocked) {
             authenticationAccepted = false
             authenticated = true
             showConfiguration()
@@ -78,8 +80,11 @@ class KeyEntryActivity : Activity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         lock()
-        if (foreground && !authenticationInFlight) requestAuthentication()
+        if (foreground && !authenticationInFlight) {
+            if (voiceOnly) showConfiguration() else requestAuthentication()
+        }
     }
 
     @Deprecated("Uses Android device credential confirmation for API 26 compatibility")
@@ -87,6 +92,7 @@ class KeyEntryActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != AUTH_REQUEST || !authenticationInFlight) return
         authenticationInFlight = false
+        if (voiceOnly) { authenticationAccepted = false; return }
         authenticationAccepted = resultCode == RESULT_OK && keyguard.isDeviceSecure
         if (!authenticationAccepted) finish()
     }
@@ -98,12 +104,15 @@ class KeyEntryActivity : Activity() {
         dialog = null
         fields.forEach { it.setText("") }
         fields.clear()
-        lockedView("Setup is locked. Confirm this device's screen lock to continue.")
+        if (voiceOnly) {
+            setContentView(column().apply { addView(label(setupTitle, 24f)) })
+        } else lockedView("Setup is locked. Confirm this device's screen lock to continue.")
     }
 
     @Suppress("DEPRECATION")
     private fun requestAuthentication() {
         authenticated = false
+        if (voiceOnly) return
         if (!keyguard.isDeviceSecure) {
             lockedView("Staff setup is unavailable: no device screen-lock credential is enrolled. A tablet administrator must set a PIN, password or pattern through the tablet's managed Android Security settings, then return and authenticate. Guest setup cannot enroll or reset a credential.")
             return
@@ -123,6 +132,7 @@ class KeyEntryActivity : Activity() {
     }
 
     private fun authorized(): Boolean {
+        if (voiceOnly) return foreground
         if (foreground && authenticated && keyguard.isDeviceSecure && !keyguard.isKeyguardLocked) return true
         lock()
         if (foreground && !authenticationInFlight) requestAuthentication()
@@ -143,7 +153,7 @@ class KeyEntryActivity : Activity() {
         val column = column()
         if (voiceOnly) {
             column.addView(label(setupTitle, 24f))
-            column.addView(label("Save your Fish Audio API key to enable translation on this device. The key stays encrypted here. After saving, return to your selected languages and tap Start translation."))
+            column.addView(label("Save your Fish Audio API key to translate directly on this device. The key stays encrypted here. After saving, return to your selected languages and tap Start translation."))
             addProvider(column, "Fish Audio", "fish", returnAfterSave = true)
             column.addView(button("Cancel") { finish() })
             setContentView(ScrollView(this).apply { isSaveEnabled = false; addView(column) })
@@ -181,17 +191,22 @@ class KeyEntryActivity : Activity() {
 
     private fun addProvider(column: LinearLayout, provider: String, prefsName: String, connectionUrl: EditText? = null,
                             returnAfterSave: Boolean = false) {
-        // Called only after credential confirmation; no storage read happens on a locked screen.
+        // The personal path exposes only Fish. Hotel fields require staff authentication.
         if (!authorized()) return
         val store = SecretStore(this, prefsName)
         val connection = if (connectionUrl != null) HotelConnection(this) else null
         val status = label("")
+        var savedKeyButton: Button? = null
         fun refresh() {
             if (!authorized()) return
-            status.text = when (store.status()) {
+            val savedStatus = store.status()
+            savedKeyButton?.visibility = if (savedStatus == SecretStore.Status.READY) View.VISIBLE else View.GONE
+            status.text = when (savedStatus) {
                 SecretStore.Status.READY -> "$provider: a key is securely saved. Entering a new key replaces it."
                 SecretStore.Status.ABSENT -> "$provider: no device key is saved."
-                SecretStore.Status.ERROR -> "$provider: ${store.errorMessage}"
+                SecretStore.Status.ERROR -> if (returnAfterSave)
+                    "$provider: the saved key could not be read. Paste your original Fish Audio key to replace it. The stored entry is kept until a replacement is saved."
+                else "$provider: ${store.errorMessage}"
             }
         }
         column.addView(label(provider, 20f))
@@ -257,10 +272,22 @@ class KeyEntryActivity : Activity() {
             } else if (if (connection != null) connection.save(connectionUrl!!.text.toString(), value) else store.save(value)) {
                 field.setText("")
                 refresh()
+                val settings = TranslationSettings(this)
+                val routeSaved = when {
+                    returnAfterSave -> settings.selectDirectFish()
+                    connection != null -> settings.selectHotelConnection()
+                    else -> true
+                }
+                if (!routeSaved) {
+                    status.text = "$provider key is saved, but the translation connection could not be selected. Try saving again."
+                    return@button
+                }
                 Toast.makeText(this, "$provider key securely saved.", Toast.LENGTH_SHORT).show()
                 if (returnAfterSave) finish()
             } else {
-                status.text = "$provider: ${connection?.errorMessage ?: store.errorMessage}"
+                status.text = if (returnAfterSave)
+                    "$provider: the key could not be securely saved. Check device storage and try again; the previous stored entry has been kept."
+                else "$provider: ${connection?.errorMessage ?: store.errorMessage}"
             }
         })
         column.addView(button("Remove $provider key") {
@@ -273,7 +300,9 @@ class KeyEntryActivity : Activity() {
                     if (authorized()) {
                         store.clear()
                         field.setText("")
-                        if (store.status == SecretStore.Status.ERROR) status.text = "$provider: ${store.errorMessage}"
+                        if (store.status == SecretStore.Status.ERROR) status.text = if (returnAfterSave)
+                            "$provider: the saved key could not be removed. Check device storage and try again."
+                        else "$provider: ${store.errorMessage}"
                         else refresh()
                     }
                 }.create().also {
@@ -282,6 +311,18 @@ class KeyEntryActivity : Activity() {
                     it.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                 }
         })
+        if (returnAfterSave) {
+            savedKeyButton = button("Use saved key") {
+                if (!authorized()) return@button
+                if (store.load().isNullOrBlank()) {
+                    refresh()
+                } else if (TranslationSettings(this).selectDirectFish()) {
+                    finish()
+                } else {
+                    status.text = "The saved key is available, but the translation connection could not be selected. Try again."
+                }
+            }.also(column::addView)
+        }
         refresh()
     }
 
