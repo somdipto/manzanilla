@@ -89,7 +89,8 @@ class HotelActivity : Activity() {
         val page = reception ?: return
         val ready = backendConfigured()
         if (owner.current == null) audioState = fish.localAudioState()
-        val audioGate = AudioPolicy.blockReason(ready, fishStore.status(), BuildConfig.FISH_API_KEY.isNotBlank())
+        val audioGate = AudioPolicy.blockReason(ready, fishStore.status(), BuildConfig.FISH_API_KEY.isNotBlank(),
+            TranslationSettings(this).directFishSelected)
         val audioReady = audioGate.isEmpty()
         page.push(JSONObject().put("type", "appearance").put("value", deck.getString("reception_appearance", "dark")))
         page.push(JSONObject().put("type", "night_mode").put("enabled", night))

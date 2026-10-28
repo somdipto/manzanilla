@@ -17,15 +17,25 @@ adb shell dumpsys webviewupdate > "$evidence/webview.txt"
 adb shell cmd package set-home-activity com.android.launcher3/.Launcher
 adb logcat -c
 trap 'adb logcat -d > "$evidence/logcat.txt"; adb shell locksettings clear --old 2468 > /dev/null 2>&1 || true' EXIT
-for fixture in reception-bridge microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery voice-setup; do
+run_fixture() {
+  local fixture="$1"
+  local label="${2:-$1}"
   # Reset only this disposable, key-free test app between independent scenarios.
   adb shell pm clear dev.orange.hotel
-  if [[ "$fixture" == voice-setup ]]; then
-    adb shell locksettings set-pin 2468
-  fi
-  timeout 180s adb shell am instrument -w -r -e case "$fixture" \
-    dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture | tee "$evidence/$fixture.txt"
+  timeout 240s adb shell am instrument -w -r -e case "$fixture" \
+    dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture | tee "$evidence/$label.txt"
   # adb itself returns zero even when an instrumentation assertion fails.
-  grep -q "PASS case=$fixture " "$evidence/$fixture.txt"
-  grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$fixture.txt"
+  grep -q "PASS case=$fixture " "$evidence/$label.txt"
+  grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$label.txt"
+}
+for fixture in reception-bridge microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery; do
+  run_fixture "$fixture"
 done
+# Personal translation setup must work whether Android has a screen lock or not.
+# Only the known synthetic PIN may be cleared on this disposable emulator.
+adb shell locksettings clear --old 2468 > /dev/null 2>&1 || adb shell locksettings clear > /dev/null
+run_fixture voice-setup voice-setup-no-lock
+grep -q 'VOICE_SETUP deviceSecure=false' "$evidence/voice-setup-no-lock.txt"
+adb shell locksettings set-pin 2468
+run_fixture voice-setup voice-setup-device-pin
+grep -q 'VOICE_SETUP deviceSecure=true' "$evidence/voice-setup-device-pin.txt"

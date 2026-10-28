@@ -219,6 +219,8 @@
     nightToggle.setAttribute('aria-pressed', String(state.night));
     nightToggle.hidden = state.page !== 'idle';
     document.getElementById('settings').hidden = !native || !['idle','error','translation_languages'].includes(state.page);
+    document.getElementById('settings').setAttribute('aria-label', state.mode === 'translation' ? 'Fish Audio setup' : 'Staff setup');
+    document.getElementById('settings').title = state.mode === 'translation' ? 'Fish Audio setup' : 'Staff setup';
     document.getElementById('check-updates').hidden = !native || state.page !== 'idle';
     content.dataset.page = state.page;
     document.getElementById('mode-title').textContent = state.night ? 'After-hours reception' : 'Reception';
@@ -283,7 +285,7 @@
   function sameLanguage() { return state.mode === 'translation' && state.language === state.staff_language; }
   function translationReadiness() {
     if (state.audio !== 'off') return state.audio === 'unknown'
-      ? 'Microphone release could not be confirmed. Open Staff setup for help.'
+      ? 'Microphone release could not be confirmed. Retry after the previous conversation closes.'
       : 'Waiting for the previous conversation to release the microphone.';
     if (!state.audioAvailable) return state.audioGate;
     if (sameLanguage()) return 'Choose two different languages to start translation.';
@@ -510,7 +512,7 @@
     renderNotices();
   });
   document.getElementById('night-toggle').addEventListener('click', toggleNight);
-  document.getElementById('settings').addEventListener('click',()=>send('settings'));
+  document.getElementById('settings').addEventListener('click',()=>send(state.mode === 'translation' ? 'voice_setup' : 'settings'));
   document.getElementById('check-updates').addEventListener('click',()=>send('check_updates'));
 
   function hardware(key) {

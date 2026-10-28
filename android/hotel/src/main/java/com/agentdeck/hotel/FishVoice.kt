@@ -156,7 +156,9 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             terminate(run, "error", "Microphone permission is needed for translation."); return
         }
-        val connection = HotelConnection(ctx).load()
+        val connection = HotelConnection(ctx).load().takeIf {
+            TranslationRouting.useManagedConnection(it != null, TranslationSettings(ctx).directFishSelected)
+        }
         val managed = connection != null
         val apiKey = if (managed) "" else key().trim()
         if (!managed && apiKey.isBlank()) {

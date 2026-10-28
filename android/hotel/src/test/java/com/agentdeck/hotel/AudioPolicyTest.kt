@@ -23,4 +23,14 @@ class AudioPolicyTest {
         assertTrue(AudioPolicy.allowStart { blocked = it })
         assertNull(blocked)
     }
+
+    @Test fun directSelectionNeverTreatsSavedHotelConnectionAsAUsableFishKey() {
+        assertEquals("", AudioPolicy.blockReason(true, SecretStore.Status.ABSENT, false))
+        assertTrue(AudioPolicy.blockReason(true, SecretStore.Status.ABSENT, false,
+            directFishSelected = true).contains("One-time setup"))
+        assertTrue(AudioPolicy.blockReason(true, SecretStore.Status.ERROR, false,
+            directFishSelected = true).contains("saved voice key could not be opened"))
+        assertEquals("", AudioPolicy.blockReason(true, SecretStore.Status.READY, false,
+            directFishSelected = true))
+    }
 }
