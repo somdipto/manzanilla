@@ -2,7 +2,7 @@
 
 The separate release_policy.py validates version bumps against committed trees.
 This guard checks only source material; it does not assert provider entitlement
-or that a key is embedded. The default public release is intentionally key-free.
+or whether a key is embedded in a release artifact.
 """
 from pathlib import Path
 import re

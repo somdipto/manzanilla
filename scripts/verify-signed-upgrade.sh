@@ -46,6 +46,11 @@ adb shell am instrument -w -r -e isolated 1 -e case verify -e marker "$marker" \
 grep -q 'PASS case=verify' "$evidence/data-verify.txt"
 grep -q 'voice_credential=true' "$evidence/data-verify.txt"
 grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/data-verify.txt"
+adb shell am instrument -w -r -e isolated 1 -e case bundled -e marker "$marker" \
+  dev.orange.hotel.test/com.agentdeck.hotel.UpgradeDataFixture | tee "$evidence/data-bundled.txt"
+grep -q 'PASS case=bundled' "$evidence/data-bundled.txt"
+grep -q 'bundled_key=true direct_ready=true' "$evidence/data-bundled.txt"
+grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/data-bundled.txt"
 adb shell dumpsys package "$package" > "$evidence/package-after.txt"
 python - "$RUNNER_TEMP/candidate/release-metadata.json" "$evidence" <<'PY'
 import json

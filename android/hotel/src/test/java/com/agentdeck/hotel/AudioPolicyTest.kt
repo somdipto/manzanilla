@@ -24,6 +24,13 @@ class AudioPolicyTest {
         assertNull(blocked)
     }
 
+    @Test fun bundledCredentialAllowsDirectTranslationWithoutADeviceKey() {
+        assertEquals("", AudioPolicy.blockReason(false, SecretStore.Status.ABSENT, true))
+        assertEquals("", AudioPolicy.blockReason(false, SecretStore.Status.ERROR, true))
+        assertEquals("", AudioPolicy.blockReason(true, SecretStore.Status.ABSENT, true,
+            directFishSelected = true))
+    }
+
     @Test fun directSelectionNeverTreatsSavedHotelConnectionAsAUsableFishKey() {
         assertEquals("", AudioPolicy.blockReason(true, SecretStore.Status.ABSENT, false))
         assertTrue(AudioPolicy.blockReason(true, SecretStore.Status.ABSENT, false,

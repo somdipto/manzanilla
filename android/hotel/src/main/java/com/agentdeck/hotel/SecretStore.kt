@@ -11,7 +11,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Device BYOK only. Shared service credentials belong on the trusted backend. */
+/** Encrypted device credential storage; independent of any bundled test key. */
 class SecretStore(ctx: Context, prefsName: String = "gem") {
     enum class Status { ABSENT, READY, ERROR }
 
