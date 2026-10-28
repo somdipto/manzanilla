@@ -114,7 +114,8 @@ internal object VoiceSetupFixture {
         }
         fun click(label: String) {
             val node = findSetupNode("visible setup button: $label") {
-                it.text?.toString() == label && it.isClickable
+                // Material buttons expose their transformed ALL-CAPS text to accessibility.
+                it.text?.toString()?.equals(label, ignoreCase = true) == true && it.isClickable
             }
             check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) { "Setup button did not respond: $label" }
         }
