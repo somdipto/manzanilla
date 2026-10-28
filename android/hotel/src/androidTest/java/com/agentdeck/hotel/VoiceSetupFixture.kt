@@ -62,6 +62,38 @@ internal object VoiceSetupFixture {
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
             }
         }
+        fun findSetupNode(stage: String, matches: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo {
+            var found: AccessibilityNodeInfo? = null
+            var direction = AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+            await(stage) {
+                // Android can omit off-screen ScrollView descendants entirely.
+                // Re-read the real tree after every scroll until the target is
+                // visible; one scroll does not cover this landscape form.
+                val nodes = appNodes()
+                found = nodes.firstOrNull(matches)
+                val target = found
+                if (target != null && target.isEnabled && target.isVisibleToUser) {
+                    true
+                } else {
+                    val shown = target?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id) == true
+                    if (!shown) {
+                        fun scrollable() = nodes.firstOrNull { node ->
+                            node.isScrollable && node.actionList.any { it.id == direction }
+                        }
+                        var scroller = scrollable()
+                        if (scroller == null) {
+                            direction = if (direction == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                                AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD else AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                            scroller = scrollable()
+                        }
+                        scroller?.performAction(direction)
+                    }
+                    test.waitForIdleSync()
+                    false
+                }
+            }
+            return checkNotNull(found) { "Setup control disappeared: $stage" }
+        }
         val authenticated = KeyEntryActivity::class.java.getDeclaredField("authenticated").apply { isAccessible = true }
         fun personalSetupReady(setup: KeyEntryActivity, stage: String) {
             await(stage) {
@@ -73,19 +105,17 @@ internal object VoiceSetupFixture {
             check(appNodes().none { it.text?.toString() == "Hotel service" })
         }
         fun enterKey(value: String) {
-            check(keyField()?.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+            val field = findSetupNode("visible editable Fish key field") {
+                it.isEditable && it.contentDescription?.toString() == "New Fish Audio key, masked"
+            }
+            check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
-            }) == true) { "Fish key field did not accept synthetic input" }
+            })) { "Fish key field did not accept synthetic input" }
         }
         fun click(label: String) {
-            var node = appNodes().firstOrNull { it.text?.toString() == label && it.isClickable }
-            if (node == null) {
-                appNodes().firstOrNull { it.isScrollable }
-                    ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-                test.waitForIdleSync()
-                node = appNodes().firstOrNull { it.text?.toString() == label && it.isClickable }
+            val node = findSetupNode("visible setup button: $label") {
+                it.text?.toString() == label && it.isClickable
             }
-            check(node != null) { "Setup button is missing: $label" }
             check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) { "Setup button did not respond: $label" }
         }
         fun readyTranslation() {
@@ -134,7 +164,7 @@ internal object VoiceSetupFixture {
             val reopened = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
                 ?: error("Saved translation setup did not reopen")
             personalSetupReady(reopened, "saved-key personal setup")
-            check(appNodes().any { it.text?.toString()?.contains("a key is securely saved") == true })
+            findSetupNode("visible saved-key status") { it.text?.toString()?.contains("a key is securely saved") == true }
             enterKey("fixture-unsaved-key-must-not-survive-recreation")
             // Recreate the actual Activity to exercise the same saved-instance
             // and resume path as a configuration change, without bypassing auth.
