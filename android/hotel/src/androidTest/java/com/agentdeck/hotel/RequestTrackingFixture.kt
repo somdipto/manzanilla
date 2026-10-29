@@ -96,7 +96,7 @@ internal object RequestTrackingFixture {
             browser = page.getChildAt(0) as WebView
             receptionField.set(activity, page)
             activity.setContentView(page)
-            page.push(JSONObject().put("type", "reception_info").put("distribution", "personal-test").put("configured", true).put("state", "ready")
+            page.push(JSONObject().put("type", "reception_info").put("distribution", BuildConfig.DISTRIBUTION).put("configured", true).put("state", "ready")
                 .put("audio_available", false).put("local_audio_state", "off").put("services", JSONObject()
                     .put("message", true).put("checkin", false).put("question", false).put("operator", false).put("taxi", false)))
             page.push(JSONObject().put("type", "language_preferences").put("language", "en").put("staff_language", "es"))
