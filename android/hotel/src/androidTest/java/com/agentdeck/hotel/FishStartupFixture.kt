@@ -186,6 +186,7 @@ internal object FishStartupFixture {
         check(BuildConfig.DEBUG && !SecretStore(context, "fish").has() && HotelConnection(context).load() == null) {
             "Use an isolated, unconfigured key-free debug APK"
         }
+        val readiness = SecretStore(context, "fish")
         val deck = context.getSharedPreferences("deck", Context.MODE_PRIVATE)
         val savedGuest = deck.getString("reception_guest_language", null)
         val savedStaff = deck.getString("reception_staff_language", null)
@@ -232,6 +233,7 @@ internal object FishStartupFixture {
                 "var picker = document.querySelector('[data-language-side=$side]');" +
                     "picker.value = '$language'; picker.dispatchEvent(new Event('change', {bubbles:true}));")
             try {
+                check(readiness.save("fixture-only-native-preparation-readiness"))
                 instrumentation.runOnMainSync {
                     h.install(activity)
                     page = HotelActivity::class.java.getDeclaredField("reception").apply { isAccessible = true }
@@ -244,7 +246,7 @@ internal object FishStartupFixture {
                     Thread.sleep(100)
                 }
                 instrumentation.runOnMainSync {
-                    page.push(JSONObject().put("type", "reception_info").put("audio_available", true).put("local_audio_state", "off"))
+                    HotelActivity::class.java.getDeclaredMethod("pushState").apply { isAccessible = true }.invoke(activity)
                     page.push(JSONObject().put("type", "language_preferences").put("language", "fr").put("staff_language", "de"))
                 }
                 // Click the shipped page, leaving its JavascriptInterface, decoder and Activity handler intact.
@@ -267,6 +269,7 @@ internal object FishStartupFixture {
                 }
                 h.noAudio()
             } finally {
+                readiness.clear()
                 instrumentation.runOnMainSync { activity.finish() }
                 instrumentation.waitForIdleSync()
                 check(deck.edit().apply {
