@@ -16,6 +16,5 @@
       "description": "The complete faithful translation into the OTHER selected language. Speak exactly this translation after the call. Empty string when source_language is und; do not invent a direction."
     }
   ],
-  "expects_response": false,
-  "execution_mode": "fire_and_forget"
+  "expects_response": false
 }
