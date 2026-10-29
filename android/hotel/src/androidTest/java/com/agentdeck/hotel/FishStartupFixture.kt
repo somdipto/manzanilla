@@ -27,6 +27,44 @@ import java.util.concurrent.CopyOnWriteArrayList
 internal object FishStartupFixture {
     fun verify(instrumentation: Instrumentation) {
         check(BuildConfig.FISH_API_KEY.isBlank()) { "Use a key-free verification APK" }
+        Harness(instrumentation.targetContext, preparing = true).use { h ->
+            h.prepare("fr", "de")
+            check(h.wire.agentCreates == 1 && h.wire.publishes == 1)
+            check(h.wire.sessionCalls == 0 && h.events.isEmpty()) { "preparation opened a conversation" }
+            h.noAudio()
+            val beforeStart = h.wire.requests.size
+            h.activate()
+            h.direct(FishPlan.DEFAULT_VOICE)
+            check(h.wire.requests.drop(beforeStart) == listOf("POST /v1/agent/sessions")) {
+                "prepared Start repeated configuration requests"
+            }
+        }
+        Harness(instrumentation.targetContext, preparing = true).use { h ->
+            h.wire.existingTools(incompatible = true, mode = "blocking")
+            h.prepare("fr", "de")
+            check("GET /v1/agent/tools/incompatible-tool" in h.wire.requests)
+            check("GET /v1/agent/tools/fixture-tool" in h.wire.requests)
+            check("POST /v1/agent/tools" !in h.wire.requests) { "preparation duplicated a compatible client tool" }
+            check(h.wire.sessionCalls == 0 && h.events.isEmpty())
+            h.noAudio()
+            val beforeStart = h.wire.requests.size
+            h.activate()
+            h.direct(FishPlan.DEFAULT_VOICE)
+            check(h.wire.requests.drop(beforeStart) == listOf("POST /v1/agent/sessions"))
+        }
+        Harness(instrumentation.targetContext, preparing = true).use { h ->
+            h.prepare("fr", "de")
+            h.prepare("en", "es")
+            val beforeReturn = h.wire.requests.size
+            h.prepare("en", "de")
+            check(h.wire.requests.size == beforeReturn) { "returning to a configured language repeated setup" }
+            check(h.wire.sessionCalls == 0 && h.events.isEmpty())
+            h.noAudio()
+        }
+        Harness(instrumentation.targetContext, preparing = true).use { h ->
+            h.cancelPreparation()
+            check(h.wire.requests.isEmpty() && h.events.isEmpty()) { "cancelled preparation reached the provider" }
+        }
         Harness(instrumentation.targetContext).use { h ->
             h.direct()
             check(h.wire.requests == listOf("GET /v1/agent/agents", "GET /v1/agent/tools",
@@ -148,11 +186,11 @@ internal object FishStartupFixture {
         }
     }
 
-    private class Harness(base: Context) : Closeable {
+    private class Harness(base: Context, preparing: Boolean = false) : Closeable {
         private val context = object : ContextWrapper(base) {
             override fun getApplicationContext(): Context = this
             override fun getSharedPreferences(name: String, mode: Int) =
-                super.getSharedPreferences(if (name == "fishmeta") "fish-startup-fixture" else name, mode)
+                super.getSharedPreferences("fish-startup-fixture-$name", mode)
         }
         private val meta = context.getSharedPreferences("fishmeta", Context.MODE_PRIVATE)
         private val shared = FishVoice::class.java.getDeclaredField("sharedAdmission").apply { isAccessible = true }
@@ -179,8 +217,25 @@ internal object FishStartupFixture {
             }
             run = runClass.declaredConstructors.single().apply { isAccessible = true }
                 .newInstance(fish, owner, "Synthetic greeting")
+            if (!preparing) activate()
+        }
+
+        fun activate() {
             FishVoice::class.java.getDeclaredField("current").apply { isAccessible = true }.set(fish, run)
             check(gate.acquire(field("reservation") as String))
+        }
+        fun prepare(guest: String, staff: String) {
+            fish.prepare(guest, staff)
+            val job = FishVoice::class.java.getDeclaredField("preparation").apply { isAccessible = true }.get(fish) as Job
+            fish.prepare(guest, staff) // The same in-flight configuration must be shared.
+            check(FishVoice::class.java.getDeclaredField("preparation").apply { isAccessible = true }.get(fish) === job)
+            runBlocking { withTimeout(5000) { job.join() } }
+        }
+        fun cancelPreparation() {
+            fish.prepare("fr", "de")
+            val job = FishVoice::class.java.getDeclaredField("preparation").apply { isAccessible = true }.get(fish) as Job
+            fish.cancelPreparation()
+            runBlocking { withTimeout(5000) { job.join() } }
         }
 
         fun field(name: String): Any? = runClass.getDeclaredField(name).apply { isAccessible = true }.get(run)
@@ -190,7 +245,7 @@ internal object FishStartupFixture {
             return try { method.invoke(fish, *args) }
             catch (error: InvocationTargetException) { throw error.targetException }
         }
-        fun direct() = invoke("directSession", run, "fixture-only-not-a-provider-credential", "fixture-voice", "fr", "de")
+        fun direct(voice: String = "fixture-voice") = invoke("directSession", run, "fixture-only-not-a-provider-credential", voice, "fr", "de")
         fun managed() = invoke("managedSession", run, "https://fixture.hotel.invalid", "fixture-device-credential", "fr", "de")
         fun cacheAgent() { invoke("ensureAgent", run, "fixture-only-not-a-provider-credential", "fixture-voice", "") }
         fun failed(action: () -> Any?): Throwable {
@@ -219,7 +274,7 @@ internal object FishStartupFixture {
         }
         override fun close() {
             try {
-                fish.stop()
+                fish.release()
                 waitForEnd()
                 noAudio()
             } finally {

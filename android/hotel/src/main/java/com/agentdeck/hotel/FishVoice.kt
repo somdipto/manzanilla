@@ -18,10 +18,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlin.concurrent.withLock
 import livekit.org.webrtc.AudioTrackSink
 import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
@@ -35,6 +37,7 @@ import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
 
 /** Interpreter transport only. Credentials are staff-saved; managed sessions use the trusted hotel service. */
 class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private val key: () -> String) {
@@ -52,6 +55,51 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
     private val meta = ctx.getSharedPreferences("fishmeta", Context.MODE_PRIVATE)
     private val cleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val admission = admission(this.ctx)
+    private val preparationLock = ReentrantLock()
+    private var preparation: Job? = null
+    private var preparationRun: Run? = null
+
+    /** Prepare immutable provider configuration while choosing languages; never mint a
+     * session, connect media or open the microphone before Start. */
+    fun prepare(guest: String, staff: String) {
+        if (current != null || !DeskLanguages.has(guest) || !DeskLanguages.has(staff) || guest == staff) return
+        val connection = HotelConnection(ctx).load()
+        if (TranslationRouting.useManagedConnection(connection != null, TranslationSettings(ctx).directFishSelected)) return
+        if (preparation?.isActive == true && preparationRun?.owner?.staff == staff) return
+        cancelPreparation()
+        val run = Run(VoiceSession("prepare", 0, guest, staff, "translation") {}, "")
+        preparationRun = run
+        preparation = cleanup.launch {
+            try {
+                delay(350)
+                val apiKey = key().trim()
+                if (apiKey.isBlank()) return@launch
+                preparationLock.withLock {
+                    ensureAgent(run, apiKey, BuildConfig.FISH_VOICE_ID.ifBlank { FishPlan.DEFAULT_VOICE })
+                }
+            } catch (_: Exception) {
+                // Start retries normal setup and supplies actionable errors. No key or
+                // provider payload is logged by this optional preparation.
+            } finally {
+                run.owner.close()
+                run.calls.forEach { it.cancel() }
+                run.creation.cancel()
+                run.scope.cancel()
+            }
+        }
+    }
+
+    fun cancelPreparation() {
+        preparationRun?.let { run ->
+            run.owner.close()
+            run.calls.forEach { it.cancel() }
+            run.creation.cancel()
+            run.scope.cancel()
+        }
+        preparation?.cancel()
+        preparation = null
+        preparationRun = null
+    }
     private inner class Run(val owner: VoiceSession, val greet: String) {
         // AudioTrackSink runs on WebRTC's audio thread. Logging must never perform
         // logcat I/O there or hold the timing monitor while the logger is stalled.
@@ -206,7 +254,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
     }
 
     fun stop(onStopped: () -> Unit = {}) { val run = current; if (run == null) onStopped() else detach(run, null, onStopped) }
-    fun release() = stop()
+    fun release() { cancelPreparation(); stop() }
 
     private suspend fun connect(run: Run, session: Session) {
         if (!run.owner.active()) return
@@ -519,7 +567,8 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         return parseSession(run, execute(run, request, createsSession = true), "$base/api/device/fish-session", token)
     }
     private fun directSession(run: Run, apiKey: String, voiceId: String, guest: String, staff: String): Session {
-        val agent = ensureAgent(run, apiKey, voiceId)
+        val agent = preparationLock.withLock { ensureAgent(run, apiKey, voiceId) }
+        run.timing.marker(if (run.cachedAgentUsed) "agent_configuration_cached" else "agent_configuration_prepared")
         try {
             return createSession(run, apiKey, agent, guest, staff)
         } catch (failure: FishStartupFailure) {
@@ -533,7 +582,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
                 }
             }) throw CancellationException("Session closed")
             run.timing.marker("cached_agent_repair_requested")
-            val repaired = ensureAgent(run, apiKey, voiceId, agent)
+            val repaired = preparationLock.withLock { ensureAgent(run, apiKey, voiceId, agent) }
             return createSession(run, apiKey, repaired, guest, staff)
         }
     }
@@ -547,7 +596,8 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             .digest("$apiKey:${FishPlan.agentConfig(voiceId, staff)}:$definition:${FishPlan.REPORT_POLICY}:${FishPlan.CONFIG_REV}".toByteArray())
             .joinToString("") { "%02x".format(it.toInt() and 255) }
         val agentName = "${FishPlan.AGENT_NAME} ${FishPlan.CONFIG_REV} $staff ${scope.take(12)}"
-        val known = if (meta.getString("scope", "") == scope) meta.getString("agent", "").orEmpty() else ""
+        val known = if (missingAgent.isNotBlank()) "" else (meta.getString("agent_$scope", null)
+            ?: if (meta.getString("scope", "") == scope) meta.getString("agent", "").orEmpty() else "")
         run.cachedAgentUsed = known.isNotBlank()
         val id = known.ifBlank { findAgent(run, apiKey, agentName, missingAgent) ?: kotlin.run {
             val toolId = ensureCaptionTool(run, apiKey, definition)
@@ -557,7 +607,8 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             // The scoped agent was created with its complete, immutable tool configuration.
             // Republishing after an interrupted setup must not clear its caption tool.
             call(run, apiKey, "POST", "/v1/agent/agents/$id/publish", null)
-            if (run.owner.active()) meta.edit().remove("rev").putString("agent", id).putString("scope", scope).apply()
+            if (run.owner.active()) meta.edit().remove("rev").putString("agent_$scope", id)
+                .putString("agent", id).putString("scope", scope).apply()
         }
         return id
     }
