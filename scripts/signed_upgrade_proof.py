@@ -97,7 +97,11 @@ def main() -> int:
         stage = "candidate-identity"
         identity = inspect(candidate, require_distribution=True)
         prior = inspect(previous[0], require_distribution=False)
-        fixture_identity = inspect(fixture, require_distribution=False)
+        fixture_signers = frozenset(value.lower() for value in re.findall(
+            r"^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})$",
+            run("apksigner", "verify", "--verbose", "--print-certs", str(fixture)), re.MULTILINE))
+        fixture_package = re.search(r"^package: name='([^']+)'",
+                                   run("aapt", "dump", "badging", str(fixture)), re.MULTILINE)
         metadata = json.loads((temporary / "candidate" / metadata_name).read_text())
         apk_sha256 = digest(candidate)
         require(identity.package == prior.package == PACKAGE)
@@ -105,8 +109,8 @@ def main() -> int:
         require(prior.distribution == distribution or
                 (distribution == "hotel" and prior.distribution == "personal-test"))
         require(identity.code > prior.code)
-        require(identity.signers == prior.signers == fixture_identity.signers and len(identity.signers) == 1)
-        require(fixture_identity.package == f"{PACKAGE}.test")
+        require(identity.signers == prior.signers == fixture_signers and len(identity.signers) == 1)
+        require(fixture_package is not None and fixture_package[1] == f"{PACKAGE}.test")
         require(identity.name == (ROOT / "android/VERSION").read_text().strip())
         require(identity.code == int((ROOT / "android/VERSION_CODE").read_text().strip()))
         require(metadata["schema"] == 1 and metadata["package_name"] == identity.package and

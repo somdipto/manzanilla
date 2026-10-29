@@ -23,7 +23,6 @@ jobs:
     timeout-minutes: 40
     env:
       RELEASE_DISTRIBUTION: ${{ matrix.distribution }}
-      ORANGE_KEYSTORE: ${{ runner.temp }}/orange-pilot.jks
       ORANGE_STORE_PASSWORD: ${{ secrets.ORANGE_STORE_PASSWORD }}
       ORANGE_KEY_ALIAS: ${{ secrets.ORANGE_KEY_ALIAS }}
       ORANGE_KEY_PASSWORD: ${{ secrets.ORANGE_KEY_PASSWORD }}
@@ -47,6 +46,7 @@ jobs:
           fi
           printf 'RELEASE_TAG=%s\n' "$tag" >> "$GITHUB_ENV"
           printf '%s/build-tools/34.0.0\n' "$ANDROID_HOME" >> "$GITHUB_PATH"
+          printf 'ORANGE_KEYSTORE=%s/orange-pilot.jks\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Prepare existing pilot signing key
         env:
           ORANGE_KEYSTORE_BASE64: ${{ secrets.ORANGE_KEYSTORE_BASE64 }}
