@@ -289,6 +289,59 @@ internal object VoiceSetupFixture {
         }
     }
 
+    private fun verifyRestoredCleanup(test: Instrumentation, personalKey: String) {
+        val context = test.targetContext
+        val personal = SecretStore(context, "fish")
+        val meta = context.getSharedPreferences("fishmeta", 0)
+        val shared = FishVoice::class.java.getDeclaredField("sharedAdmission").apply { isAccessible = true }
+        val previousAdmission = shared.get(null)
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        var activity: HotelActivity? = null
+        try {
+            check(meta.edit().putString("outstanding_session", "fixture-old-direct:900")
+                .putString("pending_end_url", "https://api.fish.audio/v1/agent/sessions/fixture-old/end")
+                .putString("pending_end_credential_hash", "fixture-wrong-hash").commit())
+            shared.set(null, null)
+            val current = test.startActivitySync(Intent(context, HotelActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as HotelActivity
+            activity = current
+            val provider = HotelActivity::class.java.getDeclaredField("fishProvider").apply { isAccessible = true }
+                .get(current) as Lazy<*>
+            val recovery = provider.value as FishVoice
+            val http = FishVoice::class.java.getDeclaredField("http").apply { isAccessible = true }
+            http.set(recovery, (http.get(recovery) as okhttp3.OkHttpClient).newBuilder().addInterceptor { chain ->
+                check(chain.request().method == "POST" && chain.request().url.encodedPath.endsWith("/fixture-old/end"))
+                check(chain.request().header("Authorization") == "Bearer $personalKey")
+                requests.incrementAndGet()
+                okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                    .code(204).message("No Content").body("".toResponseBody(null)).build()
+            }.build())
+            check(meta.contains("outstanding_session") && requests.get() == 0)
+            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(personalKey.toByteArray())
+                .joinToString("") { "%02x".format(it.toInt() and 255) }
+            check(meta.edit().putString("pending_end_credential_hash", hash).commit())
+            test.runOnMainSync {
+                test.callActivityOnPause(current)
+                test.callActivityOnResume(current)
+            }
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+            while (meta.contains("outstanding_session")) {
+                check(System.nanoTime() < deadline) { "Foreground hotel recovery stranded the original direct reservation" }
+                Thread.sleep(50)
+            }
+            val owner = HotelActivity::class.java.getDeclaredField("owner").apply { isAccessible = true }
+                .get(current) as SessionOwner
+            check(requests.get() == 1 && personal.load() == personalKey && owner.current == null)
+            check(HotelConnection(context).load() == null)
+        } finally {
+            test.runOnMainSync { activity?.finish() }
+            test.waitForIdleSync()
+            shared.set(null, previousAdmission)
+            meta.edit().remove("outstanding_session").remove("pending_end_url")
+                .remove("pending_end_credential_hash").commit()
+        }
+    }
+
     /** Owns only synthetic data and PIN 2468 on a fresh, initially lock-free hotel AVD. */
     fun verifyHotel(test: Instrumentation) {
         check(Build.HARDWARE in setOf("ranchu", "goldfish"))
@@ -318,37 +371,9 @@ internal object VoiceSetupFixture {
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
             }
         }
-        // A distribution change must not strand an older direct reservation.
-        // Exercise the shipped credential-hash fence and recovery transport, not a new start.
-        val shared = FishVoice::class.java.getDeclaredField("sharedAdmission").apply { isAccessible = true }
-        val previousAdmission = shared.get(null)
-        val cleanupRequests = java.util.concurrent.atomic.AtomicInteger()
-        try {
-            check(meta.edit().putString("outstanding_session", "fixture-old-direct:900")
-                .putString("pending_end_url", "https://api.fish.audio/v1/agent/sessions/fixture-old/end")
-                .putString("pending_end_credential_hash", "fixture-wrong-hash").commit())
-            shared.set(null, null)
-            val recovery = FishVoice(context, {}) { personal.load().orEmpty() }
-            val http = FishVoice::class.java.getDeclaredField("http").apply { isAccessible = true }
-            http.set(recovery, (http.get(recovery) as okhttp3.OkHttpClient).newBuilder().addInterceptor { chain ->
-                check(chain.request().method == "POST" && chain.request().url.encodedPath.endsWith("/fixture-old/end"))
-                check(chain.request().header("Authorization") == "Bearer $personalKey")
-                cleanupRequests.incrementAndGet()
-                okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
-                    .code(204).message("No Content").body("".toResponseBody(null)).build()
-            }.build())
-            recovery.retryCleanup()
-            check(cleanupRequests.get() == 0 && meta.contains("outstanding_session"))
-            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(personalKey.toByteArray())
-                .joinToString("") { "%02x".format(it.toInt() and 255) }
-            check(meta.edit().putString("pending_end_credential_hash", hash).commit())
-            recovery.retryCleanup()
-            await("original direct reservation cleanup") { !meta.contains("outstanding_session") }
-            check(cleanupRequests.get() == 1 && personal.load() == personalKey)
-        } finally {
-            shared.set(null, previousAdmission)
-            meta.edit().remove("outstanding_session").remove("pending_end_url").remove("pending_end_credential_hash").commit()
-        }
+        // Recover the original reservation through the real Activity foreground path,
+        // even before enrollment is available. No new provider session may be opened.
+        verifyRestoredCleanup(test, personalKey)
         // Exercise the real new-start boundary even with a saved personal selection.
         // Interceptors prevent a regression from making any provider request.
         shell("pm grant ${context.packageName} android.permission.RECORD_AUDIO")

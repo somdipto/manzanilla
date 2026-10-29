@@ -59,11 +59,14 @@ internal object HotelReadinessFixture {
         }
         fun awaitState(expected: String) {
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8)
+            val observed = "(function(){var events=window.readinessEvents.filter(function(e){return e.type==='connection'});" +
+                "var last=events[events.length-1];return !!last&&last.state===" + JSONObject.quote(expected) +
+                "&&last.connected===" + (expected == "ready") + "})()"
             while (true) {
                 var state = ""
                 var idle = false
                 test.runOnMainSync { state = field("hotelStatus").get(activity).toString(); idle = field("hotelProbe").get(activity) == null }
-                if (state == expected && idle) return
+                if (state == expected && idle && js(observed) == "true") return
                 check(System.nanoTime() < deadline) { "Readiness state did not settle" }
                 Thread.sleep(20)
             }
@@ -116,7 +119,6 @@ internal object HotelReadinessFixture {
             check(requests.poll(1, TimeUnit.SECONDS)!!.getString("language") == "es")
             check(js("JSON.stringify(window.readinessEvents).indexOf('must-not-reach-page')") == "-1")
             check(js("JSON.stringify(window.readinessEvents).indexOf('operator_primary')") == "-1")
-            check(js("window.readinessEvents.filter(function(e){return e.type==='connection'}).slice(-1)[0].connected") == "true")
             probe(Reply(401)); awaitState("unauthorized")
             probe(Reply(403)); awaitState("unauthorized")
             probe(Reply(failure = true)); awaitState("offline")

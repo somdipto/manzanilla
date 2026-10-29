@@ -630,6 +630,8 @@ class HotelActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foreground = true
+        // Owned recovery must remain reachable before enrollment or new-start readiness.
+        fish.retryCleanup()
         reception?.setShown(true)
         refreshHotelStatus()
         ui.removeCallbacks(hotelPoll)
