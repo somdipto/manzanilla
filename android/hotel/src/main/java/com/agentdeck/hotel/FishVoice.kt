@@ -93,7 +93,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
     fun admissionIssue(): String? = (admission.reason() ?: if (current != null) "The previous conversation cleanup is still finishing." else null)?.let { text(it) }
     fun localAudioState(): String = admission.localAudioState()
 
-    /** A deliberate subsequent start attempt can retry the same uncertain end, never mint a new session. */
+    /** Foreground recovery and later start attempts retry an owned uncertain end, never mint a new session. */
     fun retryCleanup() {
         val run = current ?: run {
             admission.retrySettledRelease()

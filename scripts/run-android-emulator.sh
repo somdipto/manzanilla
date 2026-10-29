@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 distribution="${ANDROID_QA_DISTRIBUTION:-personal-test}"
 case "$distribution" in
-  personal-test) fixtures=(reception-bridge reception-truth microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery hotel-readiness) ;;
-  hotel) fixtures=(reception-bridge reception-truth hotel-readiness hotel-setup-gates) ;;
+  personal-test) fixtures=(reception-bridge reception-truth reception-request-tracking microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery hotel-readiness) ;;
+  hotel) fixtures=(reception-bridge reception-truth reception-request-tracking hotel-readiness hotel-setup-gates) ;;
   *) echo "Unsupported fixture distribution" >&2; exit 1 ;;
 esac
 evidence="${ANDROID_QA_OUTPUT:-work/android-emulator-qa}"

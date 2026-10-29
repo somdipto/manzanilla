@@ -19,7 +19,7 @@
   const concierge = () => ['Arrival guide','Request help from reception','Request a taxi through staff','Ask about the hotel'].map(message => uiText(message));
   const greet = (language) => (window.MANZANILLA_GREET && window.MANZANILLA_GREET[language]) || '';
   const state = { page: 'idle', mode: 'translation', night: false, language: 'es', staff_language: 'es', demo: !native, connected: false, audioAvailable: false, audioGate: '', audio: 'off', active: false, phase: '', sessionId: '', generation: null, closed: true, terminated: true, error: '', metrics: '', utterances: new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: '', pendingPage: '', micLevel: 0, turns: [] };
-  Object.assign(state, { distribution: 'personal-test', configured: false, connectionState: 'unconfigured', services: null, bundledKeyAvailable: false });
+  Object.assign(state, { distribution: 'personal-test', configured: false, connectionState: 'unconfigured', services: null, bundledKeyAvailable: false, pendingShortcut: null });
   const serviceNames = ['checkin','question','taxi','operator','message'];
   const isHotel = () => state.distribution === 'hotel';
   function serviceReason(name = '') {
@@ -34,10 +34,28 @@
     return '';
   }
   const serviceNote = name => serviceReason(name) ? `<p class="service-reason" role="status">${esc(serviceReason(name))}</p>` : '';
-  const serviceChoice = (id, label, busy = false) => `<div class="service-choice">${action(id, `<strong>${esc(label)}</strong>`, 'choice shortcut', busy || !!serviceReason(id), true)}${serviceNote(id)}</div>`;
+  const serviceChoice = (id, label, busy = false) => `<div class="service-choice">${action(id, `<strong>${esc(label)}</strong>`, 'choice shortcut', busy || !!state.pendingShortcut || !!serviceReason(id), true)}${serviceNote(id)}</div>`;
   const reviewBlocked = () => !!state.operation && !state.operation.reconciliationPending && !!serviceReason(state.operation.action);
   const confirmationReason = () => serviceReason(state.operation?.action || state.requestedAction || '');
   let queuedShortcut = '';
+  let watchedReceipt = '';
+  function unwatchReceipt() {
+    if (watchedReceipt) send('unwatch_request');
+    watchedReceipt = '';
+  }
+  function syncReceiptWatch() {
+    const item = state.page === 'saved' && state.active && !state.closed && state.mode === 'reception'
+      ? state.outcome?.itemId || '' : '';
+    if (item === watchedReceipt) return;
+    unwatchReceipt();
+    if (item) { watchedReceipt = item; send('watch_request', { item_id:item }); }
+  }
+  function requestStatus() {
+    if (!state.outcome?.itemId) return '';
+    const status = state.outcome.staffStatus || 'open';
+    const message = { open:'Submitted', acknowledged:'Acknowledged', resolved:'Staff marked the request resolved' }[status];
+    return `<section class="request-status" role="status" aria-live="polite"><h3>${esc(uiText('Request status'))}</h3><p>${esc(uiText(message))}</p>${status === 'open' ? fine(uiText('Waiting for reception')) : ''}${state.outcome.statusUnavailable ? fine(uiText('Request status is unavailable. Showing the last known state.')) : ''}</section>`;
+  }
   const captionNodes = new Map();
   const turnLedger = new window.ManzanillaLanguageTurns();
   state.turns = turnLedger.turns;
@@ -251,7 +269,7 @@
         : `<div class="status-line session-top"><div><h2>${esc(uiText('Hotel assistance'))}</h2><p>${esc(phaseLabel())}</p></div><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div>${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}<div class="session-scroll">${!state.closed ? `<div class="shortcut-list">${shortcuts.map((id,i) => serviceChoice(id, concierge()[i], ['connecting','greeting'].includes(state.phase))).join('')}</div>` : ''}<div class="conversation" role="log" aria-label="${esc(uiText('Conversation transcript'))}" aria-live="polite">${conversation()}</div>${state.metrics ? `<p class="metrics">${esc(state.metrics)}</p>` : ''}</div>${sessionDock()}`,
       operation_form: () => `<div class="status-line"><h2>${esc(state.operation?.action === 'message' ? uiText("Message staff") : concierge()[shortcuts.indexOf(state.operation?.action)] || uiText("Hotel request"))}</h2><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div>${guestLocale()}${serviceNote(state.operation?.action)}<form id="operation-form" class="operation-form" aria-busy="${!!state.operation?.pending}">${(state.operation?.fields || []).map(operationField).join('')}<div class="button-row"><button type="submit" class="primary" ${state.operation?.pending || reviewBlocked() ? 'disabled' : ''}>${esc(uiText(state.operation?.pending ? 'Reviewing…' : state.operation?.reconciliationPending ? 'Retry' : 'Review'))}</button>${action('cancel-operation',uiText("Cancel"),'secondary',state.operation?.pending || state.operation?.reconciliationPending)}</div></form>${action('stop',uiText("End"),'stop')}`,
       confirming: () => `<div class="status-line"><h2>${esc(uiText('Confirm request?'))}</h2><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div><div class="draft" dir="auto">${esc(state.draft?.message || '')}</div>${confirmationReason() ? fine(confirmationReason()) : ''}${fine(state.draft?.attempted ? state.draft.approved === false ? uiText("No cancellation receipt yet. Retry to check the result.") : uiText("No receipt yet. Retry the same request to check its result.") : uiText("Confirm only if the details are correct."))}<div class="button-row">${action(state.draft?.attempted ? 'retry-draft' : 'confirm',state.confirmed ? state.draft?.approved === false ? uiText("Cancelling…") : uiText("Sending…") : state.draft?.attempted ? uiText("Retry") : uiText("Confirm"),'primary',state.confirmed || (!state.draft?.attempted && !!confirmationReason()))}${state.operation ? action('edit-draft',uiText("Edit"),'secondary',state.confirmed || state.draft?.attempted) : ''}${action('cancel-draft',uiText("Cancel"),'secondary',state.confirmed)}</div>`,
-      saved: () => `<h2>${esc(uiText('Request receipt'))}</h2><section class="request-receipt"><p class="lead" dir="auto">${esc(state.outcome?.text || uiText('No receipt returned. Ask staff to check.'))}</p>${state.outcome?.receipt ? `<div class="receipt" dir="auto"><bdi>${esc(state.outcome.receipt)}</bdi></div>` : ''}</section><div class="button-row">${state.outcome?.helpAction === 'operator' ? action('receipt-help',uiText('Request help from reception')) : ''}${action('continue',uiText("Continue"))}${action('stop',uiText("End"),'secondary')}</div>`,
+      saved: () => `<h2>${esc(uiText('Request receipt'))}</h2><section class="request-receipt"><p class="lead" dir="auto">${esc(state.outcome?.text || uiText('No receipt returned. Ask staff to check.'))}</p>${state.outcome?.receipt ? `<div class="receipt" dir="auto"><bdi>${esc(state.outcome.receipt)}</bdi></div>` : ''}</section>${requestStatus()}<div class="button-row">${state.pendingShortcut?.reconciliationPending ? action('retry-shortcut',uiText(state.pendingShortcut.pending ? 'Sending…' : 'Retry'),'primary',state.pendingShortcut.pending) : `${state.outcome?.helpAction === 'operator' ? action('receipt-help',uiText('Request help from reception')) : ''}${action('continue',uiText("Continue"))}`}${action('stop',uiText("End"),'secondary')}</div>`,
       error: () => `<div class="status-line"><h2>${esc(uiText('Conversation unavailable'))}</h2><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div><div class="notice error">${esc(state.error || uiText("Please ask reception for help."))}</div>${fine(state.audio === 'off' ? uiText("Microphone off. Staff can check this device’s setup.") : uiText("Audio release is not confirmed. Ask reception for help before restarting."))}<div class="button-row">${action('retry',uiText("Try again"),'primary',state.audio !== 'off')}${action('home',uiText("Back to home"),'secondary')}</div>`
     };
     const focusedElement = document.activeElement;
@@ -292,6 +310,7 @@
       if (input && focusedInput.start !== null) input.setSelectionRange(focusedInput.start,focusedInput.end);
     }
     renderNotices();
+    syncReceiptWatch();
   }
 
   function activity() { send('activity'); }
@@ -316,7 +335,7 @@
     if (sameLanguage()) return uiText("Choose two different languages to start translation.");
     return uiText("Ready. Tap Start translation to turn on the microphone.");
   }
-  function page(next) { state.page = next; render(); }
+  function page(next) { if (next !== 'saved') unwatchReceipt(); state.page = next; render(); }
   function toggleNight() {
     if (isHotel() || state.page !== 'idle' || state.active) return;
     activity();
@@ -335,6 +354,7 @@
     page(mode === 'translation' ? 'translation_languages' : 'languages');
   }
   function clearGuest() {
+    unwatchReceipt();
     state.utterances.clear();
     captionNodes.clear();
     turnLedger.clear();
@@ -344,6 +364,7 @@
     state.confirmed = false;
     state.operation = null;
     state.outcome = null;
+    state.pendingShortcut = null;
     state.metrics = '';
     state.notices = [];
     document.getElementById('toast').hidden = true;
@@ -390,10 +411,12 @@
   }
   function chooseShortcut(name) {
     if (!state.active || state.closed || state.mode !== 'reception' || state.page !== 'active' || ['connecting','greeting'].includes(state.phase)) return;
+    if (state.pendingShortcut) return;
     if (serviceReason(name)) { toast(serviceReason(name)); return; }
     state.requestedAction = name;
     if (state.demo) { addNotice(uiText("Hotel requests require a connected reception tablet."), 'unavailable'); return; }
-    send(name);
+    state.pendingShortcut = { action: name, arguments: {}, pending: true, reconciliationPending: false };
+    send(name, { arguments: state.pendingShortcut.arguments });
   }
   function finishNavigation() {
     if (!state.pendingPage || !state.terminated || state.active || state.audio !== 'off') return false;
@@ -405,6 +428,7 @@
     return true;
   }
   function stop(next = '') {
+    unwatchReceipt();
     if (next) state.pendingPage = next;
     if (!state.active) { finishNavigation(); return; }
     if (state.phase === 'ending') return;
@@ -414,6 +438,7 @@
     state.confirmed = false;
     state.operation = null;
     state.outcome = null;
+    state.pendingShortcut = null;
     queuedShortcut = '';
     state.phase = 'ending';
     if (state.audio === 'recording') state.audio = 'stopping';
@@ -482,6 +507,14 @@
       case 'retry': if(state.mode === 'reception') start(); else page('translation_languages'); break;
       case 'checkin': case 'operator': case 'taxi': case 'question': chooseShortcut(name); break;
       case 'message': chooseShortcut('message'); break;
+      case 'retry-shortcut': {
+        const attempt = state.pendingShortcut;
+        if (state.page !== 'saved' || !state.active || state.closed || !attempt?.reconciliationPending || attempt.pending) return;
+        attempt.pending = true;
+        send(attempt.action, { arguments: attempt.arguments });
+        render();
+        break;
+      }
       case 'receipt-help':
         if (state.page !== 'saved' || state.outcome?.helpAction !== 'operator' || !state.active || state.closed) return;
         if (serviceReason('operator')) { toast(serviceReason('operator')); return; }
@@ -509,6 +542,7 @@
         render();
         break;
       case 'continue':
+        if (state.pendingShortcut?.reconciliationPending) return;
         state.outcome = null;
         page(state.active && !state.closed ? 'active' : 'idle');
         break;
@@ -616,6 +650,7 @@
     return event.generation === state.generation;
   }
   function detachGuest(preserveHistory = false) {
+    unwatchReceipt();
     state.closed = true;
     state.terminated = true;
     state.active = false;
@@ -625,6 +660,7 @@
     state.confirmed = false;
     state.operation = null;
     state.outcome = null;
+    state.pendingShortcut = null;
     queuedShortcut = '';
     if (state.audio !== 'off') state.audio = 'unknown';
     if (state.audio === 'off') send('languages', { language: state.language, staff_language: state.staff_language });
@@ -718,6 +754,20 @@
     const terminal = type === 'reception_event' && ['stopped','timeout','error'].includes(event.phase);
     if (state.closed && !terminal) return;
     if (type === 'input_activity') { activity(); return; }
+    if (type === 'request_status') {
+      if (state.page !== 'saved' || !watchedReceipt || event.item_id !== watchedReceipt ||
+          event.item_id !== state.outcome?.itemId) return;
+      if (Number.isInteger(event.version) && event.version >= (state.outcome.statusVersion ?? -1) &&
+          ['open','acknowledged','resolved'].includes(event.status)) {
+        state.outcome.staffStatus = event.status;
+        state.outcome.statusVersion = event.version;
+      }
+      state.outcome.statusUnavailable = event.status_available === false;
+      // Update only the live staff state, never the immutable execution receipt.
+      const target = content.querySelector('.request-status');
+      if (target) target.outerHTML = requestStatus();
+      return;
+    }
     if (type === 'mic_level') {
       const level = state.audio === 'recording' ? Math.min(1, Math.max(0, Number(event.level) || 0)) : 0;
       state.micLevel = level;
@@ -773,6 +823,7 @@
       const emptyValues = Object.create(null);
       for (const name of allFields.keys()) emptyValues[name] = '';
       state.operation = { action: event.action, fields: [...allFields.values()], values: { ...emptyValues, ...previous?.values }, pending: false };
+      state.pendingShortcut = null;
       page('operation_form'); return;
     }
     if (type === 'operation_result') {
@@ -790,9 +841,21 @@
         page(state.draft ? 'confirming' : 'operation_form');
         return;
       }
+      if (['unavailable','error','pending'].includes(event.status) && state.pendingShortcut &&
+          (event.reconciliation_pending === true || event.status === 'pending' || state.pendingShortcut.reconciliationPending)) {
+        state.pendingShortcut.pending = false;
+        state.pendingShortcut.reconciliationPending = true;
+        state.outcome = { text: text || uiText('No receipt yet. Retry the same request to check its result.'), receipt: '', helpAction: '' };
+        page('saved'); return;
+      }
       if (state.draft && !state.confirmed) { addNotice(text, event.status); return; }
+      state.pendingShortcut = null;
       const receipt = event.result?.item_id || event.result?.request_id || event.result?.escalation_id;
-      state.outcome = { text: text || uiText('No receipt returned. Ask staff to check.'), receipt: typeof receipt === 'string' ? uiText('Receipt: {id}', { id: receipt }) : '', helpAction: event.result?.help_action === 'operator' ? 'operator' : '' };
+      const itemId = typeof receipt === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(receipt) &&
+        !['pending','error','unavailable','cancelled'].includes(event.status) ? receipt : '';
+      const previousStatus = itemId && itemId === state.outcome?.itemId ? state.outcome : null;
+      if (watchedReceipt !== itemId) unwatchReceipt();
+      state.outcome = { text: text || uiText('No receipt returned. Ask staff to check.'), receipt: typeof receipt === 'string' ? uiText('Receipt: {id}', { id: receipt }) : '', itemId, staffStatus:previousStatus?.staffStatus || 'open', statusVersion:previousStatus?.statusVersion ?? -1, statusUnavailable:previousStatus?.statusUnavailable || false, helpAction: event.result?.help_action === 'operator' ? 'operator' : '' };
       state.draft = null;
       state.confirmed = false;
       state.operation = null;
@@ -821,6 +884,7 @@
     if (phase === 'confirming') {
       if (typeof event.draft_id !== 'string' || !event.draft_id || state.draft?.draft_id === event.draft_id) return;
       state.draft = { draft_id: event.draft_id, guest_name: String(event.guest_name || ''), room_reference: String(event.room_reference || ''), message: String(event.message || '') };
+      state.pendingShortcut = null;
       state.confirmed = false;
       if (state.operation) state.operation.pending = false;
       page('confirming'); return;
@@ -850,6 +914,7 @@
   document.addEventListener('pointerdown', activity, { passive: true });
   document.addEventListener('wheel', activity, { passive: true });
   function hideGuest() {
+    unwatchReceipt();
     silence();
     if (state.active) send('stop');
     detachGuest();

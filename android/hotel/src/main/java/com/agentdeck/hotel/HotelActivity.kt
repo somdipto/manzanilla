@@ -499,6 +499,9 @@ class HotelActivity : Activity() {
         when (action) {
             "stop", "message", "confirm", "checkin", "operator", "taxi", "question" ->
                 if (!owner.accepts(message.optString("session_id"), message.optInt("generation", -1), duringClose = true)) return
+            "watch_request", "unwatch_request" ->
+                if (!foreground || owner.current?.request?.mode != "reception" ||
+                    !owner.accepts(message.optString("session_id"), message.optInt("generation", -1))) return
             "silence", "activity", "mute" -> if (owner.current != null &&
                 !owner.accepts(message.optString("session_id"), message.optInt("generation", -1))) return
         }
@@ -551,6 +554,8 @@ class HotelActivity : Activity() {
                 }
             }
             "checkin", "operator", "taxi", "question" -> dispatchHotelAction(message)
+            "watch_request" -> owner.current?.let { gateway?.watch(it, message.optString("item_id")) }
+            "unwatch_request" -> owner.current?.let { gateway?.unwatch(it) }
             "activity" -> lastActivity = SystemClock.elapsedRealtime()
             "mute" -> owner.current?.takeIf { current(it) && it.request.mode == "translation" }
                 ?.let { fish.setMuted(message.optBoolean("muted")) }
@@ -630,6 +635,8 @@ class HotelActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foreground = true
+        // Owned recovery must remain reachable before enrollment or new-start readiness.
+        fish.retryCleanup()
         reception?.setShown(true)
         refreshHotelStatus()
         ui.removeCallbacks(hotelPoll)
@@ -688,6 +695,7 @@ class HotelActivity : Activity() {
         ui.removeCallbacks(updatePoll)
         ui.removeCallbacks(hotelPoll)
         cancelHotelProbe()
+        owner.current?.let { gateway?.unwatch(it) }
         // The system permission dialog pauses us without hiding this window.
         // No microphone exists yet; retain its proposed session and visible UI.
         if (pendingPermission == null) {

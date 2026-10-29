@@ -17,7 +17,7 @@
   const concierge = () => ["Arrival guide", "Request help from reception", "Request a taxi through staff", "Ask about the hotel"].map((message) => uiText(message));
   const greet = (language) => window.MANZANILLA_GREET && window.MANZANILLA_GREET[language] || "";
   const state = { page: "idle", mode: "translation", night: false, language: "es", staff_language: "es", demo: !native, connected: false, audioAvailable: false, audioGate: "", audio: "off", active: false, phase: "", sessionId: "", generation: null, closed: true, terminated: true, error: "", metrics: "", utterances: /* @__PURE__ */ new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: "", pendingPage: "", micLevel: 0, turns: [] };
-  Object.assign(state, { distribution: "personal-test", configured: false, connectionState: "unconfigured", services: null, bundledKeyAvailable: false });
+  Object.assign(state, { distribution: "personal-test", configured: false, connectionState: "unconfigured", services: null, bundledKeyAvailable: false, pendingShortcut: null });
   const serviceNames = ["checkin", "question", "taxi", "operator", "message"];
   const isHotel = () => state.distribution === "hotel";
   function serviceReason(name = "") {
@@ -32,13 +32,35 @@
     return "";
   }
   const serviceNote = (name) => serviceReason(name) ? '<p class="service-reason" role="status">'.concat(esc(serviceReason(name)), "</p>") : "";
-  const serviceChoice = (id, label, busy = false) => '<div class="service-choice">'.concat(action(id, "<strong>".concat(esc(label), "</strong>"), "choice shortcut", busy || !!serviceReason(id), true)).concat(serviceNote(id), "</div>");
+  const serviceChoice = (id, label, busy = false) => '<div class="service-choice">'.concat(action(id, "<strong>".concat(esc(label), "</strong>"), "choice shortcut", busy || !!state.pendingShortcut || !!serviceReason(id), true)).concat(serviceNote(id), "</div>");
   const reviewBlocked = () => !!state.operation && !state.operation.reconciliationPending && !!serviceReason(state.operation.action);
   const confirmationReason = () => {
     var _a;
     return serviceReason(((_a = state.operation) == null ? void 0 : _a.action) || state.requestedAction || "");
   };
   let queuedShortcut = "";
+  let watchedReceipt = "";
+  function unwatchReceipt() {
+    if (watchedReceipt) send("unwatch_request");
+    watchedReceipt = "";
+  }
+  function syncReceiptWatch() {
+    var _a;
+    const item = state.page === "saved" && state.active && !state.closed && state.mode === "reception" ? ((_a = state.outcome) == null ? void 0 : _a.itemId) || "" : "";
+    if (item === watchedReceipt) return;
+    unwatchReceipt();
+    if (item) {
+      watchedReceipt = item;
+      send("watch_request", { item_id: item });
+    }
+  }
+  function requestStatus() {
+    var _a;
+    if (!((_a = state.outcome) == null ? void 0 : _a.itemId)) return "";
+    const status = state.outcome.staffStatus || "open";
+    const message = { open: "Submitted", acknowledged: "Acknowledged", resolved: "Staff marked the request resolved" }[status];
+    return '<section class="request-status" role="status" aria-live="polite"><h3>'.concat(esc(uiText("Request status")), "</h3><p>").concat(esc(uiText(message)), "</p>").concat(status === "open" ? fine(uiText("Waiting for reception")) : "").concat(state.outcome.statusUnavailable ? fine(uiText("Request status is unavailable. Showing the last known state.")) : "", "</section>");
+  }
   const captionNodes = /* @__PURE__ */ new Map();
   const turnLedger = new window.ManzanillaLanguageTurns();
   state.turns = turnLedger.turns;
@@ -262,8 +284,8 @@
         return '<div class="status-line"><h2>'.concat(esc(uiText("Confirm request?")), '</h2><button class="back" data-action="back">').concat(icons.back).concat(esc(uiText("Back")), '</button></div><div class="draft" dir="auto">').concat(esc(((_a2 = state.draft) == null ? void 0 : _a2.message) || ""), "</div>").concat(confirmationReason() ? fine(confirmationReason()) : "").concat(fine(((_b2 = state.draft) == null ? void 0 : _b2.attempted) ? state.draft.approved === false ? uiText("No cancellation receipt yet. Retry to check the result.") : uiText("No receipt yet. Retry the same request to check its result.") : uiText("Confirm only if the details are correct.")), '<div class="button-row">').concat(action(((_c2 = state.draft) == null ? void 0 : _c2.attempted) ? "retry-draft" : "confirm", state.confirmed ? ((_d2 = state.draft) == null ? void 0 : _d2.approved) === false ? uiText("Cancelling…") : uiText("Sending…") : ((_e2 = state.draft) == null ? void 0 : _e2.attempted) ? uiText("Retry") : uiText("Confirm"), "primary", state.confirmed || !((_f2 = state.draft) == null ? void 0 : _f2.attempted) && !!confirmationReason())).concat(state.operation ? action("edit-draft", uiText("Edit"), "secondary", state.confirmed || ((_g2 = state.draft) == null ? void 0 : _g2.attempted)) : "").concat(action("cancel-draft", uiText("Cancel"), "secondary", state.confirmed), "</div>");
       },
       saved: () => {
-        var _a2, _b2, _c2;
-        return "<h2>".concat(esc(uiText("Request receipt")), '</h2><section class="request-receipt"><p class="lead" dir="auto">').concat(esc(((_a2 = state.outcome) == null ? void 0 : _a2.text) || uiText("No receipt returned. Ask staff to check.")), "</p>").concat(((_b2 = state.outcome) == null ? void 0 : _b2.receipt) ? '<div class="receipt" dir="auto"><bdi>'.concat(esc(state.outcome.receipt), "</bdi></div>") : "", '</section><div class="button-row">').concat(((_c2 = state.outcome) == null ? void 0 : _c2.helpAction) === "operator" ? action("receipt-help", uiText("Request help from reception")) : "").concat(action("continue", uiText("Continue"))).concat(action("stop", uiText("End"), "secondary"), "</div>");
+        var _a2, _b2, _c2, _d2;
+        return "<h2>".concat(esc(uiText("Request receipt")), '</h2><section class="request-receipt"><p class="lead" dir="auto">').concat(esc(((_a2 = state.outcome) == null ? void 0 : _a2.text) || uiText("No receipt returned. Ask staff to check.")), "</p>").concat(((_b2 = state.outcome) == null ? void 0 : _b2.receipt) ? '<div class="receipt" dir="auto"><bdi>'.concat(esc(state.outcome.receipt), "</bdi></div>") : "", "</section>").concat(requestStatus(), '<div class="button-row">').concat(((_c2 = state.pendingShortcut) == null ? void 0 : _c2.reconciliationPending) ? action("retry-shortcut", uiText(state.pendingShortcut.pending ? "Sending…" : "Retry"), "primary", state.pendingShortcut.pending) : "".concat(((_d2 = state.outcome) == null ? void 0 : _d2.helpAction) === "operator" ? action("receipt-help", uiText("Request help from reception")) : "").concat(action("continue", uiText("Continue")))).concat(action("stop", uiText("End"), "secondary"), "</div>");
       },
       error: () => '<div class="status-line"><h2>'.concat(esc(uiText("Conversation unavailable")), '</h2><button class="back" data-action="back">').concat(icons.back).concat(esc(uiText("Back")), '</button></div><div class="notice error">').concat(esc(state.error || uiText("Please ask reception for help.")), "</div>").concat(fine(state.audio === "off" ? uiText("Microphone off. Staff can check this device’s setup.") : uiText("Audio release is not confirmed. Ask reception for help before restarting.")), '<div class="button-row">').concat(action("retry", uiText("Try again"), "primary", state.audio !== "off")).concat(action("home", uiText("Back to home"), "secondary"), "</div>")
     };
@@ -308,6 +330,7 @@
       if (input && focusedInput.start !== null) input.setSelectionRange(focusedInput.start, focusedInput.end);
     }
     renderNotices();
+    syncReceiptWatch();
   }
   function activity() {
     send("activity");
@@ -334,6 +357,7 @@
     return uiText("Ready. Tap Start translation to turn on the microphone.");
   }
   function page(next) {
+    if (next !== "saved") unwatchReceipt();
     state.page = next;
     render();
   }
@@ -358,6 +382,7 @@
     page(mode === "translation" ? "translation_languages" : "languages");
   }
   function clearGuest() {
+    unwatchReceipt();
     state.utterances.clear();
     captionNodes.clear();
     turnLedger.clear();
@@ -367,6 +392,7 @@
     state.confirmed = false;
     state.operation = null;
     state.outcome = null;
+    state.pendingShortcut = null;
     state.metrics = "";
     state.notices = [];
     document.getElementById("toast").hidden = true;
@@ -430,6 +456,7 @@
   }
   function chooseShortcut(name) {
     if (!state.active || state.closed || state.mode !== "reception" || state.page !== "active" || ["connecting", "greeting"].includes(state.phase)) return;
+    if (state.pendingShortcut) return;
     if (serviceReason(name)) {
       toast(serviceReason(name));
       return;
@@ -439,7 +466,8 @@
       addNotice(uiText("Hotel requests require a connected reception tablet."), "unavailable");
       return;
     }
-    send(name);
+    state.pendingShortcut = { action: name, arguments: {}, pending: true, reconciliationPending: false };
+    send(name, { arguments: state.pendingShortcut.arguments });
   }
   function finishNavigation() {
     if (!state.pendingPage || !state.terminated || state.active || state.audio !== "off") return false;
@@ -451,6 +479,7 @@
     return true;
   }
   function stop(next = "") {
+    unwatchReceipt();
     if (next) state.pendingPage = next;
     if (!state.active) {
       finishNavigation();
@@ -463,6 +492,7 @@
     state.confirmed = false;
     state.operation = null;
     state.outcome = null;
+    state.pendingShortcut = null;
     queuedShortcut = "";
     state.phase = "ending";
     if (state.audio === "recording") state.audio = "stopping";
@@ -489,7 +519,7 @@
     }, 5500);
   }
   function perform(name) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     activity();
     if (name.startsWith("request:")) {
       const request = name.split(":")[1];
@@ -575,6 +605,14 @@
       case "message":
         chooseShortcut("message");
         break;
+      case "retry-shortcut": {
+        const attempt = state.pendingShortcut;
+        if (state.page !== "saved" || !state.active || state.closed || !(attempt == null ? void 0 : attempt.reconciliationPending) || attempt.pending) return;
+        attempt.pending = true;
+        send(attempt.action, { arguments: attempt.arguments });
+        render();
+        break;
+      }
       case "receipt-help":
         if (state.page !== "saved" || ((_b = state.outcome) == null ? void 0 : _b.helpAction) !== "operator" || !state.active || state.closed) return;
         if (serviceReason("operator")) {
@@ -613,6 +651,7 @@
         render();
         break;
       case "continue":
+        if ((_e = state.pendingShortcut) == null ? void 0 : _e.reconciliationPending) return;
         state.outcome = null;
         page(state.active && !state.closed ? "active" : "idle");
         break;
@@ -737,6 +776,7 @@
     return event.generation === state.generation;
   }
   function detachGuest(preserveHistory = false) {
+    unwatchReceipt();
     state.closed = true;
     state.terminated = true;
     state.active = false;
@@ -746,6 +786,7 @@
     state.confirmed = false;
     state.operation = null;
     state.outcome = null;
+    state.pendingShortcut = null;
     queuedShortcut = "";
     if (state.audio !== "off") state.audio = "unknown";
     if (state.audio === "off") send("languages", { language: state.language, staff_language: state.staff_language });
@@ -755,7 +796,7 @@
     }
   }
   function receive(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
     if (typeof event === "string") {
       try {
         event = JSON.parse(event);
@@ -871,6 +912,17 @@
       activity();
       return;
     }
+    if (type === "request_status") {
+      if (state.page !== "saved" || !watchedReceipt || event.item_id !== watchedReceipt || event.item_id !== ((_a = state.outcome) == null ? void 0 : _a.itemId)) return;
+      if (Number.isInteger(event.version) && event.version >= ((_b = state.outcome.statusVersion) != null ? _b : -1) && ["open", "acknowledged", "resolved"].includes(event.status)) {
+        state.outcome.staffStatus = event.status;
+        state.outcome.statusVersion = event.version;
+      }
+      state.outcome.statusUnavailable = event.status_available === false;
+      const target = content.querySelector(".request-status");
+      if (target) target.outerHTML = requestStatus();
+      return;
+    }
     if (type === "mic_level") {
       const level = state.audio === "recording" ? Math.min(1, Math.max(0, Number(event.level) || 0)) : 0;
       state.micLevel = level;
@@ -929,19 +981,20 @@
         addNotice(uiText("This request did not provide usable fields. Please ask reception for help."), "unavailable");
         return;
       }
-      const previous = ((_a = state.operation) == null ? void 0 : _a.action) === event.action ? state.operation : null;
+      const previous = ((_c = state.operation) == null ? void 0 : _c.action) === event.action ? state.operation : null;
       const allFields = new Map(((previous == null ? void 0 : previous.fields) || []).map((field) => [field.name, field]));
       fields.forEach((field) => allFields.set(field.name, field));
       const emptyValues = /* @__PURE__ */ Object.create(null);
       for (const name of allFields.keys()) emptyValues[name] = "";
       state.operation = { action: event.action, fields: [...allFields.values()], values: { ...emptyValues, ...previous == null ? void 0 : previous.values }, pending: false };
+      state.pendingShortcut = null;
       page("operation_form");
       return;
     }
     if (type === "operation_result") {
       const text = String(event.text || "");
       if (["confirmation_required", "needs_confirmation", "fields_required"].includes(event.status)) return;
-      if (["unavailable", "error", "pending"].includes(event.status) && ((_b = event.result) == null ? void 0 : _b.help_action) !== "operator" && (state.operation || state.draft)) {
+      if (["unavailable", "error", "pending"].includes(event.status) && ((_d = event.result) == null ? void 0 : _d.help_action) !== "operator" && (state.operation || state.draft)) {
         state.confirmed = false;
         if (state.operation) {
           state.operation.pending = false;
@@ -951,12 +1004,23 @@
         page(state.draft ? "confirming" : "operation_form");
         return;
       }
+      if (["unavailable", "error", "pending"].includes(event.status) && state.pendingShortcut && (event.reconciliation_pending === true || event.status === "pending" || state.pendingShortcut.reconciliationPending)) {
+        state.pendingShortcut.pending = false;
+        state.pendingShortcut.reconciliationPending = true;
+        state.outcome = { text: text || uiText("No receipt yet. Retry the same request to check its result."), receipt: "", helpAction: "" };
+        page("saved");
+        return;
+      }
       if (state.draft && !state.confirmed) {
         addNotice(text, event.status);
         return;
       }
-      const receipt = ((_c = event.result) == null ? void 0 : _c.item_id) || ((_d = event.result) == null ? void 0 : _d.request_id) || ((_e = event.result) == null ? void 0 : _e.escalation_id);
-      state.outcome = { text: text || uiText("No receipt returned. Ask staff to check."), receipt: typeof receipt === "string" ? uiText("Receipt: {id}", { id: receipt }) : "", helpAction: ((_f = event.result) == null ? void 0 : _f.help_action) === "operator" ? "operator" : "" };
+      state.pendingShortcut = null;
+      const receipt = ((_e = event.result) == null ? void 0 : _e.item_id) || ((_f = event.result) == null ? void 0 : _f.request_id) || ((_g = event.result) == null ? void 0 : _g.escalation_id);
+      const itemId = typeof receipt === "string" && /^[A-Za-z0-9_-]{1,200}$/.test(receipt) && !["pending", "error", "unavailable", "cancelled"].includes(event.status) ? receipt : "";
+      const previousStatus = itemId && itemId === ((_h = state.outcome) == null ? void 0 : _h.itemId) ? state.outcome : null;
+      if (watchedReceipt !== itemId) unwatchReceipt();
+      state.outcome = { text: text || uiText("No receipt returned. Ask staff to check."), receipt: typeof receipt === "string" ? uiText("Receipt: {id}", { id: receipt }) : "", itemId, staffStatus: (previousStatus == null ? void 0 : previousStatus.staffStatus) || "open", statusVersion: (_i = previousStatus == null ? void 0 : previousStatus.statusVersion) != null ? _i : -1, statusUnavailable: (previousStatus == null ? void 0 : previousStatus.statusUnavailable) || false, helpAction: ((_j = event.result) == null ? void 0 : _j.help_action) === "operator" ? "operator" : "" };
       state.draft = null;
       state.confirmed = false;
       state.operation = null;
@@ -988,8 +1052,9 @@
       return;
     }
     if (phase === "confirming") {
-      if (typeof event.draft_id !== "string" || !event.draft_id || ((_g = state.draft) == null ? void 0 : _g.draft_id) === event.draft_id) return;
+      if (typeof event.draft_id !== "string" || !event.draft_id || ((_k = state.draft) == null ? void 0 : _k.draft_id) === event.draft_id) return;
       state.draft = { draft_id: event.draft_id, guest_name: String(event.guest_name || ""), room_reference: String(event.room_reference || ""), message: String(event.message || "") };
+      state.pendingShortcut = null;
       state.confirmed = false;
       if (state.operation) state.operation.pending = false;
       page("confirming");
@@ -1001,7 +1066,7 @@
       syncMic();
       return;
     }
-    if (state.page === "confirming" && ((_h = state.draft) == null ? void 0 : _h.draft_id.startsWith("voice:")) && state.confirmed && phase === "listening") {
+    if (state.page === "confirming" && ((_l = state.draft) == null ? void 0 : _l.draft_id.startsWith("voice:")) && state.confirmed && phase === "listening") {
       state.draft = null;
       state.confirmed = false;
       state.page = "active";
@@ -1031,6 +1096,7 @@
   document.addEventListener("pointerdown", activity, { passive: true });
   document.addEventListener("wheel", activity, { passive: true });
   function hideGuest() {
+    unwatchReceipt();
     silence();
     if (state.active) send("stop");
     detachGuest();

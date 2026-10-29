@@ -12,6 +12,8 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 
 /** HTTP operations use their own server session; no tenant or provider secret crosses the UI. */
 class HotelGateway(
@@ -24,6 +26,10 @@ class HotelGateway(
         .readTimeout(30, TimeUnit.SECONDS).build(),
     private val connectionFailure: (String) -> Unit = {}
 ) {
+    private companion object {
+        val STATUS_FIELDS = arrayOf("item_id", "status", "version", "created", "acknowledged_at", "resolved_at")
+    }
+
     private class Context(val lease: SessionOwner.Lease) {
         var pendingAction: PendingAction? = null
         var confirmationId = ""
@@ -36,11 +42,22 @@ class HotelGateway(
         var ready = false
         var busy = false
         var closed = false
+        var receiptId = ""
+        var watchedItem = ""
+        var watchRevision = 0L
+        var statusCall: Call? = null
+        var statusTimer: ScheduledFuture<*>? = null
+        var publicStatus: JSONObject? = null
+        var watchDenied = false
     }
     private class PendingAction(val action: String, val arguments: String, val id: String = UUID.randomUUID().toString())
     private var current: Context? = null
     private val pendingStarts = mutableSetOf<Call>()
     private var disposed = false
+    private val statusSchedulerDelegate = lazy {
+        Executors.newSingleThreadScheduledExecutor { runnable -> Thread(runnable, "hotel-request-status").apply { isDaemon = true } }
+    }
+    private val statusScheduler by statusSchedulerDelegate
     val configured get() = base.startsWith("https://") && token.isNotBlank()
     private fun text(context: Context, message: String, values: Map<String, String> = emptyMap()) =
         translate(context.lease, message, values)
@@ -123,11 +140,28 @@ class HotelGateway(
         }
     }
 
-    private fun result(context: Context, action: String, response: JSONObject) {
+    @Synchronized private fun result(context: Context, action: String, response: JSONObject) {
+        if (current !== context || context.closed) return
         response.remove("_uncertain")
         response.put("reconciliation_pending", context.pendingAction != null || context.pendingConfirmation != null)
         val confirmation = response.optString("confirmation_id")
         val fields = response.optJSONArray("fields")
+        var receiptId = ""
+        val status = response.optString("status")
+        if (confirmation.isBlank() && fields == null && status != "pending" &&
+            status != "error" && status != "unavailable" && status != "cancelled") {
+            val result = response.optJSONObject("result")
+            val id = result?.optString("item_id").orEmpty()
+                .ifBlank { result?.optString("request_id").orEmpty() }
+                .ifBlank { result?.optString("escalation_id").orEmpty() }
+            if (id.length in 1..200 && id.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '_' || it == '-' })
+                receiptId = id
+        }
+        if (receiptId != context.receiptId) {
+            stopWatch(context)
+            context.receiptId = receiptId
+            context.publicStatus = null
+        }
         when {
             confirmation.isNotBlank() -> {
                 context.confirmationId = "operation:$confirmation"
@@ -193,6 +227,7 @@ class HotelGateway(
                     if (wasStart && context.closed) endRemote(context.id)
                     if (disposed && pendingStarts.isEmpty()) client.dispatcher.executorService.shutdown()
                     if (current !== context || context.closed) return
+                    if (failedState == "unauthorized") { context.watchDenied = true; stopWatch(context) }
                     failedState?.let(connectionFailure)
                     callback(value)
                 }
@@ -200,8 +235,90 @@ class HotelGateway(
         })
     }
 
+    /** Only the most recently delivered durable receipt is eligible; this never starts a session. */
+    @Synchronized fun watch(lease: SessionOwner.Lease, itemId: String) {
+        val context = current?.takeIf { it.lease == lease && !it.closed && it.ready && !it.watchDenied &&
+            it.lease.request.mode == "reception" } ?: return
+        if (itemId.isEmpty() || itemId != context.receiptId || context.watchedItem == itemId ||
+            context.publicStatus?.optString("status") == "resolved") return
+        stopWatch(context)
+        context.watchedItem = itemId
+        readStatus(context, context.watchRevision, itemId)
+    }
+
+    @Synchronized fun unwatch(lease: SessionOwner.Lease) {
+        current?.takeIf { it.lease == lease }?.let { stopWatch(it) }
+    }
+
+    private fun stopWatch(context: Context) {
+        context.watchRevision++
+        context.watchedItem = ""
+        context.statusTimer?.cancel(false)
+        context.statusTimer = null
+        context.statusCall?.cancel()
+        context.statusCall = null
+    }
+
+    private fun watching(context: Context, revision: Long, item: String) =
+        current === context && !context.closed && !disposed &&
+            context.watchRevision == revision && context.watchedItem == item
+
+    private fun readStatus(context: Context, revision: Long, item: String) {
+        if (!watching(context, revision, item) || context.statusCall != null) return
+        context.statusTimer = null
+        val request = Request.Builder().url(base.trimEnd('/') + "/api/device/operations/${context.id}/items/$item")
+            .header("Authorization", "Bearer $token").get().build()
+        val call = client.newCall(request)
+        context.statusCall = call
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) = finish(null, false)
+            override fun onResponse(call: Call, response: Response) {
+                var denied = false
+                val public = response.use {
+                    denied = it.code == 401 || it.code == 403 || it.code == 404
+                    if (!it.isSuccessful) null else try {
+                        val value = JSONObject(it.body?.string().orEmpty())
+                        val status = value.getString("status")
+                        val version = value.getInt("version")
+                        require(value.getString("item_id") == item &&
+                            (status == "open" || status == "acknowledged" || status == "resolved") && version >= 0)
+                        // Explicit construction: private endpoint additions can never cross this boundary.
+                        JSONObject().put("item_id", item).put("status", status).put("version", version)
+                            .put("created", value.getDouble("created"))
+                            .put("acknowledged_at", if (value.isNull("acknowledged_at")) JSONObject.NULL else value.getDouble("acknowledged_at"))
+                            .put("resolved_at", if (value.isNull("resolved_at")) JSONObject.NULL else value.getDouble("resolved_at"))
+                    } catch (_: Exception) { null }
+                }
+                finish(public, denied)
+            }
+            private fun finish(value: JSONObject?, denied: Boolean) {
+                synchronized(this@HotelGateway) {
+                    if (!watching(context, revision, item) || context.statusCall !== call) return
+                    context.statusCall = null
+                    if (denied) context.watchDenied = true
+                    val previous = context.publicStatus
+                    if (value != null && (previous == null || value.getInt("version") >= previous.getInt("version"))) {
+                        context.publicStatus = value
+                    }
+                    val event = context.publicStatus?.let { JSONObject(it, STATUS_FIELDS) } ?: JSONObject().put("item_id", item)
+                    event.put("type", "request_status").put("status_available", value != null)
+                    if (value == null) event.put("text", text(context, "Request status is unavailable. Showing the last known state."))
+                    emit(context, event)
+                    if (denied || context.publicStatus?.optString("status") == "resolved") {
+                        stopWatch(context)
+                    } else if (watching(context, revision, item)) {
+                        context.statusTimer = statusScheduler.schedule({
+                            synchronized(this@HotelGateway) { readStatus(context, revision, item) }
+                        }, 5, TimeUnit.SECONDS)
+                    }
+                }
+            }
+        })
+    }
+
     @Synchronized fun end() {
         val context = current ?: return
+        stopWatch(context)
         context.closed = true
         // A start may already have committed remotely even if its response has
         // not reached this device. Let it settle, then close this exact ID.
@@ -230,6 +347,7 @@ class HotelGateway(
     @Synchronized fun dispose() {
         end()
         disposed = true
+        if (statusSchedulerDelegate.isInitialized()) statusScheduler.shutdownNow()
         client.connectionPool.evictAll()
         if (pendingStarts.isEmpty()) client.dispatcher.executorService.shutdown()
     }

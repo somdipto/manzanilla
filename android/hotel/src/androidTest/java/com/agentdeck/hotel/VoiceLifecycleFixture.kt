@@ -28,6 +28,7 @@ class VoiceLifecycleFixture : Instrumentation() {
             when (case) {
                 "reception-bridge" -> ReceptionWebViewFixture.verify(this)
                 "reception-truth" -> ReceptionWebViewFixture.verify(this, truth = true)
+                "reception-request-tracking" -> RequestTrackingFixture.verify(this)
                 "voice-setup" -> VoiceSetupFixture.verify(this)
                 "hotel-setup-gates" -> VoiceSetupFixture.verifyHotel(this)
                 "hotel-readiness" -> HotelReadinessFixture.verify(this)

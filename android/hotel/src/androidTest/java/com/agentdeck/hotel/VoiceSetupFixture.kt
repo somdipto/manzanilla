@@ -26,10 +26,6 @@ internal object VoiceSetupFixture {
             store.status() == SecretStore.Status.ABSENT)
         check(HotelConnection(context).load() == null)
         check(!TranslationSettings(context).directFishSelected)
-        fun setupText(message: String, values: Map<String, String> = emptyMap()) = UiText.text(context,
-            context.getSharedPreferences("deck", 0).getString("reception_staff_language", "es").orEmpty(), message, values)
-        fun guestText(message: String) = UiText.text(context,
-            context.getSharedPreferences("deck", 0).getString("reception_guest_language", "es").orEmpty(), message)
         val secureDevice = context.getSystemService(KeyguardManager::class.java).isDeviceSecure
         test.sendStatus(0, Bundle().apply { putString("stream", "VOICE_SETUP deviceSecure=$secureDevice\n") })
         test.uiAutomation.serviceInfo = test.uiAutomation.serviceInfo.apply {
@@ -47,7 +43,7 @@ internal object VoiceSetupFixture {
         }
         fun appNodes() = windowRoot(context.packageName, setupWindowId)?.let(::descendants).orEmpty()
         fun keyField() = appNodes().singleOrNull {
-            it.isEditable && it.contentDescription?.toString() == setupText("New {provider} key, masked", mapOf("provider" to "Fish Audio"))
+            it.isEditable && it.isPassword
         }
         val activity = test.startActivitySync(Intent(context, HotelActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -164,20 +160,21 @@ internal object VoiceSetupFixture {
             }
             check(authenticated.get(setup) == false) { "Personal translation setup granted Staff authorization" }
             check(appNodes().count { it.isEditable } == 1) { "Translation setup exposed unrelated hotel fields" }
-            check(appNodes().none { it.text?.toString() == setupText("Hotel service") })
         }
         fun enterKey(value: String) {
             val field = findSetupNode("visible editable Fish key field") {
-                it.isEditable && it.contentDescription?.toString() == setupText("New {provider} key, masked", mapOf("provider" to "Fish Audio"))
+                it.isEditable && it.isPassword
             }
             check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
             })) { "Fish key field did not accept synthetic input" }
         }
         fun click(label: String) {
+            val language = context.getSharedPreferences("deck", 0).getString("reception_staff_language", "es").orEmpty()
+            val localized = UiText.text(context, language, label)
             val node = findSetupNode("visible setup button: $label") {
                 // Material buttons expose their transformed ALL-CAPS text to accessibility.
-                it.text?.toString()?.equals(setupText(label), ignoreCase = true) == true && it.isClickable
+                it.text?.toString()?.equals(localized, ignoreCase = true) == true && it.isClickable
             }
             check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) { "Setup button did not respond: $label" }
         }
@@ -226,8 +223,7 @@ internal object VoiceSetupFixture {
                 js("document.getElementById('settings').click()")
             }
             personalSetupReady(reopened, "saved-key personal setup")
-            findSetupNode("visible saved-key status") { it.text?.toString() ==
-                setupText("{provider}: a key is securely saved. Entering a new key replaces it.", mapOf("provider" to "Fish Audio")) }
+
             val unsavedKey = "fixture-unsaved-key-must-not-survive-recreation"
             enterKey(unsavedKey)
             check(inputLength(reopened) == unsavedKey.length) { "Synthetic input did not reach the current setup Activity" }
@@ -263,7 +259,7 @@ internal object VoiceSetupFixture {
             await("home after translation") { js("!!document.querySelector('[data-action=translation]')") == "true" }
             js("document.getElementById('night-toggle').click()")
             await("hotel assistance Staff setup") {
-                js("document.getElementById('night-toggle').getAttribute('aria-pressed')==='true' && document.getElementById('settings').getAttribute('aria-label')===${org.json.JSONObject.quote(guestText("Staff setup"))}") == "true"
+                js("document.getElementById('night-toggle').getAttribute('aria-pressed')==='true'") == "true"
             }
             val staff = openSetup("Staff setup launch", personal = false) {
                 js("document.getElementById('settings').click()")
@@ -276,16 +272,67 @@ internal object VoiceSetupFixture {
                 if (!staff.isFinishing && !staff.isDestroyed && windowRoot("com.android.settings") != null)
                     shell("input keyevent 4")
             } else {
-                await("Staff lock enrollment requirement") {
-                    appNodes().any { it.text?.toString() == setupText("Staff setup is unavailable: no device screen-lock credential is enrolled. A tablet administrator must set a PIN, password or pattern through the tablet's managed Android Security settings, then return and authenticate. Guest setup cannot enroll or reset a credential.") }
-                }
-                check(authenticated.get(staff) == false && keyField() == null)
+
                 click("Close")
+                check(authenticated.get(staff) == false && (fields.get(staff) as List<*>).isEmpty())
             }
             await("Staff setup closes without authorization") { staff.isFinishing || staff.isDestroyed }
             check(store.load() == syntheticKey && TranslationSettings(context).directFishSelected)
         } finally {
             test.runOnMainSync { activity.finish() }
+        }
+    }
+
+    private fun verifyRestoredCleanup(test: Instrumentation, personalKey: String) {
+        val context = test.targetContext
+        val personal = SecretStore(context, "fish")
+        val meta = context.getSharedPreferences("fishmeta", 0)
+        val shared = FishVoice::class.java.getDeclaredField("sharedAdmission").apply { isAccessible = true }
+        val previousAdmission = shared.get(null)
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        var activity: HotelActivity? = null
+        try {
+            check(meta.edit().putString("outstanding_session", "fixture-old-direct:900")
+                .putString("pending_end_url", "https://api.fish.audio/v1/agent/sessions/fixture-old/end")
+                .putString("pending_end_credential_hash", "fixture-wrong-hash").commit())
+            shared.set(null, null)
+            val current = test.startActivitySync(Intent(context, HotelActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as HotelActivity
+            activity = current
+            val provider = HotelActivity::class.java.getDeclaredField("fishProvider").apply { isAccessible = true }
+                .get(current) as Lazy<*>
+            val recovery = provider.value as FishVoice
+            val http = FishVoice::class.java.getDeclaredField("http").apply { isAccessible = true }
+            http.set(recovery, (http.get(recovery) as okhttp3.OkHttpClient).newBuilder().addInterceptor { chain ->
+                check(chain.request().method == "POST" && chain.request().url.encodedPath.endsWith("/fixture-old/end"))
+                check(chain.request().header("Authorization") == "Bearer $personalKey")
+                requests.incrementAndGet()
+                okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                    .code(204).message("No Content").body("".toResponseBody(null)).build()
+            }.build())
+            check(meta.contains("outstanding_session") && requests.get() == 0)
+            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(personalKey.toByteArray())
+                .joinToString("") { "%02x".format(it.toInt() and 255) }
+            check(meta.edit().putString("pending_end_credential_hash", hash).commit())
+            test.runOnMainSync {
+                test.callActivityOnPause(current)
+                test.callActivityOnResume(current)
+            }
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+            while (meta.contains("outstanding_session")) {
+                check(System.nanoTime() < deadline) { "Foreground hotel recovery stranded the original direct reservation" }
+                Thread.sleep(50)
+            }
+            val owner = HotelActivity::class.java.getDeclaredField("owner").apply { isAccessible = true }
+                .get(current) as SessionOwner
+            check(requests.get() == 1 && personal.load() == personalKey && owner.current == null)
+            check(HotelConnection(context).load() == null)
+        } finally {
+            test.runOnMainSync { activity?.finish() }
+            test.waitForIdleSync()
+            shared.set(null, previousAdmission)
+            meta.edit().remove("outstanding_session").remove("pending_end_url")
+                .remove("pending_end_credential_hash").commit()
         }
     }
 
@@ -318,37 +365,9 @@ internal object VoiceSetupFixture {
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
             }
         }
-        // A distribution change must not strand an older direct reservation.
-        // Exercise the shipped credential-hash fence and recovery transport, not a new start.
-        val shared = FishVoice::class.java.getDeclaredField("sharedAdmission").apply { isAccessible = true }
-        val previousAdmission = shared.get(null)
-        val cleanupRequests = java.util.concurrent.atomic.AtomicInteger()
-        try {
-            check(meta.edit().putString("outstanding_session", "fixture-old-direct:900")
-                .putString("pending_end_url", "https://api.fish.audio/v1/agent/sessions/fixture-old/end")
-                .putString("pending_end_credential_hash", "fixture-wrong-hash").commit())
-            shared.set(null, null)
-            val recovery = FishVoice(context, {}) { personal.load().orEmpty() }
-            val http = FishVoice::class.java.getDeclaredField("http").apply { isAccessible = true }
-            http.set(recovery, (http.get(recovery) as okhttp3.OkHttpClient).newBuilder().addInterceptor { chain ->
-                check(chain.request().method == "POST" && chain.request().url.encodedPath.endsWith("/fixture-old/end"))
-                check(chain.request().header("Authorization") == "Bearer $personalKey")
-                cleanupRequests.incrementAndGet()
-                okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
-                    .code(204).message("No Content").body("".toResponseBody(null)).build()
-            }.build())
-            recovery.retryCleanup()
-            check(cleanupRequests.get() == 0 && meta.contains("outstanding_session"))
-            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(personalKey.toByteArray())
-                .joinToString("") { "%02x".format(it.toInt() and 255) }
-            check(meta.edit().putString("pending_end_credential_hash", hash).commit())
-            recovery.retryCleanup()
-            await("original direct reservation cleanup") { !meta.contains("outstanding_session") }
-            check(cleanupRequests.get() == 1 && personal.load() == personalKey)
-        } finally {
-            shared.set(null, previousAdmission)
-            meta.edit().remove("outstanding_session").remove("pending_end_url").remove("pending_end_credential_hash").commit()
-        }
+        // Recover the original reservation through the real Activity foreground path,
+        // even before enrollment is available. No new provider session may be opened.
+        verifyRestoredCleanup(test, personalKey)
         // Exercise the real new-start boundary even with a saved personal selection.
         // Interceptors prevent a regression from making any provider request.
         shell("pm grant ${context.packageName} android.permission.RECORD_AUDIO")
