@@ -26,6 +26,9 @@ internal object ReceptionWebViewFixture {
         check(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             "Revoke RECORD_AUDIO on the disposable emulator before this fixture"
         }
+        instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
+            flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+        }
         val activity = instrumentation.startActivitySync(Intent(context, HotelActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val ownerField = HotelActivity::class.java.getDeclaredField("owner").apply { isAccessible = true }
