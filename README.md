@@ -42,6 +42,26 @@ Publication uses the semantic version in `android/VERSION` and the explicit incr
 
 Android may require an "Update" confirmation for an app installed from a file; this is not a silent remote installation. Installed apps update from a newer signed GitHub Release, not from a source push or an Actions build artifact.
 
+## Approved hotel answers — repair candidate
+
+The repair candidate answers hotel questions only with staff-approved renderings
+for the guest's selected interface language. Existing knowledge and arrival text
+remain stored, but are not automatically approved or labelled as English.
+
+Use the admin content-review panel to select the original and target language,
+edit a draft or enter reviewed text manually, then explicitly approve its exact
+title and body. Gemini can draft translations for review and select approved
+fact references; it cannot invent guest-facing policies or execute hotel actions.
+Manual approval remains usable when drafting is unavailable.
+
+Editing a source or approved rendering withdraws stale information receipts.
+The guest can ask again or choose reception help; an unanswered question never
+creates a ticket automatically. New information requests can see new approvals,
+while replaying the same request identity performs no model call. Durable taxi,
+message and escalation receipts retain their original content and write identity.
+Arrival guidance never completes check-in. Deploy this backend before clients
+that depend on approved-content capabilities.
+
 ## Screens
 
 17.0.28 candidate on an actual Android10 emulator with stock WebView74.

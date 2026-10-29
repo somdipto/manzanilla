@@ -4,6 +4,37 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.40 approved-content candidate (S3)
+
+Version 17.0.40/code70, stacked on S2. The offline catalogue now has 396 messages
+for all 52 interface locales; human translation review remains unavailable.
+
+- **Reproduced:** the actual isolated S2 backend returned configured breakfast
+  hours for `breakfast` but no matches for `breakfast?`, with zero provider calls.
+- **Passed:** generated assets/check, 17 Node cases and 574 Python tests (two
+  dependency deprecation warnings). Approved-content coverage includes exact
+  English/Spanish punctuation, Arabic, absent approval, draft isolation, invalid/
+  hostile IDs, context limits, duplicate titles, source/rendering changes during
+  HTTP and settlement, closed/revoked sessions, replay withdrawal and unchanged
+  durable write receipts.
+- **Passed:** ten Chromium151 scenarios, including the actual temporary backend
+  and admin review panel. With provider credentials blank, drafting fails without
+  erasing manual text; explicit approval enables the exact Spanish rendering;
+  source change rejects stale approval and withdraws replay. Review labels render
+  in all 52 locales. An unanswered FAQ creates no staff item automatically.
+- **Passed:** Android JVM, debug/instrumentation assembly and lint with JDK17,
+  SDK34 and empty provider fields. The pinned code70 debug APK SHA256 is
+  `350d18b0c8ed568c1b655606027fc6399fec894fd302ac09572a42f1ec7eb216`.
+
+Information reads are scoped to their call ID, so a genuinely new question can
+see a later approval. Replaying the same ID never charges another model call.
+Write deduplication, confirmation identities and durable write receipts are
+unchanged. Missing approved arrival guidance preserves unavailable semantics.
+
+These are source, isolated HTTP and packaged-renderer results, not paid Gemini
+entitlement, human bilingual review, tablet/backend or acoustic qualification.
+No paid provider call, live hotel mutation, deployment or publication occurred.
+
 ## 17.0.39 complete offline interface candidate (S2)
 
 Stacked on S1, version 17.0.39/code69. The source catalogue has 380 English message

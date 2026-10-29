@@ -12,6 +12,18 @@ class Store:
         PRAGMA foreign_keys=ON;
         CREATE TABLE IF NOT EXISTS hotels(id TEXT PRIMARY KEY, config TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS credentials(id TEXT PRIMARY KEY, hotel TEXT NOT NULL REFERENCES hotels(id), role TEXT NOT NULL, hash TEXT NOT NULL UNIQUE, seen REAL, version TEXT, config_version INTEGER);
+        CREATE TABLE IF NOT EXISTS approved_content (
+            hotel TEXT NOT NULL REFERENCES hotels(id),
+            kind TEXT NOT NULL CHECK(kind IN ('knowledge','arrival')),
+            content_key TEXT NOT NULL,
+            language TEXT NOT NULL,
+            source_hash TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            approved_by TEXT NOT NULL,
+            approved_at REAL NOT NULL,
+            PRIMARY KEY(hotel,kind,content_key,language)
+        );
         CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, hotel TEXT NOT NULL REFERENCES hotels(id), device TEXT NOT NULL, started REAL, ended REAL, status TEXT, language TEXT);
         CREATE TABLE IF NOT EXISTS items(id TEXT PRIMARY KEY, hotel TEXT NOT NULL REFERENCES hotels(id), session TEXT NOT NULL, kind TEXT, created REAL, payload TEXT, status TEXT DEFAULT 'open');
         CREATE TABLE IF NOT EXISTS calls(session TEXT NOT NULL, call_id TEXT NOT NULL, tool TEXT, args_hash TEXT, result TEXT, PRIMARY KEY(session,call_id));

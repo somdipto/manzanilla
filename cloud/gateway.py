@@ -1,6 +1,9 @@
 import asyncio, hashlib, json, re
 from .models import TOOL_MODELS
 from .connectors import connector, ConnectorUnavailable
+from .hotel_answers import answer_hotel_question, arrival_guidance, current_answer
+
+INFORMATION = {'search_hotel_knowledge','get_checkin_instructions'}
 
 WRITES = {'leave_reception_note','call_taxi','notify_staff','create_guest_request'}
 
@@ -9,11 +12,12 @@ def phone_number(value):
     return value if isinstance(value,str) and re.fullmatch(r'\+?[0-9]{3,15}',value) else ''
 
 class Gateway:
-    def __init__(self, store, hid, sid, edge_execute, confirm=None, handoff=None, authorized=None):
+    def __init__(self, store, hid, sid, edge_execute, confirm=None, handoff=None, authorized=None, *, language='en'):
         self.store, self.hid, self.sid = store, hid, sid
         self.edge_execute, self.confirm, self.handoff = edge_execute, confirm, handoff
         self.authorized = authorized or (lambda: True)
         self.require_session = authorized is not None
+        self.language = language
         self.verified = {}  # Booking access is scoped to this authenticated conversation.
     async def execute(self, name, arguments, call_id):
         if not self.authorized(): return {'status':'denied','reason':'Session ended or device revoked'}
@@ -27,6 +31,8 @@ class Gateway:
         # create a second write of the same exact operation in this session.
         with self.store.lock, self.store.db:
             db = self.store.db
+            db.execute('BEGIN IMMEDIATE')
+            if not self.authorized(): return {'status':'denied','reason':'Session ended or device revoked'}
             claimed = db.execute('INSERT OR IGNORE INTO calls(session,call_id,tool,args_hash) VALUES(?,?,?,?)',
                                  (self.sid,call_id,name,args_hash)).rowcount
             own = db.execute('SELECT * FROM calls WHERE session=? AND call_id=?',(self.sid,call_id)).fetchone()
@@ -39,8 +45,18 @@ class Gateway:
                                    (self.sid,name,args_hash)).fetchone()['call_id']
             if not claimed or owner != call_id:
                 old = db.execute('SELECT result FROM calls WHERE session=? AND call_id=?',(self.sid,owner)).fetchone()
-                return json.loads(old['result']) if old and old['result'] else {
-                    'status':'pending','reason':'Already executing; do not retry with a new ID'}
+                if old and old['result']:
+                    result = json.loads(old['result'])
+                    if name in INFORMATION:
+                        result = current_answer(self.store,self.hid,result,self.language,self.authorized)
+                        db.execute('UPDATE calls SET result=? WHERE session=? AND call_id=?',
+                                   (json.dumps(result),self.sid,owner))
+                    elif name == 'get_hotel_info' and 'knowledge' in result:
+                        result.pop('knowledge')
+                        db.execute('UPDATE calls SET result=? WHERE session=? AND call_id=?',
+                                   (json.dumps(result),self.sid,owner))
+                    return result
+                return {'status':'pending','reason':'Already executing; do not retry with a new ID'}
         executing = False
         try:
             if name in WRITES and (not self.confirm or not await self.confirm(name,args)):
@@ -70,7 +86,18 @@ class Gateway:
             result = {'status':'denied','reason':'Session ended or device revoked'}
         except Exception:
             result = {'status':'failed','reason':'Action failed; no successful result confirmed'}
-        self.store.run('UPDATE calls SET result=? WHERE session=? AND call_id=?',(json.dumps(result),self.sid,call_id))
+        with self.store.lock, self.store.db:
+            db = self.store.db
+            db.execute('BEGIN IMMEDIATE')
+            if name in INFORMATION:
+                result = current_answer(self.store,self.hid,result,self.language,self.authorized)
+            elif not self.authorized():
+                # Preserve durable write receipts, but never deliver one to a revoked session.
+                db.execute('UPDATE calls SET result=? WHERE session=? AND call_id=?',
+                           (json.dumps(result),self.sid,call_id))
+                return {'status':'denied','reason':'Session ended or device revoked'}
+            db.execute('UPDATE calls SET result=? WHERE session=? AND call_id=?',
+                       (json.dumps(result),self.sid,call_id))
         self.store.event(self.hid,self.sid,name,result['status'])
         return result
     async def _execute(self, name, args):
@@ -89,14 +116,12 @@ class Gateway:
             if name == 'get_guest': return {'status':'ok','guest_name':booking['guest_name'],'room_number':booking['room_number']}
             if name == 'get_checkin_status': return {'status':'ok','eligible':booking['eligible'],'booking_status':booking['status']}
             if not booking['eligible']: return {'status':'denied','reason':'Operator must review check-in eligibility'}
-            return {'status':'ok','instructions':hotel['checkin_instructions'], 'guidance_only':True,
-                    'checkin_completed':False}
+            return arrival_guidance(self.store,self.hid,self.language,self.authorized)
         if name == 'get_hotel_info':
-            return {'status':'ok','name':hotel['name'],'knowledge':hotel['knowledge'],'emergency_contact':hotel['emergency_contact']}
+            return {'status':'ok','name':hotel['name'],'emergency_contact':hotel['emergency_contact']}
         if name == 'get_hotel_services': return {'status':'ok','services':hotel['services']}
         if name == 'search_hotel_knowledge':
-            terms = args['query'].casefold().split()
-            return {'status':'ok','matches':{k:v for k,v in hotel['knowledge'].items() if any(t in (k+' '+v).casefold() for t in terms)}}
+            return await answer_hotel_question(self.store,self.hid,args['query'],self.language,self.authorized)
         if name == 'call_taxi':
             ident = self.store.item(self.hid,self.sid,'taxi',args,require_session=self.require_session)
             if hotel['taxi_mode']=='dialer' and hotel['taxi_number'] and self.handoff:

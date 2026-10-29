@@ -226,7 +226,7 @@
         : `<div class="status-line session-top"><div><h2>${esc(uiText('Hotel assistance'))}</h2><p>${esc(phaseLabel())}</p></div><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div>${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}<div class="session-scroll">${!state.closed ? `<div class="shortcut-list">${shortcuts.map((id,i) => action(id, `<span class="key">${i + 1}</span><strong>${esc(concierge()[i])}</strong>`, 'choice shortcut', ['connecting','greeting'].includes(state.phase), true)).join('')}</div>` : ''}<div class="conversation" role="log" aria-label="${esc(uiText('Conversation transcript'))}" aria-live="polite">${conversation()}</div>${state.metrics ? `<p class="metrics">${esc(state.metrics)}</p>` : ''}</div>${sessionDock()}`,
       operation_form: () => `<div class="status-line"><h2>${esc(state.operation?.action === 'message' ? uiText("Message staff") : concierge()[shortcuts.indexOf(state.operation?.action)] || uiText("Hotel request"))}</h2><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div>${guestLocale()}<form id="operation-form" class="operation-form" aria-busy="${!!state.operation?.pending}">${(state.operation?.fields || []).map(operationField).join('')}<div class="button-row"><button type="submit" class="primary" ${state.operation?.pending ? 'disabled' : ''}>${esc(uiText(state.operation?.pending ? 'Reviewing…' : 'Review'))}</button>${action('cancel-operation',uiText("Cancel"),'secondary',state.operation?.pending)}</div></form>${action('stop',uiText("End"),'stop')}`,
       confirming: () => `<div class="status-line"><h2>${esc(uiText('Confirm request?'))}</h2><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div><div class="draft" dir="auto">${esc(state.draft?.message || '')}</div>${fine(state.draft?.attempted ? state.draft.approved === false ? uiText("No cancellation receipt yet. Retry to check the result.") : uiText("No receipt yet. Retry the same request to check its result.") : uiText("Confirm only if the details are correct."))}<div class="button-row">${action(state.draft?.attempted ? 'retry-draft' : 'confirm',state.confirmed ? state.draft?.approved === false ? uiText("Cancelling…") : uiText("Sending…") : state.draft?.attempted ? uiText("Retry") : uiText("Confirm"),'primary',state.confirmed)}${state.operation ? action('edit-draft',uiText("Edit"),'secondary',state.confirmed || state.draft?.attempted) : ''}${action('cancel-draft',uiText("Cancel"),'secondary',state.confirmed)}</div>`,
-      saved: () => `<h2>${esc(uiText('Request receipt'))}</h2><section class="request-receipt"><p class="lead" dir="auto">${esc(state.outcome?.text || uiText('No receipt returned. Ask staff to check.'))}</p>${state.outcome?.receipt ? `<div class="receipt" dir="auto"><bdi>${esc(state.outcome.receipt)}</bdi></div>` : ''}</section><div class="button-row">${action('continue',uiText("Continue"))}${action('stop',uiText("End"),'secondary')}</div>`,
+      saved: () => `<h2>${esc(uiText('Request receipt'))}</h2><section class="request-receipt"><p class="lead" dir="auto">${esc(state.outcome?.text || uiText('No receipt returned. Ask staff to check.'))}</p>${state.outcome?.receipt ? `<div class="receipt" dir="auto"><bdi>${esc(state.outcome.receipt)}</bdi></div>` : ''}</section><div class="button-row">${state.outcome?.helpAction === 'operator' ? action('receipt-help',uiText('Request help from reception')) : ''}${action('continue',uiText("Continue"))}${action('stop',uiText("End"),'secondary')}</div>`,
       error: () => `<div class="status-line"><h2>${esc(uiText('Conversation unavailable'))}</h2><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div><div class="notice error">${esc(state.error || uiText("Please ask reception for help."))}</div>${fine(state.audio === 'off' ? uiText("Microphone off. Staff can check this device’s setup.") : uiText("Audio release is not confirmed. Ask reception for help before restarting."))}<div class="button-row">${action('retry',uiText("Try again"),'primary',state.audio !== 'off')}${action('home',uiText("Back to home"),'secondary')}</div>`
     };
     const focusedElement = document.activeElement;
@@ -449,6 +449,12 @@
       case 'retry': if(state.mode === 'reception') start(); else page('translation_languages'); break;
       case 'checkin': case 'operator': case 'taxi': case 'question': chooseShortcut(name); break;
       case 'message': chooseShortcut('message'); break;
+      case 'receipt-help':
+        if (state.page !== 'saved' || state.outcome?.helpAction !== 'operator' || !state.active || state.closed) return;
+        state.outcome = null;
+        page('active');
+        chooseShortcut('operator');
+        break;
       case 'cancel-operation': if (!state.operation?.pending) { state.operation = null; page('active'); } break;
       case 'edit-draft':
         if (!state.active || state.closed || state.confirmed || !state.operation || !state.draft || state.draft.attempted) return;
@@ -716,7 +722,7 @@
     if (type === 'operation_result') {
       const text = String(event.text || '');
       if (['confirmation_required','needs_confirmation','fields_required'].includes(event.status)) return;
-      if (['unavailable','error','pending'].includes(event.status) && (state.operation || state.draft)) {
+      if (['unavailable','error','pending'].includes(event.status) && event.result?.help_action !== 'operator' && (state.operation || state.draft)) {
         // A lost response may already have saved the note. Keep its confirmation
         // identity so Retry is idempotent instead of submitting a second note.
         state.confirmed = false;
@@ -727,7 +733,7 @@
       }
       if (state.draft && !state.confirmed) { addNotice(text, event.status); return; }
       const receipt = event.result?.item_id || event.result?.request_id || event.result?.escalation_id;
-      state.outcome = { text: text || uiText('No receipt returned. Ask staff to check.'), receipt: typeof receipt === 'string' ? uiText('Receipt: {id}', { id: receipt }) : '' };
+      state.outcome = { text: text || uiText('No receipt returned. Ask staff to check.'), receipt: typeof receipt === 'string' ? uiText('Receipt: {id}', { id: receipt }) : '', helpAction: event.result?.help_action === 'operator' ? 'operator' : '' };
       state.draft = null;
       state.confirmed = false;
       state.operation = null;

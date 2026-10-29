@@ -11,6 +11,7 @@ from .gateway import Gateway
 from .realtime import relay
 from .operations import Operations, Start, Action, Confirmation
 from .localization import catalogue
+from .hotel_answers import ContentSelector, ContentApproval, draft_content, approve_content, content_review
 from .livekit_route import mint as livekit_mint, end as end_livekit
 from .fish import FishSession, mint, end as end_fish, end_request as end_fish_request, revoke_sessions, NOT_CREATED
 from .models import Strict
@@ -66,6 +67,14 @@ def save_hotel(hid: str, value: Hotel):
     except Exception: raise HTTPException(400,'Invalid timezone')
     return store.save_hotel(value.model_dump())
 
+@app.post('/api/hotels/{hid}/content/draft', dependencies=[Depends(admin)])
+async def draft_hotel_content(hid: str, value: ContentSelector, authorization: str = Header(default='')):
+    return await draft_content(store,hid,value,authorize=lambda:admin(authorization))
+
+@app.post('/api/hotels/{hid}/content/approve', dependencies=[Depends(admin)])
+def approve_hotel_content(hid: str, value: ContentApproval, authorization: str = Header(default='')):
+    return approve_content(store,hid,value,authorize=lambda:admin(authorization))
+
 class Credential(BaseModel):
     role: str = Field(pattern='^(device|edge|staff)$')
 @app.post('/api/hotels/{hid}/credentials', dependencies=[Depends(admin)])
@@ -100,14 +109,19 @@ async def revoke(ident: str):
 @app.get('/api/hotels/{hid}/overview')
 def overview(hid: str, authorization: str = Header(default='')):
     scoped(hid,authorization)
+    try: hotel = store.hotel(hid)
+    except KeyError: raise HTTPException(404,'Hotel not found')
+    try: content_admin = admin(authorization)
+    except HTTPException: content_admin = False
     now = time.time()
     devices = store.rows('SELECT id,role,seen,version,config_version FROM credentials WHERE hotel=? AND role IN (\'device\',\'edge\')',(hid,))
     for row in devices: row['online'] = bool(row['seen'] and now-row['seen']<75)
     items = store.rows('SELECT * FROM items WHERE hotel=? ORDER BY created DESC LIMIT 500',(hid,))
     for item in items: item['payload']=json.loads(item['payload'])
-    return {'hotel':store.hotel(hid),'devices':devices,'items':items,
+    return {'hotel':hotel,'devices':devices,'items':items,
             'sessions':store.rows('SELECT * FROM sessions WHERE hotel=? ORDER BY started DESC LIMIT 100',(hid,)),
-            'integrations':{'pms':store.hotel(hid)['connector'], 'crm':'not configured', 'edge':hid in edge_connections}}
+            'content_review':content_review(store,hid),'content_admin':content_admin,
+            'integrations':{'pms':hotel['connector'], 'crm':'not configured', 'edge':hid in edge_connections}}
 
 @app.patch('/api/hotels/{hid}/items/{ident}')
 def resolve(hid: str, ident: str, authorization: str = Header(default='')):
@@ -307,7 +321,7 @@ async def voice(ws: WebSocket):
         result=await device_request('handoff',{'kind':kind,'number':number,'backup':backup},15)
         status=result.get('status')
         return {'status':status if status in {'dialer_opened','failed'} else 'unavailable','number':number}
-    gateway=Gateway(store,hid,sid,edge_execute,confirm,handoff,authorized)
+    gateway=Gateway(store,hid,sid,edge_execute,confirm,handoff,authorized,language=metadata['language'])
     try:
         await relay(ws,store.hotel(hid),gateway,pending,metadata)
     except Exception:

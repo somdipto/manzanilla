@@ -6,6 +6,7 @@ from cloud.models import Hotel
 from cloud.gateway import Gateway
 from edge.executor import Executor
 import cloud.app as server
+from cloud.hotel_answers import ContentApproval, approve_content, source_hash
 
 VOICE = {'mode':'reception','language':'es','staff_language':'es','session_id':'test-voice','generation':3}
 
@@ -14,6 +15,7 @@ def platform(tmp_path, monkeypatch, reservation_connector):
     db=Store(str(tmp_path/'test.db'))
     monkeypatch.setattr(server,'store',db)
     monkeypatch.setenv('ORANGE_ADMIN_TOKEN','x'*40)
+    monkeypatch.delenv('GEMINI_API_KEY',raising=False)
     server.tickets.clear(); server.active_devices.clear(); server.edge_connections.clear()
     for hid in ['a','b']: db.save_hotel(Hotel(id=hid,name='Hotel '+hid,connector='rest',knowledge={'breakfast':'7–10 AM'},checkin_instructions='Present ID to reception').model_dump())
     return db,TestClient(server.app)
@@ -25,6 +27,15 @@ async def no(*args): return False
 def run(coro): return asyncio.run(coro)
 
 def gateway(db, sid='s', confirm=yes): return Gateway(db,'a',sid,unavailable,confirm)
+
+def approve_rendering(db, kind='knowledge', key='breakfast', language='en', title='Breakfast',
+                      body='7–10 AM', hid='a'):
+    hotel=db.hotel(hid)
+    source=hotel['knowledge'][key] if kind=='knowledge' else hotel['checkin_instructions']
+    approval=ContentApproval(kind=kind,content_key=key,language=language,
+        source_hash=source_hash(kind,key,source),title=title,body=body)
+    approve_content(db,hid,approval,authorize=lambda:None)
+    return approval.model_dump()
 
 def test_notes_persist_and_duplicate_calls(platform):
     db,_=platform; g=gateway(db)
@@ -50,8 +61,11 @@ def test_booking_verification_and_guidance(platform):
     assert run(g.execute('lookup_booking',{'reference':'FIXTURE-204','surname':'wrong'},'2'))['status']=='not_found'
     found=run(g.execute('lookup_booking',{'reference':'FIXTURE-204','surname':'Smith'},'3'))
     assert found['status']=='ok'
+    approve_rendering(db,'arrival','',title='Arrival',body='Present ID to reception')
     result=run(g.execute('get_checkin_instructions',{'booking_id':found['booking_id']},'4'))
     assert result['guidance_only'] and result['checkin_completed'] is False
+    assert result['instructions']=='Arrival\nPresent ID to reception'
+    assert result['fact_refs'][0]['kind']=='arrival'
     assert run(gateway(db,'another').execute('get_guest',{'booking_id':found['booking_id']},'5'))['status']=='denied'
 
 def test_policy_and_validation(platform):
@@ -77,8 +91,14 @@ def test_pms_failure_safe(platform):
 
 def test_concierge(platform):
     db,_=platform
+    missing=run(gateway(db).execute('search_hotel_knowledge',{'query':'breakfast'},'unapproved'))
+    assert missing['matches']=={} and missing['help_action']=='operator'
+    approve_rendering(db)
     result=run(gateway(db).execute('search_hotel_knowledge',{'query':'breakfast'},'1'))
-    assert result['matches']=={'breakfast':'7–10 AM'}
+    assert result['matches']=={'Breakfast':'7–10 AM'}
+    assert result['fact_refs'][0]['language']=='en'
+    other=Gateway(db,'b','foreign',unavailable,yes)
+    assert run(other.execute('search_hotel_knowledge',{'query':'breakfast'},'1'))['matches']=={}
 
 def test_tenant_isolation_and_revocation(platform):
     db,client=platform; staff=db.issue('a','staff');dev=db.issue('a','device')
@@ -156,3 +176,34 @@ def test_demo_configuration_is_rejected_and_stale_records_fail_unavailable(platf
     assert result['status']=='unavailable'
     assert run(g.execute('get_guest',{'booking_id':'demo-204'},'guest'))['status']=='denied'
     assert not db.rows('SELECT * FROM items')
+
+
+def test_content_review_requires_admin_and_current_scoped_source(platform,monkeypatch):
+    db,client=platform
+    monkeypatch.delenv('GEMINI_API_KEY',raising=False)
+    admin={'Authorization':'Bearer '+'x'*40}
+    staff=db.issue('a','staff'); device=db.issue('a','device')
+    selector={'kind':'knowledge','content_key':'breakfast','language':'es',
+              'source_hash':source_hash('knowledge','breakfast','7–10 AM')}
+    approval={**selector,'title':'Desayuno','body':'  De 7 a 10 h.\n  '}
+    for headers in ({},{'Authorization':'Bearer '+staff['token']},
+                    {'Authorization':'Bearer '+device['token']}):
+        for route in ('draft','approve'):
+            response=client.post('/api/hotels/a/content/'+route,headers=headers,
+                                 json=selector if route=='draft' else approval)
+            assert response.status_code==401
+    failed=client.post('/api/hotels/a/content/draft',headers=admin,json=selector)
+    assert failed.status_code==503
+    assert not db.rows('SELECT * FROM approved_content')
+    assert client.post('/api/hotels/a/content/approve',headers=admin,
+                       json={**approval,'hotel':'b'}).status_code==422
+    assert client.post('/api/hotels/missing/content/approve',headers=admin,json=approval).status_code==404
+    accepted=client.post('/api/hotels/a/content/approve',headers=admin,json=approval)
+    assert accepted.status_code==200
+    row=db.rows('SELECT * FROM approved_content')[0]
+    assert row['hotel']=='a' and row['body']==approval['body'] and row['approved_by']=='admin'
+    assert not db.rows("SELECT * FROM approved_content WHERE hotel='b'")
+    hotel=db.hotel('a'); hotel['knowledge']['breakfast']='08:00–11:00'; db.save_hotel(hotel)
+    conflict=client.post('/api/hotels/a/content/approve',headers=admin,json=approval)
+    assert conflict.status_code==409
+    assert db.rows('SELECT * FROM approved_content')[0]==row

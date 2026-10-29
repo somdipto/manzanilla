@@ -9,6 +9,8 @@ The backend requires Python 3.12+ and the dependencies pinned in `requirements.t
 - Issue separate hotel-scoped device and staff credentials through the authenticated dashboard. Tokens are shown only on issuance; the database stores their hashes.
 - Serve the actual deployment over HTTPS. Do not bypass certificate checks or put credentials in URLs.
 - Configure real hotel name, timezone, approved languages, knowledge, arrival instructions and human contacts. The admin form starts empty. A successful JSON save is not staff approval of its content.
+- `GEMINI_API_KEY`: backend-only hotel fact selection and unapproved staff-review drafts, using fixed `gemini-3.8-flash`. Manual approval and exact normalized-key lookup do not require a model call. Never put this key in either APK or use a second model as proof that a translation is true.
+- Approve a current rendering for each guest locale in the admin content-review panel. Old hotel configuration is not an approval; source or rendering edits invalidate cached information. Draft failure leaves manual editing and existing approvals intact.
 - `demo` is not an accepted connector. Existing stale demo settings cannot produce synthetic reservations. Arrival guidance uses approved hotel instructions without reservation lookup; it does not complete check-in.
 
 Application-level inbox payloads are not encrypted by the database layer. Configure storage access, disk/backup encryption, retention, deletion and consent before real guest use. Do not collect identity documents, access codes or payment information.
