@@ -9,7 +9,7 @@ from .models import Strict
 
 # https://docs.fish.audio/agents/deploy/authenticated-sessions
 BASE = 'https://api.fish.audio/v1/agent'
-CONFIG_REV = "16"
+CONFIG_REV = "18"
 CAPTION_PROTOCOL = 'language-v2'
 CAPTION_TOOL = json.loads(Path(__file__).with_name('fish_caption_tool.json').read_text(encoding='utf-8'))
 LEGACY_CAPTION_TOOL = json.loads(Path(__file__).with_name('fish_caption_tool_v1.json').read_text(encoding='utf-8'))

@@ -39,6 +39,7 @@ internal object HotelReadinessFixture {
         val connection = HotelConnection(context)
         check(connection.load() == null) { "Readiness requires a fresh disposable emulator" }
         check(SecretStore(context, "fish").status() == SecretStore.Status.ABSENT)
+        if (BuildConfig.DISTRIBUTION == "hotel") FishStartupFixture.verifyHotelPreparation(test)
         val deck = context.getSharedPreferences("deck", 0)
         val oldGuest = deck.getString("reception_guest_language", null)
         val oldStaff = deck.getString("reception_staff_language", null)

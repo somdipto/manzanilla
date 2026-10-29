@@ -4,6 +4,19 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## User-main integration and version sequencing
+
+The user published main `e19f711be274330905beec3ac7e31699f9149c82` as
+17.0.39/code69 while the repair stack was in progress. The feature branches
+preserve its immutable Fish preparation/cache, foreground cancellation,
+greeting-disabled startup and independent selected-language caption behavior.
+The seven reviewable candidates are resequenced to17.0.40–17.0.46/code70–76;
+S7 and S8 remain one final PR. Earlier evidence below retains the actual
+versions and source commits exercised; it is not silently relabelled.
+Final original-signer upgrade/visible-Reception proof must bind the new head,
+not the already-passed17.0.45 artifact. No release, deployment, additional
+provider probe, PR merge or live-data mutation is authorized by this integration.
+
 ## 17.0.43 installer-capability candidate (S6)
 
 Version17.0.43/code73. Callback identity is private per attempt and never logged.
