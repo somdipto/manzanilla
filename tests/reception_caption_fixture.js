@@ -47,6 +47,7 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   receive({ type: 'reception_info', audio_available: true, local_audio_state: 'off' });
   const begin = () => {
     click('[data-action="translation"]');
+    assert(messages.at(-1).action === 'prepare_translation', 'Language screen prepares configuration before Start');
     click('[data-action="start"]');
     const session_id = messages.filter(message => message.action === 'start').at(-1).session_id;
     const scope = { session_id, generation: 1 };
@@ -70,12 +71,13 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   assert(bubbles()[1].querySelector('.translated').textContent === 'Yes, we have a double room.', 'Translation stays in its source bubble');
   report('staff-number1', 'und', '204');
   report('staff-number2', 'und', '204');
-  assert(bubbles().slice(-2).every(node => node.classList.contains('caption-reception')), 'Repeated unclear numbers keep reception side');
+  assert(bubbles().slice(-2).every(node => node.classList.contains('caption-pending')), 'Repeated unclear numbers remain neutral');
   report('guest1', 'en', 'Where is the lift?', '¿Dónde está el ascensor?');
   report('guest2', 'en', 'Where is the lift?', '¿Dónde está el ascensor?');
   report('guest3', 'en', 'Where is the lift?', '¿Dónde está el ascensor?');
   report('guest-name', 'und', 'Alex');
-  assert(bubbles().slice(-4).every(node => node.classList.contains('caption-guest')), 'Guest repeats and an unclear name stay left');
+  assert(bubbles().slice(-4, -1).every(node => node.classList.contains('caption-guest')), 'Guest repeats stay left');
+  assert(bubbles().at(-1).classList.contains('caption-pending'), 'An unclear name does not inherit the guest side');
   const count = bubbles().length;
   report('guest1', 'es', 'A duplicate must not overwrite a record.');
   assert(bubbles().length === count && bubbles()[6].classList.contains('caption-guest'), 'Duplicate report cannot add or move bubbles');
@@ -142,5 +144,5 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   const restarted = messages.filter(message => message.action === 'start').at(-1);
   assert(restarted.session_id !== originalSession && bubbles().length === 4, 'Retry starts a new session while retaining visible history');
   win.__lastScope = scope;
-  return { frame, replayMs, assertions: 'Model language, repeats, unknown continuity, late language, finality, escaping, scrolling, session fencing, eight language orientations and physical positions' };
+  return { frame, replayMs, assertions: 'Model language, repeats, unknown neutrality, late language, finality, escaping, scrolling, session fencing, eight language orientations and physical positions' };
 }
