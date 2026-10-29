@@ -26,6 +26,11 @@ immutable execution receipts; guest status contains no payload or private note.
 - Successful acknowledgement/resolution consumes only its submitted draft.
   Resolved private outcomes no longer appear twice; conflicting edits remain
   available for review. The browser suite passes with clean fixture teardown.
+- The browser fixture installs its context-wide clock once, before any page
+  timers. Refresh waits observe actual overview output, including an in-flight
+  visibility refresh whose response headers already arrived; they do not require
+  an extra HTTP response. The ten real-backend Chromium scenarios pass with
+  these synchronization corrections.
 - **Passed:** personal-test JVM, debug/instrumentation assembly and lint with
   JDK17/SDK34 and empty provider fields.
 - **Passed:** actual API34 `reception-request-tracking` through the shipped
