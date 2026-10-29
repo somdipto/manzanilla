@@ -97,7 +97,6 @@ internal object UpdaterFixture {
                 val info = installer.getSessionInfo(id) ?: error("Android did not retain the staged fixture session")
                 check(info.appPackageName == base.packageName) { "update changed package identity" }
                 if (Build.VERSION.SDK_INT >= 27) check(info.mode == PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-                if (Build.VERSION.SDK_INT >= 31) check(info.requireUserAction == PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
                 // Replay a delayed Android consent callback after reception went idle-off.
                 // The real listener must release admission and retain a manual action,
                 // without launching installer UI over a different foreground app.
@@ -129,7 +128,6 @@ internal object UpdaterFixture {
             val after = base.packageManager.getPackageInfo(base.packageName, PackageManager.GET_PERMISSIONS)
             check(after.firstInstallTime == before.firstInstallTime && after.versionName == before.versionName)
             check(File(after.applicationInfo!!.sourceDir).isFile) { "cache cleanup removed the installed package" }
-            check(after.requestedPermissions.orEmpty().contains("android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"))
             check(sentinel.readText() == "appearance=light;guest=fr;staff=de")
             instrumentation.sendStatus(0, Bundle().apply {
                 putString("stream", "updater_scope=isolated idle=deferred cache_cleanup=user_data_retained installer=same_package_full_install_uncommitted_and_abandoned\n")

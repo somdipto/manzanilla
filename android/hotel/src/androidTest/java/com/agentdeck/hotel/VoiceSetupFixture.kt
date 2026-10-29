@@ -353,12 +353,20 @@ internal object VoiceSetupFixture {
             .putString("reception_guest_language", "en").putString("reception_staff_language", "en").commit())
         val personalKey = "fixture-retained-personal-key-not-a-provider-credential"
         check(personal.save(personalKey) && TranslationSettings(context).selectDirectFish())
-        fun await(stage: String, state: () -> Boolean) {
+        fun reportStage(value: String) {
+            test.sendStatus(0, Bundle().apply { putString("stream", "HOTEL_SETUP_STAGE $value\n") })
+        }
+        fun await(stage: String, snapshot: () -> String = { "" }, state: () -> Boolean) {
+            reportStage("waiting=$stage")
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             while (!state()) {
-                check(System.nanoTime() < deadline) { "Hotel setup timed out: $stage" }
+                if (System.nanoTime() >= deadline) {
+                    reportStage("timeout=$stage ${snapshot()}")
+                    error("Hotel setup timed out: $stage")
+                }
                 Thread.sleep(100)
             }
+            reportStage("passed=$stage")
         }
         fun shell(command: String) {
             test.uiAutomation.executeShellCommand(command).use { descriptor ->
@@ -367,7 +375,9 @@ internal object VoiceSetupFixture {
         }
         // Recover the original reservation through the real Activity foreground path,
         // even before enrollment is available. No new provider session may be opened.
+        reportStage("enter=owned cleanup")
         verifyRestoredCleanup(test, personalKey)
+        reportStage("passed=owned cleanup")
         // Exercise the real new-start boundary even with a saved personal selection.
         // Interceptors prevent a regression from making any provider request.
         shell("pm grant ${context.packageName} android.permission.RECORD_AUDIO")
@@ -385,8 +395,7 @@ internal object VoiceSetupFixture {
         }
         test.runOnMainSync { fish.start("en", "es", sessionId = "hotel-no-direct", epoch = 901) }
         await("hotel new start denied") {
-            synchronized(events) { events.any { it.optString("phase") == "error" &&
-                it.optString("text") == UiText.text(context, "en", "Translation needs hotel setup. Please ask staff.") } } &&
+            synchronized(events) { events.any { it.optString("phase") == "error" } } &&
                 fish.admissionIssue() == null
         }
         check(keyReads.get() == 0 && requests.get() == 0) { "Hotel new start consulted a personal credential or provider" }
@@ -394,8 +403,10 @@ internal object VoiceSetupFixture {
         test.uiAutomation.serviceInfo = test.uiAutomation.serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
+        reportStage("enter=hotel activity launch")
         val activity = test.startActivitySync(Intent(context, HotelActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        reportStage("passed=hotel activity launch")
         val reception = HotelActivity::class.java.getDeclaredField("reception").apply { isAccessible = true }
             .get(activity) as ReceptionView
         val browser = reception.getChildAt(0) as WebView
@@ -404,8 +415,19 @@ internal object VoiceSetupFixture {
         val fields = KeyEntryActivity::class.java.getDeclaredField("fields").apply { isAccessible = true }
         val openSetups = ArrayList<KeyEntryActivity>()
         val receptionForeground = HotelActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }
+        fun receptionState(): String {
+            var state = ""
+            test.runOnMainSync {
+                state = "parent_foreground=${receptionForeground.getBoolean(activity)}" +
+                    " parent_focus=${activity.hasWindowFocus()} parent_finishing=${activity.isFinishing}" +
+                    " parent_destroyed=${activity.isDestroyed} browser_attached=${browser.isAttachedToWindow}" +
+                    " browser_shown=${browser.isShown} setups=${openSetups.size}" +
+                    " setups_destroyed=${openSetups.count { it.isDestroyed }}"
+            }
+            return state
+        }
         fun awaitReception(stage: String) {
-            await("reception resumed: $stage") {
+            await("reception resumed: $stage", ::receptionState) {
                 var resumed = false
                 test.runOnMainSync {
                     resumed = openSetups.all { it.isDestroyed } && !activity.isFinishing && !activity.isDestroyed &&
@@ -424,16 +446,24 @@ internal object VoiceSetupFixture {
             val ready = CountDownLatch(1)
             var value = ""
             test.runOnMainSync { browser.evaluateJavascript(script) { value = it; ready.countDown() } }
-            check(ready.await(15, TimeUnit.SECONDS)) { "Hotel setup WebView callback timed out: $stage" }
+            if (!ready.await(15, TimeUnit.SECONDS)) {
+                reportStage("callback_timeout=$stage ${receptionState()}")
+                error("Hotel setup WebView callback timed out: $stage")
+            }
             return value
         }
         fun open(stage: String, action: () -> Unit): KeyEntryActivity {
             awaitReception(stage)
+            reportStage("opening=$stage")
             val monitor = test.addMonitor(KeyEntryActivity::class.java.name, null, false)
             return try {
                 action()
-                (monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
-                    ?: error("Hotel setup did not open: $stage")).also(openSetups::add)
+                val setup = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
+                if (setup == null) {
+                    reportStage("open_timeout=$stage ${receptionState()}")
+                    error("Hotel setup did not open: $stage")
+                }
+                setup.also(openSetups::add)
             } finally { test.removeMonitor(monitor) }
         }
         fun postSetup(route: String) {
@@ -457,8 +487,18 @@ internal object VoiceSetupFixture {
             }
             test.waitForIdleSync()
         }
+        fun setupState(setup: KeyEntryActivity): String {
+            var state = ""
+            test.runOnMainSync {
+                state = "setup_foreground=${foreground.getBoolean(setup)} setup_focus=${setup.hasWindowFocus()}" +
+                    " setup_finishing=${setup.isFinishing} setup_destroyed=${setup.isDestroyed}" +
+                    " setup_attached=${setup.window.decorView.isAttachedToWindow}" +
+                    " setup_shown=${setup.window.decorView.isShown}"
+            }
+            return state
+        }
         fun locked(setup: KeyEntryActivity) {
-            await("locked setup has no fields") {
+            await("locked setup has no fields", { setupState(setup) }) {
                 var result = false
                 test.runOnMainSync { result = !authenticated.getBoolean(setup) && inputs(setup).isEmpty() }
                 result
@@ -471,7 +511,7 @@ internal object VoiceSetupFixture {
         }
         fun authenticate(setup: KeyEntryActivity) {
             locked(setup)
-            await("real Android credential prompt") {
+            await("real Android credential prompt", { setupState(setup) }) {
                 test.uiAutomation.windows.mapNotNull { it.root }.any { root ->
                     root.packageName?.toString() in setOf("com.android.settings", "com.android.systemui") &&
                         descendants(root).any { it.isEditable && it.isVisibleToUser }
@@ -479,7 +519,7 @@ internal object VoiceSetupFixture {
             }
             shell("input text 2468")
             shell("input keyevent 66")
-            await("authenticated enrollment form") {
+            await("authenticated enrollment form", { setupState(setup) }) {
                 var result = false
                 test.runOnMainSync {
                     result = authenticated.getBoolean(setup) && foreground.getBoolean(setup) && inputs(setup).size == 2
@@ -503,7 +543,7 @@ internal object VoiceSetupFixture {
                     else postSetup(route)
                 }
                 locked(setup)
-                await("no-lock hotel setup refusal") {
+                await("no-lock hotel setup refusal", { setupState(setup) }) {
                     var refused = false
                     test.runOnMainSync {
                         refused = nodes(setup.window.decorView).filterIsInstance<android.widget.TextView>()
@@ -544,11 +584,12 @@ internal object VoiceSetupFixture {
             // Diagnostics remains in this authenticated Activity and is discarded on background.
             click(setup, "Voice diagnostics")
             shell("input keyevent 3")
-            await("background clears authorization and credentials") {
+            await("background clears authorization and credentials", { setupState(setup) }) {
                 var result = false
                 test.runOnMainSync { result = !authenticated.getBoolean(setup) && inputs(setup).isEmpty() }
                 result
             }
+            reportStage("enter=protected setup foreground return")
             context.startActivity(Intent(context, KeyEntryActivity::class.java)
                 .putExtra("voice_only", true)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))

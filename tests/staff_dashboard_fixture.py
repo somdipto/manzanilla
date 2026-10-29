@@ -35,11 +35,22 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
             page.evaluate("completion => completion.observer.disconnect()", completion)
             completion.dispose()
 
+    def show_dashboard(page):
+        # A real tab activation can refresh immediately, before its next timer.
+        # Consume that render before advancing this page's paused clock.
+        if page.evaluate("document.hidden"):
+            with overview_loaded(page):
+                page.bring_to_front()
+        else:
+            page.bring_to_front()
+        page.wait_for_function("() => !document.hidden && document.visibilityState === 'visible'", polling=100)
+
     def open_dashboard(token):
         page = context.new_page()
         page.clock.install(time=0)
         page.clock.pause_at(1000)
         page.goto(origin + "/admin")
+        page.bring_to_front()
         page.locator("#token").fill(token)
         page.locator("#hotel").fill(hotel_id)
         with overview_loaded(page):
@@ -59,6 +70,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         expect(card(page, item_id)).to_have_attribute("data-version", str(version))
 
     def poll(page):
+        show_dashboard(page)
         with overview_loaded(page):
             page.clock.fast_forward(5001)
 
@@ -232,6 +244,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         # must not undo successful acknowledgement.
         snapshot = api.get(base + "/overview", headers=staff_headers)
         snapshot.raise_for_status()
+        show_dashboard(owner)
         held = []
         def hold_snapshot(route):
             held.append(route)
@@ -255,6 +268,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         wait_version(other, item_id, 1)
         expect(card(other, item_id).locator('[data-action="resolve"]')).to_be_disabled()
         assert "Reception shift A" in card(other, item_id).text_content()
+        show_dashboard(owner)
         private_note = "  Private staff outcome <b>not guest content</b>\n  "
         note = card(owner, item_id).locator("textarea")
         note.fill(private_note)
@@ -265,15 +279,15 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         owner.locator("#staff-locale").select_option("ar")
         expect(owner.locator("html")).to_have_attribute("dir", "rtl")
         assert card(owner, item_id).locator("textarea").input_value() == private_note
-        # No overview reads while hidden. Visibility is controlled deterministically
-        # because headless Chromium does not hide tabs when another tab is opened.
+        # Control the hidden case even on headless backends that keep background
+        # tabs visible; restore native visibility before later tab switches.
         reads = []
         owner.on("request", lambda request: reads.append(request.url) if request.url == overview else None)
         owner.evaluate("Object.defineProperty(document, 'hidden', {configurable:true,get:()=>true}); document.dispatchEvent(new Event('visibilitychange'))")
         owner.clock.fast_forward(20000)
         assert not reads
         with overview_loaded(owner):
-            owner.evaluate("Object.defineProperty(document, 'hidden', {configurable:true,get:()=>false}); document.dispatchEvent(new Event('visibilitychange'))")
+            owner.evaluate("delete document.hidden; document.dispatchEvent(new Event('visibilitychange'))")
         with owner.expect_response(lambda response: response.url.endswith("/items/" + item_id)) as resolved:
             card(owner, item_id).locator('[data-action="resolve"]').click()
         assert resolved.value.status == 200
@@ -295,6 +309,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         second_id, _ = submit_message("browser-message-two", "Second exact original")
         poll(other)
         poll(owner)
+        show_dashboard(other)
         card(other, second_id).locator("input").fill("Another shift typed this")
         external = api.patch(base + "/items/" + second_id, headers=admin,
                              json={"status": "acknowledged", "expected_version": 0, "responsible_name": "Admin responsibility"})
@@ -326,6 +341,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         assert "Other recorded outcome" in card(page, second_id).text_content()
         # Changing token/hotel stops old-scope timers, clears private notes and
         # prevents a delayed response from restoring a previous tenant's inbox.
+        show_dashboard(other)
         held_scope = []
         def hold_scope(route):
             held_scope.append((route, route.fetch()))
