@@ -216,14 +216,33 @@ internal object FishStartupFixture {
                 check(completed.await(15, TimeUnit.SECONDS)) { "Preparation WebView callback timed out" }
                 return value
             }
+            fun chooserFailure(stage: String): Nothing {
+                var state = ""
+                instrumentation.runOnMainSync {
+                    val foreground = HotelActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }.getBoolean(activity)
+                    state = "foreground=$foreground focus=${activity.hasWindowFocus()} finishing=${activity.isFinishing} " +
+                        "destroyed=${activity.isDestroyed} attached=${browser.isAttachedToWindow} shown=${browser.isShown}"
+                }
+                instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream", "PREPARATION_STAGE $stage $state") })
+                error("Shipped chooser did not settle")
+            }
             fun choose(script: String) {
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+                var foreground = false
+                while (!foreground) {
+                    instrumentation.runOnMainSync {
+                        foreground = HotelActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }.getBoolean(activity) &&
+                            activity.hasWindowFocus() && !activity.isDestroyed && browser.isAttachedToWindow && browser.isShown
+                    }
+                    if (!foreground && System.nanoTime() >= deadline) chooserFailure("before-dispatch")
+                    if (!foreground) Thread.sleep(50)
+                }
                 var previous: Job? = null
                 instrumentation.runOnMainSync { previous = preparation.get(h.fish) as? Job }
                 evaluate(script)
-                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
                 var job: Job? = null
                 while (job == null || job === previous) {
-                    check(System.nanoTime() < deadline) { "Shipped language chooser did not reach native preparation" }
+                    if (System.nanoTime() >= deadline) chooserFailure("await-preparation")
                     instrumentation.runOnMainSync { job = preparation.get(h.fish) as? Job }
                     if (job == null || job === previous) Thread.sleep(50)
                 }
