@@ -182,6 +182,27 @@ class UpgradeDataFixture : Instrumentation() {
         }
         fun field(owner: Any, name: String): Any? =
             owner.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(owner)
+        // This is a packaged-UI proof, not provider provisioning. Keep the real
+        // installed transport and persistent credential, but fence its resolver
+        // so optional chooser preparation cannot contact an external provider.
+        fun isolateProvider() = main {
+            val provider = field(activity, "fishProvider") ?: error("Missing installed voice provider")
+            val voice = checkNotNull(provider.javaClass.getMethod("getValue").apply {
+                isAccessible = true
+            }.invoke(provider))
+            val resolver = voice.javaClass.getDeclaredField("key").apply { isAccessible = true }
+            resolver.set(voice, java.lang.reflect.Proxy.newProxyInstance(
+                resolver.type.classLoader, arrayOf(resolver.type)
+            ) { proxy, method, arguments ->
+                when (method.name) {
+                    "invoke" -> ""
+                    "hashCode" -> System.identityHashCode(proxy)
+                    "equals" -> proxy === arguments?.firstOrNull()
+                    "toString" -> "isolated-empty-provider-resolver"
+                    else -> error("Unexpected provider resolver callback")
+                }
+            })
+        }
         val page = main { field(activity, "reception") as ViewGroup }
         fun webView(view: View): WebView? {
             if (view is WebView) return view
@@ -329,6 +350,7 @@ class UpgradeDataFixture : Instrumentation() {
             return true
         }
         try {
+            isolateProvider()
             await { renderedHome() && shown() && nativeOff() }
             if (missingScript) {
                 main {
