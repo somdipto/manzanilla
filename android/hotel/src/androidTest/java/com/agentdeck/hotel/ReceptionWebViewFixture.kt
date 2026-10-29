@@ -14,7 +14,6 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 
 /** Exercises the shipped assets and real addJavascriptInterface boundary, with no audio provider. */
 internal object ReceptionWebViewFixture {
@@ -33,15 +32,15 @@ internal object ReceptionWebViewFixture {
         val page = HotelActivity::class.java.getDeclaredField("reception").apply { isAccessible = true }.get(activity) as ReceptionView
         lateinit var browser: WebView
         val forward = HotelActivity::class.java.getDeclaredMethod("forward", JSONObject::class.java).apply { isAccessible = true }
-        val keyReads = AtomicInteger()
+        val transportEvents = LinkedBlockingQueue<JSONObject>()
         // Observe that granting reaches the real Fish start, while ensuring that it has no credential.
         instrumentation.runOnMainSync {
             browser = page.getChildAt(0) as WebView
             HotelActivity::class.java.getDeclaredField("fishProvider").apply { isAccessible = true }.set(activity, lazy {
-                FishVoice(context, { event -> activity.runOnUiThread { forward.invoke(activity, event) } }) {
-                    keyReads.incrementAndGet()
-                    ""
-                }
+                FishVoice(context, { event ->
+                    transportEvents.add(event)
+                    activity.runOnUiThread { forward.invoke(activity, event) }
+                }) { "" }
             })
         }
         fun evaluate(script: String) = evaluate(instrumentation, browser, script)
@@ -103,11 +102,13 @@ internal object ReceptionWebViewFixture {
                 check(System.nanoTime() < resultDeadline) { "Credential-free permission start stayed active" }
                 if (!released) Thread.sleep(100)
             }
-            check(keyReads.get() == if (outcome == "grant") 1 else 0) { "Permission $outcome did not start exactly once or started when denied/backgrounded" }
+            check(transportEvents.any { it.optString("type") == "reception_event" && it.optString("phase") == "error" } ==
+                (outcome == "grant")) { "Permission $outcome did not gate the actual transport start" }
+            check(transportEvents.none { it.optString("type") == "audio_state" && it.optString("state") == "recording" })
             if (outcome != "background") {
                 check(evaluate("document.documentElement.dataset.captureActive") == "\"false\"") { "Permission result left JS capture active" }
-                val expected = if (outcome == "deny") "Microphone permission is required" else "configure or recover"
-                check(evaluate("document.body.innerText.indexOf('$expected') >= 0") == "true") { "Permission result lost its error detail" }
+                check(evaluate("!!document.querySelector('.notice.error')") == "true") { "Permission outcome lost its error state" }
+                check(evaluate("document.querySelector('[data-action=restart],[data-action=retry]').disabled") == "false") { "Permission outcome is not retryable after microphone release" }
             }
         } finally {
             if (permissionButton() != null) instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
