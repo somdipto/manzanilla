@@ -6,6 +6,10 @@ from playwright.sync_api import expect
 
 def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
     context = browser.new_context(service_workers="block", viewport={"width": 1024, "height": 768})
+    # Playwright clocks are context-wide. Install once before any page timers;
+    # opening another staff tab must not reinstall the shared clock.
+    context.clock.install(time=0)
+    context.clock.pause_at(1000)
     errors = []
     context.on("page", lambda page: page.on("pageerror", lambda error: errors.append(str(error))))
     context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(origin + "/") else route.abort())
@@ -14,10 +18,10 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
     overview = origin + base + "/overview"
 
     @contextmanager
-    def overview_loaded(page, url=overview):
-        # Response headers (and an already-updated item version) can precede
-        # body parsing/rendering. Observe the overview output: its mutation is
-        # delivered after load's synchronous render/finally has scheduled polling.
+    def overview_loaded(page):
+        # A poll may join a visibility refresh whose headers already arrived.
+        # Wait for actual output, not a second response. This mutation runs after
+        # load's synchronous render/finally has scheduled the next timer.
         completion = page.evaluate_handle("""() => {
             const completion = {rendered: false};
             completion.observer = new MutationObserver(() => {
@@ -28,8 +32,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
             return completion;
         }""")
         try:
-            with page.expect_response(url):
-                yield
+            yield
             page.wait_for_function("completion => completion.rendered", arg=completion, polling=100)
         finally:
             page.evaluate("completion => completion.observer.disconnect()", completion)
@@ -47,8 +50,6 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
 
     def open_dashboard(token):
         page = context.new_page()
-        page.clock.install(time=0)
-        page.clock.pause_at(1000)
         page.goto(origin + "/admin")
         page.bring_to_front()
         page.locator("#token").fill(token)
@@ -92,8 +93,6 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         # This is the first hotel in the temporary database. Creation goes through
         # the actual blank labelled form, not a seeded/example policy or API PUT.
         page = context.new_page()
-        page.clock.install(time=0)
-        page.clock.pause_at(1000)
         page.goto(origin + "/admin")
         page.locator("#token").fill(admin_token)
         page.locator("#hotel").fill(hotel_id)
@@ -189,7 +188,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         with switcher.expect_request(lambda request: request.url == origin + base and request.method == "PUT"):
             switcher.locator("#save").click()
         switcher.locator("#hotel").fill(target_id)
-        with overview_loaded(switcher, origin + target_base + "/overview"):
+        with overview_loaded(switcher):
             switcher.locator("#load").click()
         expect(switcher.locator("#hotel-name")).to_be_enabled()
         switcher.locator("#hotel-name").fill("New scope remains editable")
