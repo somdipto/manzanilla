@@ -152,9 +152,10 @@ class UpgradeDataFixture : Instrumentation() {
             } else "preferences=true private_file=true encrypted_marker=true voice_credential=true"
             result.putString("stream", "PASS case=$case $evidence distribution=$distribution\n")
             finish(-1, result)
-        } catch (_: Throwable) {
-            // Never print values from device storage, credentials, or arbitrary exception text.
-            result.putString("stream", "FAIL case=$case upgrade data fixture did not complete\n")
+        } catch (error: Throwable) {
+            // Only a fixture source location is safe; never device values or exception text.
+            val line = error.stackTrace.firstOrNull { it.fileName == "UpgradeDataFixture.kt" }?.lineNumber ?: 0
+            result.putString("stream", "FAIL case=$case upgrade data fixture did not complete at=UpgradeDataFixture.kt:$line\n")
             finish(0, result)
         }
     }

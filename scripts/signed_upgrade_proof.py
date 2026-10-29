@@ -48,7 +48,7 @@ def instrument(case: str, distribution: str, marker: str, expected: str) -> None
              .removeprefix("INSTRUMENTATION_RESULT: stream=").strip()
              for line in output.splitlines()]
     safe = [line for line in lines if line == expected or
-            line == f"FAIL case={case} upgrade data fixture did not complete" or
+            re.fullmatch(rf"FAIL case={re.escape(case)} upgrade data fixture did not complete(?: at=UpgradeDataFixture.kt:\d+)?", line) or
             re.fullmatch(r"INSTRUMENTATION_CODE: -?\d+", line)]
     (EVIDENCE / f"data-{case}.txt").write_text("\n".join(safe) + "\n")
     require(lines.count(expected) == 1 and lines.count("INSTRUMENTATION_CODE: -1") == 1)
