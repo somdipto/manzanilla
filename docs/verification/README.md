@@ -32,11 +32,14 @@ human language-review approval; translation presence is not acoustic qualificati
   background cancellation, `translation-startup` and `update-delivery` on both
   API34/WebView113 and CI Android10 run40853905862; each named PASS has code -1.
   System-only HOME resolution repaired the earlier background precondition.
-- **Not passed:** personal `voice-setup` timed out in the Spanish interface.
-  Its English-only password/control selectors are now role/locale-aware;
-  incidental status/prose assertions were deleted, preserving actual encrypted-
-  key retention, route and authorization checks. The rebuilt fixture passed
-  compilation; both screen-lock setup cases remain runtime gates.
+- **Passed:** final CI run40858640035 at commit74cf360 completed all nine Android10
+  reception, permission, startup and setup scenarios, including personal save,
+  cancel and encrypted-key reuse both without a lock and with synthetic PIN2468.
+  The separate Android12 update-delivery case also passed. Every named case
+  includes instrumentation code -1; no provider session was opened.
+- Earlier personal-setup fixtures incorrectly selected Spanish controls by
+  English prose. Password-role/locale-aware selectors and consumer-visible
+  retention/authorization checks replaced those incidental assertions.
 - On this Intel Mac, emulator37.2 SwiftShader produced a System UI ANR over the
   real permission dialog and an invalid color-buffer error. `-gpu host -feature
   -Vulkan` yielded the grant pass. A later full-suite attempt while Gradle was
