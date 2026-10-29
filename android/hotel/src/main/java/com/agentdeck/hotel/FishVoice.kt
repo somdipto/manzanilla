@@ -39,6 +39,13 @@ import java.util.concurrent.TimeUnit
 /** Interpreter transport only. Credentials are staff-saved; managed sessions use the trusted hotel service. */
 class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private val key: () -> String) {
     private val ctx = ctx.applicationContext
+    init { UiText.preload(this.ctx) }
+    private fun text(run: Run, message: String, values: Map<String, String> = emptyMap()) =
+        UiText.text(ctx, run.owner.guest, message, values)
+    private fun text(message: String) = UiText.text(ctx,
+        current?.owner?.guest ?: ctx.getSharedPreferences("deck", Context.MODE_PRIVATE)
+            .getString("reception_guest_language", "es").orEmpty().takeIf(DeskLanguages::has) ?: "es", message)
+
     private val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
     // Managed creation has a 60s server deadline. Keep its dispatched response recoverable on Stop.
     private val sessionHttp = http.newBuilder().readTimeout(75, TimeUnit.SECONDS).callTimeout(75, TimeUnit.SECONDS).build()
@@ -83,7 +90,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
     }
     @Volatile private var current: Run? = null
 
-    fun admissionIssue(): String? = admission.reason() ?: if (current != null) "The previous conversation cleanup is still finishing." else null
+    fun admissionIssue(): String? = (admission.reason() ?: if (current != null) "The previous conversation cleanup is still finishing." else null)?.let { text(it) }
     fun localAudioState(): String = admission.localAudioState()
 
     /** A deliberate subsequent start attempt can retry the same uncertain end, never mint a new session. */
@@ -140,29 +147,34 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             // Do not detach this unadmitted run: that could release another run's reservation.
             run.owner.close()
             run.owner.detached(admission.localAudioState() == "off", JSONObject().put("type", "reception_event")
-                .put("phase", "error").put("text", admission.reason()
-                    ?: "Conversation cleanup ownership could not be saved on this device. Ask staff to check device storage."))
+                .put("phase", "error").put("text", admission.reason()?.let { text(run, it) }
+                    ?: text(run, "Conversation cleanup ownership could not be saved on this device. Ask staff to check device storage.")))
             return
         }
         current = run
         run.owner.emit(JSONObject().put("type", "audio_state").put("state", "off"))
         run.timing.marker("run_started_requested_config_rev_${FishPlan.CONFIG_REV}")
-        if (!AudioPolicy.allowStart { terminate(run, "error", it) }) return
-        if (mode != "translation") { terminate(run, "error", "Assistance requires the configured hotel service; an interpreter cannot provide it."); return }
+        if (!AudioPolicy.allowStart { terminate(run, "error", text(run, it)) }) return
+        if (mode != "translation") { terminate(run, "error", text(run, "Assistance requires the configured hotel service; an interpreter cannot provide it.")); return }
         if (!DeskLanguages.has(guest) || !DeskLanguages.has(staff) || guest == staff) {
-            terminate(run, "error", "Choose two different languages for translation."); return
+            terminate(run, "error", text(run, "Choose two different languages for translation.")); return
         }
         run.timing.marker("requested_asr_${FishPlan.recognitionModel(guest, staff)}")
         if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            terminate(run, "error", "Microphone permission is needed for translation."); return
+            terminate(run, "error", text(run, "Microphone permission is needed for translation.")); return
         }
         val connection = HotelConnection(ctx).load().takeIf {
-            TranslationRouting.useManagedConnection(it != null, TranslationSettings(ctx).directFishSelected)
+            TranslationRouting.useManagedConnection(it != null, TranslationSettings(ctx).directFishSelected, BuildConfig.DISTRIBUTION)
         }
         val managed = connection != null
+        // Never use personal credentials for a new hotel session. The key resolver remains
+        // available to retryRecoveredEnd for an older direct reservation's exact credential.
+        if (BuildConfig.DISTRIBUTION == "hotel" && !managed) {
+            terminate(run, "error", text(run, "Translation needs hotel setup. Please ask staff.")); return
+        }
         val apiKey = if (managed) "" else key().trim()
         if (!managed && apiKey.isBlank()) {
-            terminate(run, "error", "Ask staff to configure or recover the translation credential in Settings."); return
+            terminate(run, "error", text(run, "Ask staff to configure or recover the translation credential in Settings.")); return
         }
         run.owner.phase("connecting")
         run.creation.launch {
@@ -194,7 +206,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
                 run.owner.emit(JSONObject().put("type", "audio_state").put("state", if (muted) "muted" else "recording"))
             } catch (_: CancellationException) { }
             catch (_: Throwable) { run.owner.emit(JSONObject().put("type", "notice").put("status", "unavailable")
-                .put("text", "The microphone state did not change. Try again or stop the conversation.")) }
+                .put("text", text(run, "The microphone state did not change. Try again or stop the conversation."))) }
         }
     }
 
@@ -238,14 +250,14 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
                     is RoomEvent.TrackSubscribed -> (event.track as? RemoteAudioTrack)?.let { track -> attachOutput(run, track) }
                     is RoomEvent.Reconnecting -> {
                         run.timing.marker("transport_reconnect_gap_started")
-                        run.owner.emit(JSONObject().put("type", "notice").put("text", "Audio connection interrupted. Captions may have a gap; no previous translation will be replayed."))
-                        run.owner.phase("connecting", "Audio connection interrupted; reconnecting.")
+                        run.owner.emit(JSONObject().put("type", "notice").put("text", text(run, "Audio connection interrupted. Captions may have a gap; no previous translation will be replayed.")))
+                        run.owner.phase("connecting", text(run, "Audio connection interrupted; reconnecting."))
                     }
                     is RoomEvent.Reconnected -> {
                         run.timing.marker("transport_reconnected")
                         if (run.recording) run.owner.phase("listening")
                     }
-                    is RoomEvent.Disconnected -> terminate(run, "error", "Translation disconnected. Please start a new conversation.")
+                    is RoomEvent.Disconnected -> terminate(run, "error", text(run, "Translation disconnected. Please start a new conversation."))
                     else -> Unit
                 }
             }
@@ -314,7 +326,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         }
         run.scope.launch {
             delay(FishPlan.CLIENT_CAP_MS)
-            terminate(run, "timeout", "Conversation reached its duration limit. Please start a new conversation.")
+            terminate(run, "timeout", text(run, "Conversation reached its duration limit. Please start a new conversation."))
         }
     }
 
@@ -342,7 +354,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
                     run.owner.phase("listening")
                 }
             } catch (_: CancellationException) { }
-            catch (_: Throwable) { terminate(run, "error", "Microphone capture could not start. Check permission or contact reception.") }
+            catch (_: Throwable) { terminate(run, "error", text(run, "Microphone capture could not start. Check permission or contact reception.")) }
         }
     }
 
@@ -364,12 +376,12 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             "error" -> if (event.optBoolean("recovered")) {
                 run.timing.marker("provider_recovered_error_received")
                 run.owner.emit(JSONObject().put("type", "notice").put("status", "recovering")
-                    .put("text", "The voice service recovered from a temporary interruption."))
-            } else terminate(run, "error", "Translation service failed. Please start a new conversation or contact reception.")
-            "session.ended" -> terminate(run, if (event.optString("reason") == "conversation_timeout") "timeout" else "stopped", "Conversation ended.")
+                    .put("text", text(run, "The voice service recovered from a temporary interruption.")))
+            } else terminate(run, "error", text(run, "Translation service failed. Please start a new conversation or contact reception."))
+            "session.ended" -> terminate(run, if (event.optString("reason") == "conversation_timeout") "timeout" else "stopped", text(run, "Conversation ended."))
             "client_tool.call" -> if (event.optString("toolName") == FishPlan.CAPTION_TOOL) {
                 if (event.opt("expectsResponse") != false) {
-                    terminate(run, "error", "Translation caption configuration is incompatible. Ask reception to check the service.")
+                    terminate(run, "error", text(run, "Translation caption configuration is incompatible. Ask reception to check the service."))
                     return
                 }
                 val duplicate = run.reports.hasSeen(event.optString("callId"))
@@ -379,9 +391,9 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
                     run.owner.emit(caption)
                 } else if (!duplicate) {
                     run.owner.emit(JSONObject().put("type", "notice").put("status", "unavailable")
-                        .put("text", "Captions were unavailable for one utterance. Audio may continue."))
+                        .put("text", text(run, "Captions were unavailable for one utterance. Audio may continue.")))
                 }
-            } else terminate(run, "error", "This translation service requested an unsupported action. Contact reception.")
+            } else terminate(run, "error", text(run, "This translation service requested an unsupported action. Contact reception."))
         }
     }
 
@@ -390,7 +402,11 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
 
     private fun startupFailed(run: Run, stage: FishStartupFailure.Stage, error: Throwable, managed: Boolean) {
         if (!run.owner.active()) return
-        val notice = FishStartupFailure.describe(stage, error, managed)
+        val notice = FishStartupFailure.describe(stage, error, managed) { message, values ->
+            if (BuildConfig.DISTRIBUTION == "hotel" && message != "{message} Reference: {reference}")
+                text(run, "Translation is unavailable. Please ask staff.")
+            else text(run, message, values)
+        }
         // Never pass the exception, request URL, response body or credential to logcat.
         Log.w("TranslationStartup", notice.reference)
         terminate(run, "error", notice.text)
@@ -558,16 +574,19 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         val query = URLEncoder.encode(FishPlan.CAPTION_TOOL, "UTF-8")
         val listing = call(run, apiKey, "GET", "/v1/agent/tools?search=$query&page_size=100", null)
         val tools = listing.getJSONArray("tools")
+        if (listing.opt("has_more") != false)
+            throw FishStartupFailure.configuration(FishStartupFailure.Stage.CAPTION_LOOKUP)
+        var exactNameFound = false
         for (index in 0 until tools.length()) {
             val summary = tools.getJSONObject(index)
             if (summary.optString("name") != FishPlan.CAPTION_TOOL) continue
+            exactNameFound = true
             val id = summary.getString("tool_id")
             check(id.matches(Regex("[A-Za-z0-9_-]{1,200}")))
-            if (!FishPlan.captionToolMatches(definition, call(run, apiKey, "GET", "/v1/agent/tools/$id", null)))
-                throw FishStartupFailure.configuration(FishStartupFailure.Stage.CAPTION_READ)
-            return id
+            if (FishPlan.captionToolMatches(definition, call(run, apiKey, "GET", "/v1/agent/tools/$id", null)))
+                return id
         }
-        check(!listing.optBoolean("has_more")) { "Caption tool search is incomplete" }
+        if (exactNameFound) throw FishStartupFailure.configuration(FishStartupFailure.Stage.CAPTION_READ)
         return call(run, apiKey, "POST", "/v1/agent/tools", definition).getString("tool_id").also {
             check(it.matches(Regex("[A-Za-z0-9_-]{1,200}")))
         }

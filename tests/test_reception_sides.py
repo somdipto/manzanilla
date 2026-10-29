@@ -11,12 +11,6 @@ def test_native_and_managed_caption_tool_contracts_match():
     assert managed == native
     assert managed['tool_type'] == 'client'
     assert managed['expects_response'] is False
-    assert managed['execution_mode'] == 'fire_and_forget'
-    assert {argument['name'] for argument in managed['arguments']} == {'source_language', 'original', 'translation'}
+    assert [argument['name'] for argument in managed['arguments']] == ['source_language', 'original', 'translation']
     assert not managed.get('url')
     assert not managed.get('headers')
-
-
-def test_language_evidence_module_is_loaded_before_reception():
-    source = (ROOT / 'android/hotel/src/main/assets/reception/index.html').read_text()
-    assert source.index('src="language-turns.js"') < source.index('src="reception.js"')

@@ -4,56 +4,40 @@
   const native = !!window.ManzaniaNative;
   const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   const content = document.getElementById("content");
-  const languages = { es: { name: "Spanish", native: "Español" }, en: { name: "English", native: "English" }, ca: { name: "Catalan", native: "Català" }, fr: { name: "French", native: "Français" }, de: { name: "German", native: "Deutsch" }, it: { name: "Italian", native: "Italiano" }, pt: { name: "Portuguese", native: "Português" }, nl: { name: "Dutch", native: "Nederlands" }, ar: { name: "Arabic", native: "العربية" }, zh: { name: "Chinese", native: "中文" }, ru: { name: "Russian", native: "Русский" }, uk: { name: "Ukrainian", native: "Українська" }, pl: { name: "Polish", native: "Polski" }, ro: { name: "Romanian", native: "Română" }, sv: { name: "Swedish", native: "Svenska" }, el: { name: "Greek", native: "Ελληνικά" }, tr: { name: "Turkish", native: "Türkçe" }, ja: { name: "Japanese", native: "日本語" }, ko: { name: "Korean", native: "한국어" }, hi: { name: "Hindi", native: "हिन्दी" }, cs: { name: "Czech", native: "Čeština" }, da: { name: "Danish", native: "Dansk" }, fi: { name: "Finnish", native: "Suomi" }, hu: { name: "Hungarian", native: "Magyar" }, bg: { name: "Bulgarian", native: "Български" }, hr: { name: "Croatian", native: "Hrvatski" }, sk: { name: "Slovak", native: "Slovenčina" }, sr: { name: "Serbian", native: "Српски" }, no: { name: "Norwegian", native: "Norsk" }, id: { name: "Indonesian", native: "Bahasa Indonesia" }, th: { name: "Thai", native: "ไทย" }, vi: { name: "Vietnamese", native: "Tiếng Việt" }, ms: { name: "Malay", native: "Bahasa Melayu" }, tl: { name: "Tagalog", native: "Tagalog" }, he: { name: "Hebrew", native: "עברית" }, fa: { name: "Persian", native: "فارسی" }, ur: { name: "Urdu", native: "اردو" }, bn: { name: "Bengali", native: "বাংলা" }, ta: { name: "Tamil", native: "தமிழ்" }, te: { name: "Telugu", native: "తెలుగు" }, kn: { name: "Kannada", native: "ಕನ್ನಡ" }, mr: { name: "Marathi", native: "मराठी" }, gu: { name: "Gujarati", native: "ગુજરાતી" }, pa: { name: "Punjabi", native: "ਪੰਜਾਬੀ" }, ne: { name: "Nepali", native: "नेपाली" }, kk: { name: "Kazakh", native: "Қазақша" }, ka: { name: "Georgian", native: "ქართული" }, hy: { name: "Armenian", native: "Հայերեն" }, et: { name: "Estonian", native: "Eesti" }, lv: { name: "Latvian", native: "Latviešu" }, lt: { name: "Lithuanian", native: "Lietuvių" }, af: { name: "Afrikaans", native: "Afrikaans" } };
+  const catalogue = window.MANZANILLA_UI;
+  const languages = /* @__PURE__ */ Object.create(null);
+  catalogue.languages.forEach((language) => {
+    languages[language.code] = language;
+  });
   const translationLanguages = languages;
   let languageSide = "language";
   let appearance = "dark";
   const themeIcon = () => appearance === "light" ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M20 15.7A8.5 8.5 0 0 1 8.3 4 8.5 8.5 0 1 0 20 15.7Z"/></svg>' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>';
-  const copy = {
-    en: { welcome: "How can I help?", reception: "Hotel assistance", ready: "Ready when you are.", start: "Start conversation", listen: "Listening", speaking: "Speaking", connect: "Connecting", end: "End conversation", translate: "Live translation", quiet: "The microphone stays off until you start.", draft: "Save this message?", save: "Save message", cancel: "Cancel", saved: "Saved for reception", local: "Saved on this computer. Not sent to a staff member.", message: "Leave a message", operator: "Contact reception", noOperator: "An operator connection is not set up. Please use the hotel’s posted contact number.", request: "Ask about your stay, arrival instructions, or a message for reception.", begin: "Speak. We translate both ways." },
-    es: { welcome: "¿En qué puedo ayudarte?", reception: "Asistencia del hotel", ready: "Todo listo.", start: "Iniciar conversación", listen: "Escuchando", speaking: "Hablando", connect: "Conectando", end: "Finalizar", translate: "Traducción en directo", quiet: "El micrófono permanece apagado hasta que comiences.", draft: "¿Guardar este mensaje?", save: "Guardar mensaje", cancel: "Cancelar", saved: "Guardado para recepción", local: "Guardado en este ordenador. No enviado al personal.", message: "Dejar un mensaje", operator: "Contactar con recepción", noOperator: "No hay conexión con un operador. Usa el número de contacto indicado por el hotel.", request: "Pregunta sobre tu estancia, la llegada o deja un mensaje para recepción.", begin: "Habla con naturalidad y espera tu turno." },
-    ja: { welcome: "お手伝いします", reception: "ホテルのご案内", ready: "準備ができました", start: "会話を開始", listen: "お話を伺っています", speaking: "話しています", connect: "接続中", end: "会話を終了", translate: "リアルタイム通訳", quiet: "開始するまでマイクはオフです。", draft: "このメッセージを保存しますか？", save: "保存する", cancel: "キャンセル", saved: "受付へのメッセージを保存しました", local: "このパソコンに保存しました。スタッフにはまだ送信されていません。", message: "メッセージを残す", operator: "受付に連絡", noOperator: "オペレーターへの接続は未設定です。ホテルに掲示された連絡先をご利用ください。", request: "ご滞在や到着についてのご質問、または受付へのメッセージをどうぞ。", begin: "受付の方と交互にお話しください。" }
-  };
-  if (native) {
-    copy.en.local = "Saved on this device. Not sent to a staff member.";
-    copy.es.local = "Guardado en este dispositivo. No enviado al personal.";
-    copy.ja.local = "この端末に保存しました。スタッフにはまだ送信されていません。";
-  }
-  Object.assign(copy, {
-    zh: { ...copy.en, welcome: "有什么可以帮您？", ready: "准备好了", start: "开始对话", listen: "正在聆听", speaking: "正在说话", connect: "正在连接", end: "结束对话", draft: "保存这条留言？", save: "保存留言", cancel: "取消", message: "留下留言", operator: "联系前台" },
-    fr: { ...copy.en, welcome: "Comment puis-je vous aider ?", ready: "À votre écoute.", start: "Commencer", listen: "Je vous écoute", speaking: "Je vous réponds", connect: "Connexion", end: "Terminer", draft: "Enregistrer ce message ?", save: "Enregistrer", cancel: "Annuler", message: "Laisser un message", operator: "Contacter la réception" },
-    de: { ...copy.en, welcome: "Wie kann ich helfen?", ready: "Bereit für Sie.", start: "Gespräch starten", listen: "Ich höre zu", speaking: "Ich antworte", connect: "Verbinden", end: "Beenden", draft: "Nachricht speichern?", save: "Speichern", cancel: "Abbrechen", message: "Nachricht hinterlassen", operator: "Rezeption kontaktieren" },
-    it: { ...copy.en, welcome: "Come posso aiutarti?", ready: "Sono qui per te.", start: "Inizia", listen: "Ti ascolto", speaking: "Sto rispondendo", connect: "Connessione", end: "Termina", draft: "Salvare il messaggio?", save: "Salva", cancel: "Annulla", message: "Lascia un messaggio", operator: "Contatta la reception" },
-    pt: { ...copy.en, welcome: "Como posso ajudar?", ready: "Tudo pronto.", start: "Começar", listen: "Estou a ouvir", speaking: "A responder", connect: "A ligar", end: "Terminar", draft: "Guardar a mensagem?", save: "Guardar", cancel: "Cancelar", message: "Deixar mensagem", operator: "Contactar a receção" }
-  });
-  const confirmationCopy = {
-    en: { prepared: "Review your message.", notSent: "Not sent.", continue: "Continue", saving: "Saving…" },
-    es: { prepared: "Revisa tu mensaje.", notSent: "No enviado.", continue: "Continuar", saving: "Guardando…" },
-    ja: { prepared: "メッセージを確認", notSent: "未送信", continue: "続ける", saving: "保存中…" },
-    zh: { prepared: "确认留言", notSent: "未发送", continue: "继续", saving: "保存中…" },
-    fr: { prepared: "Vérifiez votre message.", notSent: "Non envoyé.", continue: "Continuer", saving: "Enregistrement…" },
-    de: { prepared: "Nachricht prüfen.", notSent: "Nicht gesendet.", continue: "Weiter", saving: "Speichern…" },
-    it: { prepared: "Controlla il messaggio.", notSent: "Non inviato.", continue: "Continua", saving: "Salvataggio…" },
-    pt: { prepared: "Reveja a mensagem.", notSent: "Não enviado.", continue: "Continuar", saving: "A guardar…" }
-  };
-  Object.entries(confirmationCopy).forEach(([language, words]) => Object.assign(copy[language], words));
-  const conciergeCopy = {
-    en: ["Check in", "Talk to a person", "Get a taxi", "Ask anything"],
-    es: ["Llegada al hotel", "Hablar con alguien", "Pedir un taxi", "Hacer una pregunta"],
-    ja: ["チェックイン", "スタッフと話す", "タクシーを呼ぶ", "質問する"],
-    zh: ["办理入住", "联系工作人员", "叫出租车", "咨询问题"],
-    fr: ["Arrivée à l’hôtel", "Parler à quelqu’un", "Demander un taxi", "Poser une question"],
-    de: ["Einchecken", "Mit jemandem sprechen", "Taxi bestellen", "Eine Frage stellen"],
-    it: ["Check-in", "Parla con una persona", "Chiedi un taxi", "Fai una domanda"],
-    pt: ["Fazer check-in", "Falar com uma pessoa", "Pedir um táxi", "Fazer uma pergunta"]
-  };
   const shortcuts = ["checkin", "operator", "taxi", "question"];
-  const concierge = () => conciergeCopy[state.language] || conciergeCopy.en;
+  const concierge = () => ["Arrival guide", "Request help from reception", "Request a taxi through staff", "Ask about the hotel"].map((message) => uiText(message));
   const greet = (language) => window.MANZANILLA_GREET && window.MANZANILLA_GREET[language] || "";
-  const localeLanguage = (navigator.language || "").slice(0, 2).toLowerCase();
-  const firstLanguage = Object.keys(languages)[0];
-  const initialGuest = hasOwn(languages, localeLanguage) ? localeLanguage : firstLanguage;
-  const state = { page: "idle", mode: "translation", night: false, language: initialGuest, staff_language: initialGuest, demo: !native, connected: false, audioAvailable: false, audioGate: "Checking translation setup…", audio: "off", active: false, phase: "", sessionId: "", generation: null, closed: true, terminated: true, error: "", metrics: "", utterances: /* @__PURE__ */ new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: "", pendingPage: "", micLevel: 0, turns: [] };
+  const state = { page: "idle", mode: "translation", night: false, language: "es", staff_language: "es", demo: !native, connected: false, audioAvailable: false, audioGate: "", audio: "off", active: false, phase: "", sessionId: "", generation: null, closed: true, terminated: true, error: "", metrics: "", utterances: /* @__PURE__ */ new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: "", pendingPage: "", micLevel: 0, turns: [] };
+  Object.assign(state, { distribution: "personal-test", configured: false, connectionState: "unconfigured", services: null, bundledKeyAvailable: false });
+  const serviceNames = ["checkin", "question", "taxi", "operator", "message"];
+  const isHotel = () => state.distribution === "hotel";
+  function serviceReason(name = "") {
+    if (!state.configured || state.connectionState === "unconfigured") return uiText("Hotel services need staff setup.");
+    if (state.connectionState !== "ready") return uiText({
+      checking: "Checking the hotel connection. Please wait.",
+      unauthorized: "The hotel device is not authorized. Please ask staff.",
+      offline: "The hotel connection is unavailable. Please ask staff."
+    }[state.connectionState] || "The hotel connection is unavailable. Please ask staff.");
+    if (!state.services) return uiText("The hotel service needs an update. Please ask staff.");
+    if (name ? !state.services[name] : !serviceNames.some((id) => state.services[id])) return uiText("This service is not configured by the hotel. Please ask staff.");
+    return "";
+  }
+  const serviceNote = (name) => serviceReason(name) ? '<p class="service-reason" role="status">'.concat(esc(serviceReason(name)), "</p>") : "";
+  const serviceChoice = (id, label, busy = false) => '<div class="service-choice">'.concat(action(id, "<strong>".concat(esc(label), "</strong>"), "choice shortcut", busy || !!serviceReason(id), true)).concat(serviceNote(id), "</div>");
+  const reviewBlocked = () => !!state.operation && !state.operation.reconciliationPending && !!serviceReason(state.operation.action);
+  const confirmationReason = () => {
+    var _a;
+    return serviceReason(((_a = state.operation) == null ? void 0 : _a.action) || state.requestedAction || "");
+  };
   let queuedShortcut = "";
   const captionNodes = /* @__PURE__ */ new Map();
   const turnLedger = new window.ManzanillaLanguageTurns();
@@ -73,37 +57,52 @@
     micOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8M3 3l18 18"/></svg>'
   };
   const esc = (value) => String(value != null ? value : "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  const t = () => copy[state.language] || copy.en;
+  function uiText(message, values = {}) {
+    const locale = hasOwn(languages, state.language) ? state.language : "es";
+    const generic = catalogue.messages["This service is unavailable. Please ask hotel staff."][locale];
+    const text = catalogue.messages[message] && catalogue.messages[message][locale];
+    if (typeof text !== "string" || !text.trim()) return generic;
+    const names = text.match(/\{[A-Za-z_][A-Za-z0-9_]*\}/g) || [];
+    if (names.some((name) => !hasOwn(values, name.slice(1, -1))) || Object.keys(values).some((name) => names.indexOf("{" + name + "}") < 0)) return generic;
+    return text.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name) => String(values[name]));
+  }
   const langName = (language) => {
     var _a, _b;
     return ((_a = translationLanguages[language]) == null ? void 0 : _a.native) || ((_b = languages[language]) == null ? void 0 : _b.native) || language;
   };
-  const languagePicker = (side, label) => '<section class="language-side" data-keypad="'.concat(languageSide === side, '"><label for="').concat(side, '">').concat(label, '</label><select id="').concat(side, '" data-language-side="').concat(side, '" lang="').concat(state[side], '" dir="').concat(languageDir(state[side]), '" aria-describedby="').concat(side, '-hint" ').concat(state.audio !== "off" ? "disabled" : "", ">").concat(Object.entries(translationLanguages).map(([id, item]) => '<option value="'.concat(id, '" lang="').concat(id, '" dir="').concat(languageDir(id), '" ').concat(state[side] === id ? "selected" : "", ">").concat(esc(item.native), "</option>")).join(""), '</select><small id="').concat(side, '-hint">').concat(side === "language" ? "The language you speak" : "The language reception speaks", "</small></section>");
+  const languagePicker = (side, label) => '<section class="language-side" data-keypad="'.concat(languageSide === side, '"><label for="').concat(side, '">').concat(esc(label), '</label><select id="').concat(side, '" data-language-side="').concat(side, '" lang="').concat(state[side], '" dir="').concat(languageDir(state[side]), '" aria-describedby="').concat(side, '-hint" ').concat(state.audio !== "off" ? "disabled" : "", ">").concat(Object.entries(translationLanguages).map(([id, item]) => '<option value="'.concat(id, '" lang="').concat(id, '" dir="').concat(languageDir(id), '" ').concat(state[side] === id ? "selected" : "", ">").concat(esc(item.native), "</option>")).join(""), '</select><small id="').concat(side, '-hint">').concat(esc(uiText(side === "language" ? "The language you speak" : "The language reception speaks")), "</small></section>");
   const send = (action2, detail = {}) => {
     if (!native) return;
     const scope = state.sessionId && !["start", "info", "languages", "appearance", "night", "settings", "voice_setup", "apply_update", "check_updates"].includes(action2) ? { session_id: state.sessionId, ...state.generation === null ? {} : { generation: state.generation } } : {};
     window.ManzaniaNative.postMessage(JSON.stringify({ action: action2, ...scope, ...detail }));
   };
-  const action = (name, label, className = "primary", disabled = false) => '<button type="button" class="'.concat(className, '" data-action="').concat(name, '" ').concat(disabled ? "disabled" : "", ">").concat(label, "</button>");
+  const action = (name, label, className = "primary", disabled = false, trustedMarkup = false) => '<button type="button" class="'.concat(className, '" data-action="').concat(name, '" ').concat(disabled ? "disabled" : "", ">").concat(trustedMarkup ? label : esc(label), "</button>");
   const fine = (text) => '<p class="fine">'.concat(esc(text), "</p>");
   const operationField = (field, index) => {
     const limit = Number.isInteger(field.max_length) && field.max_length > 0 ? field.max_length : { original_request: 4e3, guest_name: 100, room_number: 20, destination: 300, pickup_time: 100, query: 300 }[field.name] || 300;
-    const attrs = 'id="operation-field-'.concat(index, '" name="').concat(esc(field.name), '" maxlength="').concat(limit, '" ').concat(field.required ? "required" : "", " ").concat(state.operation.pending ? "disabled" : "", ' autocomplete="off" dir="auto"');
+    const attrs = 'id="operation-field-'.concat(index, '" name="').concat(esc(field.name), '" maxlength="').concat(limit, '" ').concat(field.required ? "required" : "", " ").concat(state.operation.pending || state.operation.reconciliationPending ? "disabled" : "", ' autocomplete="off" dir="auto"');
     const value = esc(state.operation.values[field.name] || "");
-    return '<label for="operation-field-'.concat(index, '">').concat(esc(field.label)).concat(field.required ? " *" : "").concat(field.name === "original_request" ? "<textarea ".concat(attrs, ">").concat(value, "</textarea>") : "<input ".concat(attrs, ' value="').concat(value, '">'), "</label>");
+    const labels = { original_request: "Exact message to send to staff", destination: "Destination", pickup_time: "Pickup time", query: "Your hotel question", guest_name: state.operation.action === "message" ? "Guest name (optional)" : "Guest name", room_number: state.operation.action === "message" ? "Room number (optional)" : "Room number" };
+    return '<label for="operation-field-'.concat(index, '">').concat(esc(uiText(labels[field.name] || "This service is unavailable. Please ask hotel staff."))).concat(field.required ? " *" : "").concat(field.name === "original_request" ? "<textarea ".concat(attrs, ">").concat(value, "</textarea>") : "<input ".concat(attrs, ' value="').concat(value, '">'), "</label>");
   };
-  const languageDir = (language) => !language ? "auto" : /^(ar|he|fa|ur)(-|$)/.test(language) ? "rtl" : "ltr";
-  const captionSpeaker = (entry) => entry.side === "guest" ? "Guest" : entry.side === "staff" ? "Receptionist" : "speaker unknown";
+  const languageDir = (language) => {
+    var _a;
+    return ((_a = languages[language]) == null ? void 0 : _a.direction) || "auto";
+  };
+  const captionSpeaker = (entry) => entry.side === "guest" ? uiText("Guest") : entry.side === "staff" ? uiText("Receptionist") : uiText("speaker unknown");
   const captionParts = (entry) => ["original", "text"].filter((field) => entry[field] !== "").map((field) => {
-    const output = entry.side === "assistant" ? "Assistant output" : field === "original" ? "Original" : entry.association === "unlinked" ? "Provider output" : "Translation";
-    const speaker = entry.side === "assistant" ? "" : " · ".concat(captionSpeaker(entry)).concat(entry.speakerAttribution === "selected" ? " (selected)" : "");
+    const output = entry.side === "assistant" ? uiText("Assistant output") : field === "original" ? uiText("Original") : entry.association === "unlinked" ? uiText("Provider output") : uiText("Translation");
+    const speaker = entry.speakerAttribution === "selected" ? uiText("{speaker} (selected)", { speaker: captionSpeaker(entry) }) : captionSpeaker(entry);
     const language = entry[field === "original" ? "from" : "to"];
-    return { field, language, text: entry[field], label: "".concat(output).concat(speaker).concat(entry.association === "unlinked" ? " · unlinked" : "").concat(language ? " · ".concat(langName(language)) : "") };
+    let label = entry.side === "assistant" ? output : uiText("{output} · {speaker}", { output, speaker });
+    if (entry.association === "unlinked") label = uiText("{label} · unlinked", { label });
+    if (language) label = uiText("{label} · {language}", { label, language: langName(language) });
+    return { field, language, text: entry[field], label };
   });
   const captionClass = (entry) => "caption caption-".concat(entry.side === "guest" || entry.side === "human" ? "guest" : "reception");
   const captionBody = (entry) => captionParts(entry).map((part, index) => '<div class="caption-part'.concat(index ? " caption-divider" : "", '" data-field="').concat(part.field, '" data-final="').concat(entry.final[part.field], '"><span class="caption-language">').concat(esc(part.label), '</span><p class="').concat(state.mode === "translation" ? part.field === "original" ? "said" : "translated" : "caption-".concat(part.field), '" lang="').concat(esc(part.language || "und"), '" dir="').concat(languageDir(part.language), '">').concat(esc(part.text), "</p></div>")).join("");
   const caption = (entry) => '<article class="'.concat(captionClass(entry), '" data-caption-key="').concat(esc(entry.id), '" aria-atomic="true">').concat(captionBody(entry), "</article>");
-  const turnLabel = (turn) => turn.kind === "assistant" ? "Translation" : turn.side === "guest" ? "Guest · ".concat(langName(state.language)) : turn.side === "staff" ? "Receptionist · ".concat(langName(state.staff_language)) : "Language unclear";
+  const turnLabel = (turn) => turn.kind === "assistant" ? uiText("Translation") : turn.side === "guest" ? uiText("Guest · {language}", { language: langName(state.language) }) : turn.side === "staff" ? uiText("Receptionist · {language}", { language: langName(state.staff_language) }) : uiText("Language unclear");
   const turnClass = (turn) => turn.side === "guest" ? "guest" : turn.side === "staff" ? "reception" : "pending";
   const turnHtml = (turn) => {
     const said = turn.original, translated = turn.text;
@@ -134,10 +133,10 @@
   }
   const conversation = () => {
     if (state.mode === "translation") {
-      if (!state.turns.length) return '<div class="empty-transcript">'.concat(esc(t().begin), "</div>");
+      if (!state.turns.length) return '<div class="empty-transcript">'.concat(esc(uiText("Speak. We translate both ways.")), "</div>");
       return state.turns.map((turn) => '<article class="caption caption-'.concat(turnClass(turn), '" data-turn-id="').concat(esc(turn.id), '" aria-atomic="true">').concat(turnHtml(turn), "</article>")).join("");
     }
-    return state.utterances.size ? [...state.utterances.values()].map(caption).join("") : '<div class="empty-transcript">'.concat(esc("Choose a service or type a message. The microphone stays off."), "</div>");
+    return state.utterances.size ? [...state.utterances.values()].map(caption).join("") : '<div class="empty-transcript">'.concat(esc(uiText("Choose a service or type a message. The microphone stays off.")), "</div>");
   };
   function updateCaption(entry) {
     var _a;
@@ -158,39 +157,50 @@
     node.innerHTML = captionBody(entry);
     if (follow) scroller.scrollTop = scroller.scrollHeight;
   }
-  const phaseLabel = () => ({ connecting: t().connect, ready: "Staff-led support", greeting: "Welcome", thinking: "Translating", speaking: t().speaking, listening: "Live", ending: "Stopping", stopped: "Stopped" })[state.phase] || t().reception;
-  const sessionAudioText = () => ({ off: "Mic off", recording: "Mic on", muted: "Mic muted", stopping: "Releasing mic", unknown: "Mic state unknown · ask staff" })[state.audio];
+  const phaseLabel = () => ({ connecting: uiText("Connecting"), ready: uiText("Staff-led support"), greeting: uiText("Welcome"), thinking: uiText("Translating"), speaking: uiText("Speaking"), listening: uiText("Live"), ending: uiText("Stopping"), stopped: uiText("Stopped") })[state.phase] || uiText("Hotel assistance");
+  const sessionAudioText = () => ({ off: uiText("Mic off"), recording: uiText("Mic on"), muted: uiText("Mic muted"), stopping: uiText("Releasing mic"), unknown: uiText("Mic state unknown · ask staff") })[state.audio];
+  const micLabel = () => ({ recording: uiText("Mute the microphone"), muted: uiText("Unmute the microphone"), off: state.phase === "connecting" ? uiText("Connecting · microphone off") : uiText("Microphone off"), stopping: uiText("Stopping · releasing microphone"), unknown: uiText("Microphone state unknown · ask staff") })[state.audio];
+  function resetMicLevels() {
+    if (state.audio !== "recording") {
+      state.micLevel = 0;
+      state.bands = [0, 0, 0];
+    }
+  }
   const sessionDock = () => {
     if (state.mode === "translation") {
       if (state.terminated) {
         const safe = !state.active && state.audio === "off";
-        return '<div class="session-actions" data-stopped="true"><div class="session-control"><div class="session-control-copy"><strong>Conversation stopped</strong><span>'.concat(esc(sessionAudioText()), "</span></div></div>").concat(action("restart", "Try again", "primary", !safe), "</div>");
+        return '<div class="session-actions" data-stopped="true"><div class="session-control"><div class="session-control-copy"><strong>'.concat(esc(uiText("Stopped")), "</strong><span>").concat(esc(sessionAudioText()), "</span></div></div>").concat(action("restart", uiText("Try again"), "primary", !safe), "</div>");
       }
-      const bands = state.micLevel > 0 ? state.bands || [state.micLevel, state.micLevel, state.micLevel] : [0, 0, 0];
+      resetMicLevels();
+      const bands = state.bands || [state.micLevel, state.micLevel, state.micLevel];
       const muted = state.audio === "muted";
-      const label = muted ? "Unmute the microphone" : "Mute the microphone";
+      const label = micLabel();
       const enabled = state.active && !state.closed && ["recording", "muted"].includes(state.audio);
-      return '<button type="button" class="voice-ball" data-action="mute" data-hearing="'.concat(state.audio === "recording", '" aria-pressed="').concat(muted, '" aria-label="').concat(label, '" ').concat(enabled ? "" : "disabled", ' style="--level:').concat(state.micLevel, ";--b0:").concat(bands[0], ";--b1:").concat(bands[1], ";--b2:").concat(bands[2], '">').concat(muted ? icons.micOff : icons.mic, "</button>");
+      return '<button type="button" class="voice-ball" data-action="mute" data-hearing="'.concat(state.audio === "recording", '" aria-pressed="').concat(muted, '" aria-label="').concat(esc(label), '" ').concat(enabled ? "" : "disabled", ' style="--level:').concat(state.micLevel, ";--b0:").concat(bands[0], ";--b1:").concat(bands[1], ";--b2:").concat(bands[2], '">').concat(state.audio === "recording" ? icons.mic : icons.micOff, "</button>");
     }
     const stopped = state.closed || state.terminated;
     const restart = state.terminated && !state.active && state.audio === "off";
-    const indicator = '<div class="session-icon" role="img" aria-label="Staff-led support">'.concat(icons.bell, "</div>");
-    return '<div class="session-actions" data-stopped="'.concat(stopped, '"><div class="session-control">').concat(indicator, '<div class="session-control-copy"><strong>').concat(esc(stopped ? state.phase === "ending" ? "Stopping…" : "Stopped" : phaseLabel()), "</strong><span>").concat(esc(sessionAudioText()), "</span></div></div>").concat(!stopped ? action("message", "Message staff", "secondary", ["connecting", "greeting"].includes(state.phase)) : "").concat(action(restart ? "restart" : "stop", restart ? "Restart" : stopped ? "Releasing…" : "Stop", "stop", stopped && !restart), "</div>");
+    const indicator = '<div class="session-icon" role="img" aria-label="'.concat(esc(uiText("Staff-led support")), '">').concat(icons.bell, "</div>");
+    return '<div class="session-actions" data-stopped="'.concat(stopped, '"><div class="session-control">').concat(indicator, '<div class="session-control-copy"><strong>').concat(esc(stopped ? state.phase === "ending" ? uiText("Stopping…") : uiText("Stopped") : phaseLabel()), "</strong><span>").concat(esc(sessionAudioText()), "</span></div></div>").concat(!stopped ? '<div class="service-choice">'.concat(action("message", uiText("Message staff"), "secondary", ["connecting", "greeting"].includes(state.phase) || !!serviceReason("message"))).concat(serviceNote("message"), "</div>") : "").concat(action(restart ? "restart" : "stop", restart ? uiText("Restart") : stopped ? uiText("Releasing…") : uiText("Stop"), "stop", stopped && !restart), "</div>");
   };
   function syncMic() {
+    resetMicLevels();
     const button = content.querySelector(".voice-ball");
     if (!button) return;
     const muted = state.audio === "muted";
     button.disabled = !state.active || state.closed || !["recording", "muted"].includes(state.audio);
     button.dataset.hearing = String(state.audio === "recording");
     button.setAttribute("aria-pressed", String(muted));
-    button.setAttribute("aria-label", muted ? "Unmute the microphone" : "Mute the microphone");
-    button.innerHTML = muted ? icons.micOff : icons.mic;
+    button.setAttribute("aria-label", micLabel());
+    button.style.setProperty("--level", String(state.micLevel));
+    (state.bands || [state.micLevel, state.micLevel, state.micLevel]).forEach((band, index) => button.style.setProperty("--b" + index, String(band)));
+    button.innerHTML = state.audio === "recording" ? icons.mic : icons.micOff;
   }
   function renderNotices() {
     const target = document.getElementById("notices");
     target.hidden = !state.notices.length;
-    target.innerHTML = state.notices.map((notice, index) => '<div class="notice'.concat(["error", "failed", "unavailable", "denied"].includes(notice.status) ? " error" : "", '"><span><strong>Service update</strong> ').concat(esc(notice.text), '</span><button data-dismiss="').concat(index, '" aria-label="Dismiss service update">×</button></div>')).join("");
+    target.innerHTML = state.notices.map((notice, index) => '<div class="notice'.concat(["error", "failed", "unavailable", "denied"].includes(notice.status) ? " error" : "", '"><span><strong>').concat(esc(uiText("Service update")), "</strong> ").concat(esc(notice.text), '</span><button data-dismiss="').concat(index, '" aria-label="').concat(esc(uiText("Dismiss service update")), '">×</button></div>')).join("");
   }
   function addNotice(text, status = "") {
     if (!text) return;
@@ -198,70 +208,100 @@
     renderNotices();
   }
   function render() {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g;
     document.documentElement.dataset.appearance = appearance;
     document.documentElement.dataset.translation = state.page === "active" && state.mode === "translation" ? "live" : "";
-    document.documentElement.lang = ["idle", "languages", "translation_languages"].includes(state.page) ? "en" : state.language;
+    document.documentElement.lang = state.language;
+    document.documentElement.dir = languageDir(state.language);
     document.documentElement.dataset.night = String(state.night);
     document.documentElement.dataset.page = state.page;
     document.documentElement.dataset.captureActive = String(state.active);
     const nightToggle = document.getElementById("night-toggle");
-    nightToggle.textContent = state.night ? "After-hours on" : "After-hours reception";
-    nightToggle.setAttribute("aria-label", state.night ? "Turn off after-hours reception" : "Turn on after-hours reception");
+    nightToggle.textContent = state.night ? uiText("After-hours on") : uiText("After-hours reception");
+    nightToggle.setAttribute("aria-label", state.night ? uiText("Turn off after-hours reception") : uiText("Turn on after-hours reception"));
     nightToggle.setAttribute("aria-pressed", String(state.night));
-    nightToggle.hidden = state.page !== "idle";
+    nightToggle.hidden = isHotel() || state.page !== "idle";
     document.getElementById("settings").hidden = !native || !["idle", "error", "translation_languages"].includes(state.page);
-    document.getElementById("settings").setAttribute("aria-label", state.mode === "translation" ? "Fish Audio setup" : "Staff setup");
-    document.getElementById("settings").title = state.mode === "translation" ? "Fish Audio setup" : "Staff setup";
-    document.getElementById("check-updates").hidden = !native || state.page !== "idle";
+    const setupLabel = isHotel() || state.mode !== "translation" ? uiText("Staff setup") : uiText("Fish Audio setup");
+    document.getElementById("settings").setAttribute("aria-label", setupLabel);
+    document.getElementById("settings").title = setupLabel;
+    document.getElementById("check-updates").hidden = isHotel() || !native || state.page !== "idle";
+    if (isHotel()) (_a = document.getElementById("update-offer")) == null ? void 0 : _a.remove();
     content.dataset.page = state.page;
-    document.getElementById("mode-title").textContent = state.night ? "After-hours reception" : "Reception";
-    document.getElementById("connection-text").textContent = state.connected ? "Hotel connected" : "Hotel setup needed";
-    document.getElementById("hotel-label").textContent = state.hotel || "Hotel reception";
+    document.getElementById("mode-title").textContent = state.night ? uiText("After-hours reception") : uiText("Reception");
+    const connection = document.getElementById("connection");
+    connection.hidden = false;
+    connection.dataset.state = state.connectionState;
+    document.getElementById("connection-text").textContent = uiText({
+      unconfigured: "Hotel setup needed",
+      checking: "Checking hotel connection",
+      ready: "Hotel connected",
+      offline: "Hotel connection unavailable",
+      unauthorized: "Hotel authorization required"
+    }[state.connectionState]);
+    document.getElementById("hotel-label").textContent = state.hotel || uiText("Hotel reception");
     document.getElementById("privacy").innerHTML = '<span class="mic-dot'.concat(state.audio === "recording" ? " mic-live" : "", '"></span>').concat(esc(sessionAudioText()));
-    document.getElementById("hardware-hint").textContent = state.active ? "Green or red to stop" : state.page === "translation_languages" ? "Digits: first ten · " + (state.audioAvailable ? "Green: start · " : "Green: setup · ") + "Red: back" : state.night ? "Green: hotel assistance" : "Green: translation";
-    const homeAction = (name, icon, label, note = "") => '<button class="home-action'.concat(name === (state.night ? "reception" : "translation") ? " home-action-main" : "", '" data-action="').concat(name, '">').concat(name === (state.night ? "reception" : "translation") ? '<span class="orb">' + icons.arrow + "</span>" : icon, "<span>").concat(label, "</span>").concat(note ? "<small>" + note + "</small>" : "", "</button>");
+    document.title = uiText("Reception");
+    document.getElementById("check-updates").textContent = uiText("Check updates");
+    document.querySelector(".clock").setAttribute("aria-label", uiText("Local date and time"));
+    document.getElementById("notices").setAttribute("aria-label", uiText("Hotel service updates"));
+    updateClock();
+    const guestLocale = () => '<label class="assist-label" for="guest-locale">'.concat(esc(uiText("Language")), '</label><select id="guest-locale" lang="').concat(state.language, '">').concat(Object.entries(languages).map(([code, item]) => '<option value="'.concat(code, '" lang="').concat(code, '" dir="').concat(item.direction, '" ').concat(state.language === code ? "selected" : "", ">").concat(esc(item.native), "</option>")).join(""), "</select>");
+    const homeAction = (name, icon, label, note = "", unavailable = "") => '<button class="home-action'.concat(name === (state.night ? "reception" : "translation") ? " home-action-main" : "", '" data-action="').concat(name, '" ').concat(unavailable ? "disabled" : "", ">").concat(name === (state.night ? "reception" : "translation") ? '<span class="orb">' + icons.arrow + "</span>" : icon, "<span>").concat(esc(label), "</span>").concat(unavailable || note ? "<small>" + esc(unavailable || note) + "</small>" : "", "</button>");
     const html = {
-      idle: () => '<div class="welcome"><h1>Welcome.</h1><p>'.concat(state.night ? "Self-service hotel assistance." : "Guest and staff support.", '</p></div><nav class="home-actions" aria-label="Reception services">').concat(state.night ? homeAction("reception", icons.bell, "Hotel assistance", "Self-service support") + homeAction("translation", icons.translate, "Live translation", state.audioAvailable ? "Talk to each other" : "Audio unavailable") : homeAction("translation", icons.translate, "Live translation", state.audioAvailable ? "Talk to each other" : "Audio unavailable") + homeAction("reception", icons.bell, "Hotel assistance")).concat(homeAction("request:checkin", icons.bed, "Arrival guide")).concat(homeAction("request:taxi", icons.car, "Taxi request")).concat(homeAction("request:message", icons.message, "Message staff"), '</nav><div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="Switch to ').concat(appearance === "dark" ? "day" : "night", ' mode" title="Day / night mode · keypad 1">').concat(themeIcon(), "</button></div>"),
-      languages: () => '<div class="status-line"><div><h2 class="language-heading">Hotel assistance</h2></div><button class="back" data-action="back">'.concat(icons.back, 'Back</button></div><label class="assist-label" for="assist-language">Language</label><select id="assist-language" class="assist-language" lang="').concat(state.language, '" dir="').concat(languageDir(state.language), '">').concat(Object.entries(languages).map(([id, item]) => '<option value="'.concat(id, '" lang="').concat(id, '" dir="').concat(languageDir(id), '" ').concat(state.language === id ? "selected" : "", ">").concat(esc(item.native), "</option>")).join(""), "</select>").concat(action("assist-go", "Continue", "primary assist-go")),
-      translation_languages: () => '<div class="status-line"><div><h2 class="language-heading">Choose languages</h2><p class="keypad-hint">Guest ↔ Receptionist</p></div><button class="back" data-action="back">'.concat(icons.back, 'Back</button></div><div class="language-pair">').concat(languagePicker("language", "Guest")).concat(languagePicker("staff_language", "Receptionist"), '</div><p id="translation-readiness" class="setup-feedback" role="status">').concat(esc(translationReadiness()), '</p><button type="button" class="primary setup-start" data-action="').concat(native && !state.audioAvailable ? "setup-translation" : "start", '" aria-describedby="translation-readiness" ').concat(state.audio !== "off" || (!native || state.audioAvailable) && sameLanguage() ? "disabled" : "", ">").concat(native && !state.audioAvailable ? "Set up translation" : "Start translation", "</button>"),
-      active: () => state.mode === "translation" ? '<button class="translate-back" data-action="back" aria-label="Back">'.concat(icons.back, '</button><p class="pair-title">').concat(esc(langName(state.language)), " → ").concat(esc(langName(state.staff_language)), '</p><div class="session-scroll"><div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">').concat(conversation(), "</div></div>").concat(sessionDock()) : '<div class="status-line session-top"><div><h2>Hotel assistance</h2><p>'.concat(esc(phaseLabel()), '</p></div><button class="back" data-action="back">').concat(icons.back, "Back</button></div>").concat(state.error ? '<div class="notice error">'.concat(esc(state.error), "</div>") : "", '<div class="session-scroll">').concat(!state.closed ? '<div class="shortcut-list">'.concat(shortcuts.map((id, i) => action(id, '<span class="key">'.concat(i + 1, "</span><strong>").concat(esc(concierge()[i]), "</strong>"), "choice shortcut", ["connecting", "greeting"].includes(state.phase))).join(""), "</div>") : "", '<div class="conversation" role="log" aria-label="Conversation transcript" aria-live="polite">').concat(conversation(), "</div>").concat(state.metrics ? '<p class="metrics">'.concat(esc(state.metrics), "</p>") : "", "</div>").concat(sessionDock()),
+      idle: () => '<div class="welcome"><h1>'.concat(esc(uiText("Welcome.")), "</h1><p>").concat(esc(uiText(state.night ? "Self-service hotel assistance." : "Guest and staff support.")), "</p></div>").concat(guestLocale(), '<nav class="home-actions" aria-label="').concat(esc(uiText("Reception services")), '">').concat(state.night ? homeAction("reception", icons.bell, uiText("Hotel assistance"), uiText("Self-service support"), serviceReason()) + homeAction("translation", icons.translate, uiText("Live translation"), state.audioAvailable ? uiText("Talk to each other") : uiText("Audio unavailable")) : homeAction("translation", icons.translate, uiText("Live translation"), state.audioAvailable ? uiText("Talk to each other") : uiText("Audio unavailable")) + homeAction("reception", icons.bell, uiText("Hotel assistance"), "", serviceReason())).concat(homeAction("request:checkin", icons.bed, uiText("Arrival guide"), "", serviceReason("checkin"))).concat(homeAction("request:taxi", icons.car, uiText("Request a taxi through staff"), "", serviceReason("taxi"))).concat(homeAction("request:message", icons.message, uiText("Message staff"), "", serviceReason("message")), "</nav>").concat(!isHotel() ? '<div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="'.concat(esc(uiText("Appearance")), '" title="').concat(esc(uiText("Appearance")), '">').concat(themeIcon(), "</button></div>") : "").concat(!isHotel() && state.bundledKeyAvailable ? fine(uiText("Personal-test build · bundled Fish key")) + fine(uiText("The bundled Fish key is extractable. Use a disposable, limited key and rotate it after testing.")) : ""),
+      languages: () => '<div class="status-line"><div><h2 class="language-heading">'.concat(esc(uiText("Hotel assistance")), '</h2></div><button class="back" data-action="back">').concat(icons.back).concat(esc(uiText("Back")), '</button></div><label class="assist-label" for="assist-language">').concat(esc(uiText("Language")), '</label><select id="assist-language" class="assist-language" lang="').concat(state.language, '" dir="').concat(languageDir(state.language), '">').concat(Object.entries(languages).map(([id, item]) => '<option value="'.concat(id, '" lang="').concat(id, '" dir="').concat(languageDir(id), '" ').concat(state.language === id ? "selected" : "", ">").concat(esc(item.native), "</option>")).join(""), '</select><div class="service-availability">').concat([...shortcuts, "message"].map((id, i) => "<div><strong>".concat(esc(i < shortcuts.length ? concierge()[i] : uiText("Message staff")), "</strong>").concat(serviceNote(id), "</div>")).join(""), "</div>").concat(serviceNote()).concat(action("assist-go", uiText("Continue"), "primary assist-go", !!serviceReason(queuedShortcut))),
+      translation_languages: () => '<div class="status-line"><div><h2 class="language-heading">'.concat(esc(uiText("Choose languages")), '</h2><p class="keypad-hint">').concat(esc(uiText("Guest ↔ Receptionist")), '</p></div><button class="back" data-action="back">').concat(icons.back).concat(esc(uiText("Back")), '</button></div><div class="language-pair">').concat(languagePicker("language", uiText("Guest"))).concat(languagePicker("staff_language", uiText("Receptionist")), '</div><p id="translation-readiness" class="setup-feedback" role="status">').concat(esc(translationReadiness()), '</p><button type="button" class="primary setup-start" data-action="').concat(native && !state.audioAvailable ? "setup-translation" : "start", '" aria-describedby="translation-readiness" ').concat(state.audio !== "off" || (!native || state.audioAvailable) && sameLanguage() ? "disabled" : "", ">").concat(esc(uiText(native && !state.audioAvailable ? "Set up translation" : "Start translation")), "</button>"),
+      active: () => state.mode === "translation" ? '<button class="translate-back" data-action="back" aria-label="'.concat(esc(uiText("Back")), '">').concat(icons.back, '</button><p class="pair-title" dir="ltr"><bdi>').concat(esc(langName(state.language)), "</bdi> → <bdi>").concat(esc(langName(state.staff_language)), '</bdi></p><div class="session-scroll"><div class="conversation" role="log" aria-label="').concat(esc(uiText("Conversation transcript")), '" aria-live="polite">').concat(conversation(), "</div></div>").concat(sessionDock()) : '<div class="status-line session-top"><div><h2>'.concat(esc(uiText("Hotel assistance")), "</h2><p>").concat(esc(phaseLabel()), '</p></div><button class="back" data-action="back">').concat(icons.back).concat(esc(uiText("Back")), "</button></div>").concat(state.error ? '<div class="notice error">'.concat(esc(state.error), "</div>") : "", '<div class="session-scroll">').concat(!state.closed ? '<div class="shortcut-list">'.concat(shortcuts.map((id, i) => serviceChoice(id, concierge()[i], ["connecting", "greeting"].includes(state.phase))).join(""), "</div>") : "", '<div class="conversation" role="log" aria-label="').concat(esc(uiText("Conversation transcript")), '" aria-live="polite">').concat(conversation(), "</div>").concat(state.metrics ? '<p class="metrics">'.concat(esc(state.metrics), "</p>") : "", "</div>").concat(sessionDock()),
       operation_form: () => {
-        var _a2, _b2, _c2, _d2, _e2, _f, _g;
-        return '<div class="status-line"><h2>'.concat(esc(((_a2 = state.operation) == null ? void 0 : _a2.action) === "message" ? "Message staff" : concierge()[shortcuts.indexOf((_b2 = state.operation) == null ? void 0 : _b2.action)] || "Hotel request"), '</h2><button class="back" data-action="back">').concat(icons.back, 'Back</button></div><form id="operation-form" class="operation-form" aria-busy="').concat(!!((_c2 = state.operation) == null ? void 0 : _c2.pending), '">').concat((((_d2 = state.operation) == null ? void 0 : _d2.fields) || []).map(operationField).join(""), '<div class="button-row"><button type="submit" class="primary" ').concat(((_e2 = state.operation) == null ? void 0 : _e2.pending) ? "disabled" : "", ">").concat(((_f = state.operation) == null ? void 0 : _f.pending) ? "Reviewing…" : "Review", "</button>").concat(action("cancel-operation", esc(t().cancel), "secondary", (_g = state.operation) == null ? void 0 : _g.pending), "</div></form>").concat(action("stop", "End", "stop"));
+        var _a2, _b2, _c2, _d2, _e2, _f2, _g2, _h, _i, _j;
+        return '<div class="status-line"><h2>'.concat(esc(((_a2 = state.operation) == null ? void 0 : _a2.action) === "message" ? uiText("Message staff") : concierge()[shortcuts.indexOf((_b2 = state.operation) == null ? void 0 : _b2.action)] || uiText("Hotel request")), '</h2><button class="back" data-action="back">').concat(icons.back).concat(esc(uiText("Back")), "</button></div>").concat(guestLocale()).concat(serviceNote((_c2 = state.operation) == null ? void 0 : _c2.action), '<form id="operation-form" class="operation-form" aria-busy="').concat(!!((_d2 = state.operation) == null ? void 0 : _d2.pending), '">').concat((((_e2 = state.operation) == null ? void 0 : _e2.fields) || []).map(operationField).join(""), '<div class="button-row"><button type="submit" class="primary" ').concat(((_f2 = state.operation) == null ? void 0 : _f2.pending) || reviewBlocked() ? "disabled" : "", ">").concat(esc(uiText(((_g2 = state.operation) == null ? void 0 : _g2.pending) ? "Reviewing…" : ((_h = state.operation) == null ? void 0 : _h.reconciliationPending) ? "Retry" : "Review")), "</button>").concat(action("cancel-operation", uiText("Cancel"), "secondary", ((_i = state.operation) == null ? void 0 : _i.pending) || ((_j = state.operation) == null ? void 0 : _j.reconciliationPending)), "</div></form>").concat(action("stop", uiText("End"), "stop"));
       },
       confirming: () => {
-        var _a2, _b2, _c2, _d2, _e2, _f;
-        return '<div class="status-line"><h2>Confirm request?</h2><button class="back" data-action="back">'.concat(icons.back, 'Back</button></div><div class="draft" dir="auto">').concat(esc(((_a2 = state.draft) == null ? void 0 : _a2.message) || ""), "</div>").concat(fine(((_b2 = state.draft) == null ? void 0 : _b2.attempted) ? state.draft.approved === false ? "No cancellation receipt yet. Retry to check the result." : "No receipt yet. Retry the same request to check its result." : "Confirm only if the details are correct."), '<div class="button-row">').concat(action(((_c2 = state.draft) == null ? void 0 : _c2.attempted) ? "retry-draft" : "confirm", state.confirmed ? ((_d2 = state.draft) == null ? void 0 : _d2.approved) === false ? "Cancelling…" : "Sending…" : ((_e2 = state.draft) == null ? void 0 : _e2.attempted) ? "Retry" : "Confirm", "primary", state.confirmed)).concat(state.operation ? action("edit-draft", "Edit", "secondary", state.confirmed || ((_f = state.draft) == null ? void 0 : _f.attempted)) : "").concat(action("cancel-draft", esc(t().cancel), "secondary", state.confirmed), "</div>");
+        var _a2, _b2, _c2, _d2, _e2, _f2, _g2;
+        return '<div class="status-line"><h2>'.concat(esc(uiText("Confirm request?")), '</h2><button class="back" data-action="back">').concat(icons.back).concat(esc(uiText("Back")), '</button></div><div class="draft" dir="auto">').concat(esc(((_a2 = state.draft) == null ? void 0 : _a2.message) || ""), "</div>").concat(confirmationReason() ? fine(confirmationReason()) : "").concat(fine(((_b2 = state.draft) == null ? void 0 : _b2.attempted) ? state.draft.approved === false ? uiText("No cancellation receipt yet. Retry to check the result.") : uiText("No receipt yet. Retry the same request to check its result.") : uiText("Confirm only if the details are correct.")), '<div class="button-row">').concat(action(((_c2 = state.draft) == null ? void 0 : _c2.attempted) ? "retry-draft" : "confirm", state.confirmed ? ((_d2 = state.draft) == null ? void 0 : _d2.approved) === false ? uiText("Cancelling…") : uiText("Sending…") : ((_e2 = state.draft) == null ? void 0 : _e2.attempted) ? uiText("Retry") : uiText("Confirm"), "primary", state.confirmed || !((_f2 = state.draft) == null ? void 0 : _f2.attempted) && !!confirmationReason())).concat(state.operation ? action("edit-draft", uiText("Edit"), "secondary", state.confirmed || ((_g2 = state.draft) == null ? void 0 : _g2.attempted)) : "").concat(action("cancel-draft", uiText("Cancel"), "secondary", state.confirmed), "</div>");
       },
       saved: () => {
-        var _a2, _b2;
-        return '<h2>Request receipt</h2><section class="request-receipt"><p class="lead" dir="auto">'.concat(esc(((_a2 = state.outcome) == null ? void 0 : _a2.text) || "No receipt returned. Ask staff to check."), "</p>").concat(((_b2 = state.outcome) == null ? void 0 : _b2.receipt) ? '<div class="receipt" dir="auto">'.concat(esc(state.outcome.receipt), "</div>") : "", '</section><div class="button-row">').concat(action("continue", esc(t().continue))).concat(action("stop", "End", "secondary"), "</div>");
+        var _a2, _b2, _c2;
+        return "<h2>".concat(esc(uiText("Request receipt")), '</h2><section class="request-receipt"><p class="lead" dir="auto">').concat(esc(((_a2 = state.outcome) == null ? void 0 : _a2.text) || uiText("No receipt returned. Ask staff to check.")), "</p>").concat(((_b2 = state.outcome) == null ? void 0 : _b2.receipt) ? '<div class="receipt" dir="auto"><bdi>'.concat(esc(state.outcome.receipt), "</bdi></div>") : "", '</section><div class="button-row">').concat(((_c2 = state.outcome) == null ? void 0 : _c2.helpAction) === "operator" ? action("receipt-help", uiText("Request help from reception")) : "").concat(action("continue", uiText("Continue"))).concat(action("stop", uiText("End"), "secondary"), "</div>");
       },
-      error: () => '<div class="status-line"><h2>Conversation unavailable</h2><button class="back" data-action="back">'.concat(icons.back, 'Back</button></div><div class="notice error">').concat(esc(state.error || "Please ask reception for help."), "</div>").concat(fine(state.audio === "off" ? "Microphone off. Staff can check this device’s setup." : "Audio release is not confirmed. Ask reception for help before restarting."), '<div class="button-row">').concat(action("retry", "Try again", "primary", state.audio !== "off")).concat(action("home", "Back to home", "secondary"), "</div>")
+      error: () => '<div class="status-line"><h2>'.concat(esc(uiText("Conversation unavailable")), '</h2><button class="back" data-action="back">').concat(icons.back).concat(esc(uiText("Back")), '</button></div><div class="notice error">').concat(esc(state.error || uiText("Please ask reception for help.")), "</div>").concat(fine(state.audio === "off" ? uiText("Microphone off. Staff can check this device’s setup.") : uiText("Audio release is not confirmed. Ask reception for help before restarting.")), '<div class="button-row">').concat(action("retry", uiText("Try again"), "primary", state.audio !== "off")).concat(action("home", uiText("Back to home"), "secondary"), "</div>")
     };
     const focusedElement = document.activeElement;
-    const focusedAction = (_a = focusedElement == null ? void 0 : focusedElement.dataset) == null ? void 0 : _a.action;
-    const focusedSelect = (_b = focusedElement == null ? void 0 : focusedElement.dataset) == null ? void 0 : _b.languageSide;
+    const focusedAction = (_b = focusedElement == null ? void 0 : focusedElement.dataset) == null ? void 0 : _b.action;
+    const focusedSelect = (_c = focusedElement == null ? void 0 : focusedElement.dataset) == null ? void 0 : _c.languageSide;
     const focusedAssist = (focusedElement == null ? void 0 : focusedElement.id) === "assist-language";
+    const focusedLocale = (focusedElement == null ? void 0 : focusedElement.id) === "guest-locale";
     const focusedInput = (focusedElement == null ? void 0 : focusedElement.closest("#operation-form")) ? { name: focusedElement.name, start: focusedElement.selectionStart, end: focusedElement.selectionEnd } : null;
     const scrollTop = content.scrollTop;
     const scrolls = [...content.querySelectorAll(".session-scroll,.draft,.language-list")].map((element) => ({ top: element.scrollTop, follow: element.classList.contains("session-scroll") && element.scrollHeight - element.clientHeight - element.scrollTop < 60 }));
+    const retainedTurns = new Map(state.turns.filter((turn) => {
+      var _a2;
+      return (_a2 = turn.node) == null ? void 0 : _a2.isConnected;
+    }).map((turn) => [turn.id, turn.node]));
     captionNodes.clear();
     content.innerHTML = (html[state.page] || html.idle)();
+    if (["idle", "languages", "translation_languages"].includes(state.page)) content.insertAdjacentHTML("beforeend", fine(uiText("Interface translations have not been reviewed by a human.")));
     content.querySelectorAll("[data-caption-key]").forEach((node) => captionNodes.set(node.dataset.captionKey, node));
     const turnNodes = new Map([...content.querySelectorAll("[data-turn-id]")].map((node) => [node.dataset.turnId, node]));
     state.turns.forEach((turn) => {
-      turn.node = turnNodes.get(turn.id) || null;
+      const rendered = turnNodes.get(turn.id);
+      const retained = retainedTurns.get(turn.id);
+      if (rendered && retained) {
+        retained.className = rendered.className;
+        rendered.replaceWith(retained);
+        turn.node = retained;
+      } else turn.node = rendered || null;
     });
     content.scrollTop = scrollTop;
     [...content.querySelectorAll(".session-scroll,.draft,.language-list")].forEach((element, index) => {
       const previous = scrolls[index];
       element.scrollTop = (previous == null ? void 0 : previous.follow) ? element.scrollHeight : (previous == null ? void 0 : previous.top) || 0;
     });
-    if (focusedAction) (_c = [...content.querySelectorAll("[data-action]")].find((button) => button.dataset.action === focusedAction)) == null ? void 0 : _c.focus({ preventScroll: true });
-    if (focusedSelect) (_d = content.querySelector('[data-language-side="'.concat(focusedSelect, '"]'))) == null ? void 0 : _d.focus({ preventScroll: true });
-    if (focusedAssist) (_e = content.querySelector("#assist-language")) == null ? void 0 : _e.focus({ preventScroll: true });
+    if (focusedAction) (_d = [...content.querySelectorAll("[data-action]")].find((button) => button.dataset.action === focusedAction)) == null ? void 0 : _d.focus({ preventScroll: true });
+    if (focusedSelect) (_e = content.querySelector('[data-language-side="'.concat(focusedSelect, '"]'))) == null ? void 0 : _e.focus({ preventScroll: true });
+    if (focusedAssist) (_f = content.querySelector("#assist-language")) == null ? void 0 : _f.focus({ preventScroll: true });
+    if (focusedLocale) (_g = content.querySelector("#guest-locale")) == null ? void 0 : _g.focus({ preventScroll: true });
     if (focusedInput) {
       const input = [...content.querySelectorAll("#operation-form input,#operation-form textarea")].find((element) => element.name === focusedInput.name);
       input == null ? void 0 : input.focus({ preventScroll: true });
@@ -279,7 +319,7 @@
     if (changed) render();
   }
   function toggleAppearance() {
-    if (state.page !== "idle" || state.active) return;
+    if (isHotel() || state.page !== "idle" || state.active) return;
     activity();
     applyAppearance(appearance === "light" ? "dark" : "light");
     send("appearance", { value: appearance });
@@ -288,17 +328,17 @@
     return state.mode === "translation" && state.language === state.staff_language;
   }
   function translationReadiness() {
-    if (state.audio !== "off") return state.audio === "unknown" ? "Microphone release could not be confirmed. Retry after the previous conversation closes." : "Waiting for the previous conversation to release the microphone.";
-    if (!state.audioAvailable) return state.audioGate;
-    if (sameLanguage()) return "Choose two different languages to start translation.";
-    return "Ready. Tap Start translation to turn on the microphone.";
+    if (state.audio !== "off") return state.audio === "unknown" ? uiText("Microphone release could not be confirmed. Retry after the previous conversation closes.") : uiText("Waiting for the previous conversation to release the microphone.");
+    if (!state.audioAvailable) return state.audioGate || uiText("Checking translation setup…");
+    if (sameLanguage()) return uiText("Choose two different languages to start translation.");
+    return uiText("Ready. Tap Start translation to turn on the microphone.");
   }
   function page(next) {
     state.page = next;
     render();
   }
   function toggleNight() {
-    if (state.page !== "idle" || state.active) return;
+    if (isHotel() || state.page !== "idle" || state.active) return;
     activity();
     state.night = !state.night;
     state.mode = state.night ? "reception" : "translation";
@@ -307,6 +347,10 @@
   }
   function chooseMode(mode) {
     if (state.active || state.audio !== "off") return;
+    if (mode === "reception" && serviceReason()) {
+      toast(serviceReason());
+      return;
+    }
     queuedShortcut = "";
     state.mode = mode;
     state.error = "";
@@ -329,24 +373,34 @@
     renderNotices();
   }
   function selectLanguage(side, language) {
+    if (state.audio !== "off" || !hasOwn(languages, language) || state.active && (state.mode === "translation" || side !== "language")) return;
+    if (state[side] === language) return;
     state[side] = language;
     selected[side] = true;
+    if (side === "language" && state.configured) {
+      state.connectionState = "checking";
+      state.services = null;
+    }
     send("languages", { language: state.language, staff_language: state.staff_language });
   }
   function start(restart = false) {
     var _a, _b;
     if (state.active || state.phase === "ending" || state.audio !== "off") return;
+    if (state.mode === "reception" && serviceReason(queuedShortcut)) {
+      toast(serviceReason(queuedShortcut));
+      return;
+    }
     if (state.mode === "translation" && !state.audioAvailable) {
       if (native) send("voice_setup");
-      else toast(state.audioGate);
+      else toast(state.audioGate || uiText("Checking translation setup…"));
       return;
     }
     if (sameLanguage()) {
-      toast("Choose a different guest language for translation.");
+      toast(uiText("Choose a different guest language for translation."));
       return;
     }
     if (!native) {
-      state.error = "Voice conversations require the reception tablet. No microphone has been opened.";
+      state.error = uiText("Voice conversations require the reception tablet. No microphone has been opened.");
       page("error");
       return;
     }
@@ -376,8 +430,13 @@
   }
   function chooseShortcut(name) {
     if (!state.active || state.closed || state.mode !== "reception" || state.page !== "active" || ["connecting", "greeting"].includes(state.phase)) return;
+    if (serviceReason(name)) {
+      toast(serviceReason(name));
+      return;
+    }
+    state.requestedAction = name;
     if (state.demo) {
-      addNotice("Hotel requests require a connected reception tablet.", "unavailable");
+      addNotice(uiText("Hotel requests require a connected reception tablet."), "unavailable");
       return;
     }
     send(name);
@@ -430,11 +489,15 @@
     }, 5500);
   }
   function perform(name) {
-    var _a, _b;
+    var _a, _b, _c, _d;
     activity();
     if (name.startsWith("request:")) {
       const request = name.split(":")[1];
       if (state.page !== "idle" || !["checkin", "taxi", "message"].includes(request)) return;
+      if (serviceReason(request)) {
+        toast(serviceReason(request));
+        return;
+      }
       chooseMode("reception");
       if (state.page === "languages") queuedShortcut = request;
       return;
@@ -512,8 +575,18 @@
       case "message":
         chooseShortcut("message");
         break;
+      case "receipt-help":
+        if (state.page !== "saved" || ((_b = state.outcome) == null ? void 0 : _b.helpAction) !== "operator" || !state.active || state.closed) return;
+        if (serviceReason("operator")) {
+          toast(serviceReason("operator"));
+          return;
+        }
+        state.outcome = null;
+        page("active");
+        chooseShortcut("operator");
+        break;
       case "cancel-operation":
-        if (!((_b = state.operation) == null ? void 0 : _b.pending)) {
+        if (!((_c = state.operation) == null ? void 0 : _c.pending) && !((_d = state.operation) == null ? void 0 : _d.reconciliationPending)) {
           state.operation = null;
           page("active");
         }
@@ -529,6 +602,10 @@
       case "cancel-draft":
         if (!state.active || state.closed || !state.draft || state.confirmed) return;
         if (name === "retry-draft" && !state.draft.attempted) return;
+        if (name === "confirm" && !state.draft.attempted && confirmationReason()) {
+          toast(confirmationReason());
+          return;
+        }
         state.confirmed = true;
         if (name !== "retry-draft") state.draft.approved = name === "confirm";
         state.draft.attempted = true;
@@ -556,6 +633,10 @@
   content.addEventListener("change", (event) => {
     const side = event.target.dataset.languageSide;
     if (side) perform("pair:".concat(side, ":").concat(event.target.value));
+    else if (event.target.id === "assist-language" || event.target.id === "guest-locale") {
+      selectLanguage("language", event.target.value);
+      render();
+    }
   });
   content.addEventListener("input", (event) => {
     const input = event.target;
@@ -568,8 +649,8 @@
   content.addEventListener("submit", (event) => {
     if (event.target.id !== "operation-form") return;
     event.preventDefault();
-    if (!state.active || state.closed || !state.operation || state.operation.pending) return;
-    for (const input of event.target.querySelectorAll("[required]")) input.setCustomValidity(input.value.trim() ? "" : "Please complete this field.");
+    if (!state.active || state.closed || !state.operation || state.operation.pending || reviewBlocked()) return;
+    for (const input of event.target.querySelectorAll("[required]")) input.setCustomValidity(input.value.trim() ? "" : uiText("Please complete this field."));
     if (!event.target.reportValidity()) return;
     activity();
     const operation = state.operation;
@@ -586,7 +667,9 @@
   });
   document.getElementById("night-toggle").addEventListener("click", toggleNight);
   document.getElementById("settings").addEventListener("click", () => send(state.mode === "translation" ? "voice_setup" : "settings"));
-  document.getElementById("check-updates").addEventListener("click", () => send("check_updates"));
+  document.getElementById("check-updates").addEventListener("click", () => {
+    if (!isHotel()) send("check_updates");
+  });
   function hardware(key) {
     activity();
     if (state.page === "translation_languages" && /^[0-9]$/.test(key)) {
@@ -613,6 +696,7 @@
     else if (state.page === "active" && state.mode === "reception" && /^[1-4]$/.test(key)) chooseShortcut(shortcuts[Number(key) - 1]);
   }
   function offerUpdate(version, text, phase, percent) {
+    if (isHotel()) return;
     let bar = document.getElementById("update-offer");
     if (!bar) {
       bar = document.createElement("button");
@@ -638,14 +722,14 @@
       bar.disabled = true;
       const pct = Number(percent);
       const known = Number.isFinite(pct) && pct >= 0;
-      bar.innerHTML = "".concat(esc(text || "Downloading…"), '<span class="track"><span class="fill" style="width:').concat(known ? Math.min(100, pct) : 0, '%"></span></span>');
+      bar.innerHTML = "".concat(esc(text || uiText("Downloading…")), '<span class="track"><span class="fill" style="width:').concat(known ? Math.min(100, pct) : 0, '%"></span></span>');
       return;
     }
     bar.disabled = false;
-    if (phase === "current") bar.textContent = text || "Up to date. Tap to check again.";
-    else if (phase === "confirm") bar.textContent = text || "Tap to open the installer. The file is already downloaded.";
-    else if (phase === "failed") bar.textContent = text || "Update did not finish. Tap to try the installer again.";
-    else bar.textContent = text || "Update " + version + " is downloaded. Tap to install.";
+    if (phase === "current") bar.textContent = text || uiText("Up to date. Tap to check again.");
+    else if (phase === "confirm") bar.textContent = text || uiText("Tap to open the installer. The file is already downloaded.");
+    else if (phase === "failed") bar.textContent = text || uiText("Update did not finish. Tap to try the installer again.");
+    else bar.textContent = text || uiText("Update {version} is downloaded. Tap to install.", { version });
   }
   function matchesSession(event) {
     if (!state.sessionId || event.session_id !== state.sessionId || !Number.isInteger(event.generation) || event.generation < 0) return false;
@@ -664,13 +748,14 @@
     state.outcome = null;
     queuedShortcut = "";
     if (state.audio !== "off") state.audio = "unknown";
+    if (state.audio === "off") send("languages", { language: state.language, staff_language: state.staff_language });
     if (!preserveHistory) {
       clearGuest();
       state.pendingPage = "";
     }
   }
   function receive(event) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     if (typeof event === "string") {
       try {
         event = JSON.parse(event);
@@ -712,23 +797,43 @@
       return;
     }
     if (type === "connection") {
-      state.connected = event.connected === true;
+      state.connectionState = ["unconfigured", "checking", "ready", "offline", "unauthorized"].includes(event.state) ? event.state : "offline";
+      state.connected = state.connectionState === "ready" && event.connected === true;
+      if (!state.connected && state.connectionState === "ready") state.connectionState = "offline";
       render();
       return;
     }
     if (type === "reception_info") {
+      state.distribution = event.distribution === "hotel" ? "hotel" : "personal-test";
+      state.configured = event.configured === true;
+      state.bundledKeyAvailable = event.bundled_key_available === true;
+      state.services = null;
+      if (event.services_supported !== false && event.services && serviceNames.every((id) => typeof event.services[id] === "boolean")) {
+        state.services = {};
+        serviceNames.forEach((id) => {
+          state.services[id] = event.services[id];
+        });
+      }
+      if (["unconfigured", "checking", "ready", "offline", "unauthorized"].includes(event.state)) {
+        state.connectionState = event.state;
+        state.connected = event.state === "ready";
+      } else if (!state.configured) {
+        state.connectionState = "unconfigured";
+        state.connected = false;
+      }
       state.hotel = String(event.hotel_name || "");
       state.audioAvailable = event.audio_available === true;
       if (!state.active && ["off", "unknown"].includes(event.local_audio_state)) state.audio = event.local_audio_state;
       if (typeof event.audio_gate === "string" && event.audio_gate) state.audioGate = event.audio_gate;
-      if (!defaultReceived && !preferencesRestored && !selected.staff_language && hasOwn(languages, event.staff_language)) state.staff_language = event.staff_language;
+      if (!state.active && !defaultReceived && !preferencesRestored && !selected.staff_language && hasOwn(languages, event.staff_language)) state.staff_language = event.staff_language;
       defaultReceived = true;
       render();
       return;
     }
     if (type === "language_preferences") {
+      if (state.active && state.mode === "translation") return;
       for (const side of ["language", "staff_language"]) {
-        if (!selected[side] && hasOwn(languages, event[side])) state[side] = event[side];
+        if (!selected[side]) state[side] = hasOwn(languages, event[side]) ? event[side] : "es";
       }
       preferencesRestored = true;
       render();
@@ -739,7 +844,7 @@
       return;
     }
     if (type === "update_status") {
-      offerUpdate(String(event.version || ""), String(event.text || "Updating…"), String(event.phase || ""), event.percent);
+      offerUpdate(String(event.version || ""), String(event.text || uiText("Updating…")), String(event.phase || ""), event.percent);
       return;
     }
     if (!matchesSession(event)) return;
@@ -747,7 +852,7 @@
       if (!["off", "recording", "stopping", "unknown", "muted"].includes(event.state)) return;
       if (state.closed && !["off", "unknown"].includes(event.state)) return;
       state.audio = event.state;
-      if (state.audio !== "recording") state.micLevel = 0;
+      resetMicLevels();
       if (!finishNavigation()) {
         if (state.page === "active" && state.mode === "translation" && !state.terminated) {
           const privacy = document.getElementById("privacy");
@@ -821,7 +926,7 @@
       if (![...shortcuts, "message"].includes(event.action) || !Array.isArray(event.fields) || state.draft) return;
       const fields = event.fields.filter((field) => field && typeof field.name === "string" && field.name && typeof field.label === "string");
       if (!fields.length) {
-        addNotice("This request did not provide usable fields. Please ask reception for help.", "unavailable");
+        addNotice(uiText("This request did not provide usable fields. Please ask reception for help."), "unavailable");
         return;
       }
       const previous = ((_a = state.operation) == null ? void 0 : _a.action) === event.action ? state.operation : null;
@@ -836,10 +941,13 @@
     if (type === "operation_result") {
       const text = String(event.text || "");
       if (["confirmation_required", "needs_confirmation", "fields_required"].includes(event.status)) return;
-      if (["unavailable", "error", "pending"].includes(event.status) && (state.operation || state.draft)) {
+      if (["unavailable", "error", "pending"].includes(event.status) && ((_b = event.result) == null ? void 0 : _b.help_action) !== "operator" && (state.operation || state.draft)) {
         state.confirmed = false;
-        if (state.operation) state.operation.pending = false;
-        addNotice(text || "No receipt was received. Retry or ask reception to check.", event.status);
+        if (state.operation) {
+          state.operation.pending = false;
+          state.operation.reconciliationPending = event.reconciliation_pending === true || state.operation.reconciliationPending === true;
+        }
+        addNotice(text || uiText("No receipt was received. Retry or ask reception to check."), event.status);
         page(state.draft ? "confirming" : "operation_form");
         return;
       }
@@ -847,8 +955,8 @@
         addNotice(text, event.status);
         return;
       }
-      const receipt = ((_b = event.result) == null ? void 0 : _b.item_id) || ((_c = event.result) == null ? void 0 : _c.request_id) || ((_d = event.result) == null ? void 0 : _d.escalation_id);
-      state.outcome = { text: text || "No receipt returned. Ask staff to check.", receipt: typeof receipt === "string" ? "Receipt: ".concat(receipt) : "" };
+      const receipt = ((_c = event.result) == null ? void 0 : _c.item_id) || ((_d = event.result) == null ? void 0 : _d.request_id) || ((_e = event.result) == null ? void 0 : _e.escalation_id);
+      state.outcome = { text: text || uiText("No receipt returned. Ask staff to check."), receipt: typeof receipt === "string" ? uiText("Receipt: {id}", { id: receipt }) : "", helpAction: ((_f = event.result) == null ? void 0 : _f.help_action) === "operator" ? "operator" : "" };
       state.draft = null;
       state.confirmed = false;
       state.operation = null;
@@ -858,7 +966,7 @@
     if (type !== "reception_event") return;
     const phase = event.phase;
     if (terminal) {
-      const error = phase === "error" ? String(event.text || event.message || "Please ask reception to check the connection and device setup.") : "";
+      const error = phase === "error" ? String(event.text || event.message || uiText("Please ask reception to check the connection and device setup.")) : "";
       detachGuest(true);
       state.error = error;
       if (!finishNavigation()) page("active");
@@ -866,7 +974,7 @@
         state.notices.push({ status: "error", text: error });
         renderNotices();
       }
-      if (phase === "timeout") toast("Conversation ended after inactivity.");
+      if (phase === "timeout") toast(uiText("Conversation ended after inactivity."));
       return;
     }
     if (phase === "ending") {
@@ -880,7 +988,7 @@
       return;
     }
     if (phase === "confirming") {
-      if (typeof event.draft_id !== "string" || !event.draft_id || ((_e = state.draft) == null ? void 0 : _e.draft_id) === event.draft_id) return;
+      if (typeof event.draft_id !== "string" || !event.draft_id || ((_g = state.draft) == null ? void 0 : _g.draft_id) === event.draft_id) return;
       state.draft = { draft_id: event.draft_id, guest_name: String(event.guest_name || ""), room_reference: String(event.room_reference || ""), message: String(event.message || "") };
       state.confirmed = false;
       if (state.operation) state.operation.pending = false;
@@ -893,7 +1001,7 @@
       syncMic();
       return;
     }
-    if (state.page === "confirming" && ((_f = state.draft) == null ? void 0 : _f.draft_id.startsWith("voice:")) && state.confirmed && phase === "listening") {
+    if (state.page === "confirming" && ((_h = state.draft) == null ? void 0 : _h.draft_id.startsWith("voice:")) && state.confirmed && phase === "listening") {
       state.draft = null;
       state.confirmed = false;
       state.page = "active";
@@ -935,8 +1043,8 @@
   window.addEventListener("pagehide", hideGuest);
   function updateClock() {
     const now = /* @__PURE__ */ new Date();
-    document.getElementById("date").textContent = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short" }).format(now);
-    document.getElementById("time").textContent = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" }).format(now);
+    document.getElementById("date").textContent = new Intl.DateTimeFormat(state.language, { weekday: "short", day: "numeric", month: "short" }).format(now);
+    document.getElementById("time").textContent = new Intl.DateTimeFormat(state.language, { hour: "2-digit", minute: "2-digit" }).format(now);
   }
   updateClock();
   setInterval(updateClock, 6e4);

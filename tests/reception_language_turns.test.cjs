@@ -9,23 +9,22 @@ const report = (id, language, original = 'Repeated phrase', text = 'Translation'
 const caption = (id, text, extra = {}) => ({ type: 'caption', utterance_id: id, side: 'human', field: 'original', operation: 'replace', final: false, text, ...extra });
 
 test('all 2652 ordered picker pairs map both languages by selection, including repeats', () => {
-  const source = fs.readFileSync('android/hotel/src/main/java/com/agentdeck/hotel/DeskLanguages.kt', 'utf8');
-  const codes = [...source.match(/val codes: List<String> = listOf\(([\s\S]*?)\)/)[1].matchAll(/"([a-z]{2})"/g)].map(m => m[1]);
+  const codes = JSON.parse(fs.readFileSync('shared/reception-locales.json', 'utf8')).languages.map(language => language.code);
   assert.equal(codes.length, 52);
   for (const guest of codes) for (const staff of codes) {
     if (guest === staff) continue;
     const ledger = new LanguageTurns();
     for (const [id, language] of [['s1', staff], ['s2', staff], ['s3', staff], ['u1', 'und'], ['g1', guest], ['g2', guest], ['g3', guest], ['u2', 'und']]) ledger.accept(report(id, language), guest, staff);
-    assert.deepEqual(ledger.turns.map(t => t.side), ['staff', 'staff', 'staff', 'staff', 'guest', 'guest', 'guest', 'guest'], `${guest}/${staff}`);
+    assert.deepEqual(ledger.turns.map(t => t.side), ['staff', 'staff', 'staff', null, 'guest', 'guest', 'guest', null], `${guest}/${staff}`);
   }
 });
 
-test('numbers, names and shared words inherit both preceding sides without alternation', () => {
+test('numbers, names and shared words remain neutral after either known speaker', () => {
   const ledger = new LanguageTurns();
   for (const lang of ['de', 'fr']) {
     ledger.accept(report(`${lang}-known`, lang), 'fr', 'de');
     for (const [i, text] of ['204', '204', 'Alex', 'OK', 'No'].entries()) ledger.accept(report(`${lang}-${i}`, 'und', text), 'fr', 'de');
-    assert.equal(ledger.turns.at(-1).side, lang === 'de' ? 'staff' : 'guest');
+    assert.equal(ledger.turns.at(-1).side, null);
   }
 });
 
@@ -43,7 +42,7 @@ test('script, common words and repeated text cannot override the model language'
   ledger.accept(report('a', 'fr', 'Ich brauche ein Zimmer.'), 'fr', 'de');
   ledger.accept(report('b', 'de', 'Ich brauche ein Zimmer.'), 'fr', 'de');
   ledger.accept(report('c', 'und', 'Bonjour, merci'), 'fr', 'de');
-  assert.deepEqual(ledger.turns.map(t => t.side), ['guest', 'staff', 'staff']);
+  assert.deepEqual(ledger.turns.map(t => t.side), ['guest', 'staff', null]);
 });
 
 test('provider locale codes normalize but unsupported codes cannot change placement', () => {
@@ -79,20 +78,20 @@ test('translation cannot freeze an unknown source side or determine the next sid
   ledger.accept(report('known', 'fr'), 'fr', 'de');
   ledger.accept(caption('new', '204', { final: true }), 'fr', 'de');
   ledger.accept(caption('out', 'Translation', { side: 'assistant', field: 'text', final: true, source_utterance_id: 'new' }), 'fr', 'de');
-  assert.equal(ledger.turns.at(-1).side, 'guest');
+  assert.equal(ledger.turns.at(-1).side, null);
   ledger.accept(caption('new', 'Ich habe eine Frage.', { final: true, source_language: 'de', language_attribution: 'model' }), 'fr', 'de');
   assert.equal(ledger.turns.at(-1).side, 'staff');
   assert.equal(ledger.turns.at(-1).text, 'Translation');
 });
 
-test('late metadata updates only dependent uncertain successors, never a newer known language', () => {
+test('late metadata updates its own source only, never uncertain successors', () => {
   const ledger = new LanguageTurns();
   ledger.accept(caption('old', '204', { final: true }), 'fr', 'de');
   ledger.accept(report('uncertain', 'und'), 'fr', 'de');
   ledger.accept(report('new-known', 'fr'), 'fr', 'de');
   ledger.accept(report('new-uncertain', 'und'), 'fr', 'de');
   ledger.accept(caption('old', '204', { final: true, source_language: 'de', language_attribution: 'model' }), 'fr', 'de');
-  assert.deepEqual(ledger.turns.map(t => t.side), ['staff', 'staff', 'guest', 'guest']);
+  assert.deepEqual(ledger.turns.map(t => t.side), ['staff', null, 'guest', null]);
 });
 
 test('unlinked output, including a greeting, never claims a human side or consumes a source', () => {
@@ -112,7 +111,7 @@ test('final text rejects late partials while late explicit language remains usab
   assert.equal(ledger.turns[0].side, 'staff');
 });
 
-test('reset clears both language continuity and IDs for a new pair', () => {
+test('reset clears IDs for a new pair', () => {
   const ledger = new LanguageTurns();
   ledger.accept(report('same-id', 'de'), 'fr', 'de');
   ledger.clear();
@@ -121,7 +120,7 @@ test('reset clears both language continuity and IDs for a new pair', () => {
   assert.equal(ledger.turns[0].side, null);
 });
 
-test('a restart preserving visible history still scopes IDs and continuity to its new session', () => {
+test('a restart preserving visible history still scopes IDs to its new session', () => {
   const ledger = new LanguageTurns();
   ledger.accept({ ...report('same-id', 'de'), session_id: 'old', generation: 1 }, 'fr', 'de');
   ledger.accept({ ...report('same-id', 'und'), session_id: 'new', generation: 2 }, 'fr', 'de');
@@ -138,4 +137,58 @@ test('invalid report fields and a translation with unknown direction cannot crea
     { ...report('d', 'de'), original: '   ' }
   ]) assert.deepEqual(ledger.accept(event, 'fr', 'de'), []);
   assert.equal(ledger.turns.length, 0);
+});
+
+test('unclear whitespace translation is canonical empty while real text is preserved exactly', () => {
+  const ledger = new LanguageTurns();
+  const original = '  Alex, 204?\n';
+  const translation = '  Álex, ¿204?\n';
+  ledger.accept(report('staff', 'de', original, translation), 'fr', 'de');
+  ledger.accept({ ...report('unclear-staff', 'und', original), text: ' \t\n' }, 'fr', 'de');
+  ledger.accept(report('guest', 'fr', original, translation), 'fr', 'de');
+  ledger.accept({ ...report('unclear-guest', 'und', original), text: '\u2003 ' }, 'fr', 'de');
+  assert.deepEqual(ledger.turns.map(turn => turn.side), ['staff', null, 'guest', null]);
+  assert.deepEqual(ledger.turns.map(turn => turn.text), [translation, '', translation, '']);
+  assert.ok(ledger.turns.every(turn => turn.original === original));
+});
+
+test('offline catalogue validates every offered language and named substitution contract', () => {
+  const { parseCatalogue, placeholders } = require('../scripts/build-reception.cjs');
+  const source = fs.readFileSync('shared/reception-locales.json', 'utf8');
+  const catalogue = parseCatalogue(source);
+  assert.equal(catalogue.languages.length, 52);
+  for (const [message, translations] of Object.entries(catalogue.messages)) {
+    for (const { code } of catalogue.languages) {
+      assert.ok(translations[code].trim(), `${code}: ${message}`);
+      assert.deepEqual([...placeholders(translations[code])].sort(), [...placeholders(message)].sort(), `${code}: ${message}`);
+    }
+  }
+  assert.ok(catalogue.messages['This service is unavailable. Please ask hotel staff.']);
+});
+
+test('catalogue validation rejects incomplete locales, blank text and unsafe substitution contracts', () => {
+  const { parseCatalogue } = require('../scripts/build-reception.cjs');
+  const source = fs.readFileSync('shared/reception-locales.json', 'utf8');
+  const original = JSON.parse(source);
+  const message = Object.keys(original.messages).find(key => key.includes('{'));
+  assert.ok(message, 'Real guest messages exercise named values');
+  const invalid = change => {
+    const value = JSON.parse(source);
+    change(value);
+    assert.throws(() => parseCatalogue(JSON.stringify(value)));
+  };
+  invalid(value => value.languages.pop());
+  invalid(value => value.languages.push(value.languages[0]));
+  invalid(value => { [value.languages[0], value.languages[1]] = [value.languages[1], value.languages[0]]; });
+  invalid(value => { value.languages[0].direction = 'auto'; });
+  invalid(value => { delete value.messages[message].ar; });
+  invalid(value => { value.messages[message].es = ' \n\t '; });
+  invalid(value => { value.messages[message].es = 'Sin el valor obligatorio'; });
+  invalid(value => { value.messages[message].ar += ' {unexpected}'; });
+  invalid(value => { delete value.messages['This service is unavailable. Please ask hotel staff.']; });
+  const missingMessage = JSON.parse(source);
+  delete missingMessage.messages['Welcome.'];
+  assert.throws(() => parseCatalogue(JSON.stringify(missingMessage), ['Welcome.']));
+  const duplicate = JSON.stringify(original).replace('"messages":{', '"messages":{' + JSON.stringify(message) + ':' + JSON.stringify(original.messages[message]) + ',');
+  assert.throws(() => parseCatalogue(duplicate), 'Duplicate JSON message keys cannot silently overwrite translations');
 });

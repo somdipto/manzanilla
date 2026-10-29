@@ -36,6 +36,41 @@ internal object FishStartupFixture {
             check(h.field("endRequest") != null)
             h.noAudio()
         }
+        for (mode in listOf(null, "blocking", "fire_and_forget")) Harness(instrumentation.targetContext).use { h ->
+            h.wire.existingTools(incompatible = true, mode = mode)
+            h.direct()
+            check("GET /v1/agent/tools/incompatible-tool" in h.wire.requests)
+            check("GET /v1/agent/tools/fixture-tool" in h.wire.requests)
+            check("POST /v1/agent/tools" !in h.wire.requests) { "compatible client tool was duplicated" }
+            check(h.wire.agentCreates == 1 && h.wire.sessionCalls == 1)
+            h.noAudio()
+        }
+        Harness(instrumentation.targetContext).use { h ->
+            h.wire.existingTools(incompatible = true, compatible = false)
+            val error = h.failed { h.direct() }
+            check(error is FishStartupFailure && error.stage == FishStartupFailure.Stage.CAPTION_READ)
+            h.terminal(error, false)
+            check("POST /v1/agent/tools" !in h.wire.requests)
+            check(h.wire.agentCreates == 0 && h.wire.sessionCalls == 0)
+            check(h.events.last().getString("text").contains("TR-caption_read-configuration"))
+        }
+        for (compatible in listOf(false, true)) for (hasMore in listOf(null, true, "false")) {
+            Harness(instrumentation.targetContext).use { h ->
+                h.wire.existingTools(compatible = compatible)
+                h.wire.toolListing!!.put("has_more", hasMore)
+                val error = h.failed { h.direct() }
+                check(error is FishStartupFailure && error.stage == FishStartupFailure.Stage.CAPTION_LOOKUP)
+                h.terminal(error, false)
+                check("POST /v1/agent/tools" !in h.wire.requests)
+                check(h.wire.agentCreates == 0 && h.wire.sessionCalls == 0)
+            }
+        }
+        Harness(instrumentation.targetContext).use { h ->
+            h.wire.toolLookupTimeout = true
+            h.terminal(h.failed { h.direct() }, false)
+            check("POST /v1/agent/tools" !in h.wire.requests)
+            check(h.wire.agentCreates == 0 && h.wire.sessionCalls == 0)
+        }
         val rejections = listOf(
             Triple("GET /v1/agent/agents", 401, FishStartupFailure.Stage.AGENT_LOOKUP),
             Triple("POST /v1/agent/tools", 402, FishStartupFailure.Stage.CAPTION_CREATE),
@@ -210,9 +245,30 @@ internal object FishStartupFixture {
         var malformedTicket = false
         var managedStatus = 200
         var managedFailure: String? = null
+        var toolLookupTimeout = false
+        var toolListing: JSONObject? = null
+        private val toolReadbacks = HashMap<String, JSONObject>()
         private var agentName = ""
         private var toolCreated = false
         private val definition = context.assets.open("fish-caption-tool.json").bufferedReader().use { JSONObject(it.readText()) }
+
+        fun existingTools(incompatible: Boolean = false, compatible: Boolean = true, mode: String? = null) {
+            val tools = JSONArray()
+            if (incompatible) {
+                tools.put(JSONObject().put("tool_id", "incompatible-tool").put("name", FishPlan.CAPTION_TOOL))
+                val changed = JSONObject(definition.toString())
+                changed.getJSONArray("arguments").getJSONObject(0).put("description", "Changed caption policy")
+                toolReadbacks["incompatible-tool"] = changed
+            }
+            if (compatible) {
+                tools.put(JSONObject().put("tool_id", "fixture-tool").put("name", FishPlan.CAPTION_TOOL))
+                val readback = JSONObject(definition.toString()).put("tool_id", "fixture-tool")
+                    .put("execution_mode", mode).put("timeout", 30)
+                readback.getJSONArray("arguments").getJSONObject(0).put("required", false)
+                toolReadbacks["fixture-tool"] = readback
+            }
+            toolListing = JSONObject().put("has_more", false).put("tools", tools)
+        }
 
         override fun intercept(chain: Interceptor.Chain): Response {
             val request = chain.request()
@@ -238,9 +294,13 @@ internal object FishStartupFixture {
                     if (agentCreates > 0) put(JSONObject().put("agent_id", "fixture-agent-$agentCreates")
                         .put("name", agentName).put("status", "published"))
                 }))
-                label == "GET /v1/agent/tools" -> reply(request, 200, JSONObject().put("has_more", false)
-                    .put("tools", JSONArray().apply { if (toolCreated) put(JSONObject().put("tool_id", "fixture-tool").put("name", FishPlan.CAPTION_TOOL)) }))
-                label == "GET /v1/agent/tools/fixture-tool" -> reply(request, 200, definition)
+                label == "GET /v1/agent/tools" -> {
+                    if (toolLookupTimeout) throw SocketTimeoutException("fixture-response-secret")
+                    reply(request, 200, toolListing ?: JSONObject().put("has_more", false)
+                        .put("tools", JSONArray().apply { if (toolCreated) put(JSONObject().put("tool_id", "fixture-tool").put("name", FishPlan.CAPTION_TOOL)) }))
+                }
+                label == "GET /v1/agent/tools/incompatible-tool" -> reply(request, 200, toolReadbacks.getValue("incompatible-tool"))
+                label == "GET /v1/agent/tools/fixture-tool" -> reply(request, 200, toolReadbacks["fixture-tool"] ?: definition)
                 label == "POST /v1/agent/tools" -> {
                     check(FishPlan.captionToolMatches(definition, body(request)))
                     toolCreated = true

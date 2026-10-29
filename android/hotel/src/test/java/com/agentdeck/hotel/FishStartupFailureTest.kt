@@ -11,6 +11,9 @@ import javax.net.ssl.SSLHandshakeException
 
 class FishStartupFailureTest {
     private val stage = FishStartupFailure.Stage.CAPTION_CREATE
+    private val english: (String, Map<String, String>) -> String = { message, values ->
+        values.entries.fold(message) { result, entry -> result.replace("{${entry.key}}", entry.value) }
+    }
 
     @Test fun serviceRejectionsKeepTheFailedStageAndActionableStatus() {
         val cases = mapOf(401 to "authentication", 403 to "access", 402 to "billing", 429 to "limit",
@@ -19,7 +22,7 @@ class FishStartupFailureTest {
         for ((status, category) in cases) {
             val failure = FishStartupFailure.http(stage, status)
             // An outer caller's ticket stage must not overwrite the actual failed request stage.
-            val notice = FishStartupFailure.describe(FishStartupFailure.Stage.TICKET, failure, false)
+            val notice = FishStartupFailure.describe(FishStartupFailure.Stage.TICKET, failure, false, english)
             assertEquals("TR-caption_create-$category-HTTP$status", notice.reference)
             assertTrue(notice.text.contains(notice.reference))
         }
@@ -27,8 +30,8 @@ class FishStartupFailureTest {
 
     @Test fun directAndManagedCredentialsHaveDifferentRepairInstructions() {
         val failure = FishStartupFailure.http(FishStartupFailure.Stage.MANAGED_SESSION, 401)
-        val direct = FishStartupFailure.describe(stage, failure, false).text
-        val managed = FishStartupFailure.describe(stage, failure, true).text
+        val direct = FishStartupFailure.describe(stage, failure, false, english).text
+        val managed = FishStartupFailure.describe(stage, failure, true, english).text
         assertTrue(direct.contains("translation credential"))
         assertTrue(managed.contains("hotel service connection"))
         assertFalse(managed.contains("update it"))
@@ -49,7 +52,7 @@ class FishStartupFailureTest {
             AssertionError(sensitive) to "unknown"
         )
         for ((error, category) in cases) {
-            val notice = FishStartupFailure.describe(stage, RuntimeException(sensitive, error), true)
+            val notice = FishStartupFailure.describe(stage, RuntimeException(sensitive, error), true, english)
             assertEquals("TR-caption_create-$category", notice.reference)
             for (value in listOf("fixture-secret", "fixture-token", "provider.invalid", "guest-speech", "Bearer")) {
                 assertFalse("exposed $value for $category", notice.text.contains(value))
@@ -59,8 +62,8 @@ class FishStartupFailureTest {
     }
 
     @Test fun explicitConfigurationAndMalformedTicketsDoNotBlameInternetAccess() {
-        val config = FishStartupFailure.describe(stage, FishStartupFailure.configuration(stage), false)
-        val ticket = FishStartupFailure.describe(stage, FishStartupFailure.response(FishStartupFailure.Stage.TICKET), false)
+        val config = FishStartupFailure.describe(stage, FishStartupFailure.configuration(stage), false, english)
+        val ticket = FishStartupFailure.describe(stage, FishStartupFailure.response(FishStartupFailure.Stage.TICKET), false, english)
         assertTrue(config.reference.endsWith("configuration"))
         assertEquals("TR-ticket-response", ticket.reference)
         assertFalse(config.text.contains("internet"))
@@ -68,15 +71,15 @@ class FishStartupFailureTest {
     }
 
     @Test fun unknownHttpFailureRetainsOnlyAValidNumericStatus() {
-        val valid = FishStartupFailure.describe(stage, FishStartupFailure.http(stage, 418), false)
-        val invalid = FishStartupFailure.describe(stage, FishStartupFailure.http(stage, -123), false)
+        val valid = FishStartupFailure.describe(stage, FishStartupFailure.http(stage, 418), false, english)
+        val invalid = FishStartupFailure.describe(stage, FishStartupFailure.http(stage, -123), false, english)
         assertEquals("TR-caption_create-http-HTTP418", valid.reference)
         assertEquals("TR-caption_create-http", invalid.reference)
     }
 
     @Test fun managedHeadersPreserveUpstreamFailureAndDoNotConfuseConfigurationWithInternet() {
         val upstream = FishStartupFailure.managedHeader("tool_create:http:402")!!
-        val notice = FishStartupFailure.describe(FishStartupFailure.Stage.MANAGED_SESSION, upstream, true)
+        val notice = FishStartupFailure.describe(FishStartupFailure.Stage.MANAGED_SESSION, upstream, true, english)
         assertEquals("TR-caption_create-billing-HTTP402", notice.reference)
         assertTrue(notice.text.contains("billing"))
         for ((header, category) in mapOf("configuration:unconfigured:0" to "unconfigured",
@@ -100,15 +103,15 @@ class FishStartupFailureTest {
         val outer = FishStartupFailure.Stage.MANAGED_SESSION
         for (stageName in listOf("tool_lookup", "agent_create", "session_create")) {
             val failure = FishStartupFailure.managedHeader("$stageName:http:401")!!
-            val text = FishStartupFailure.describe(outer, failure, true).text
+            val text = FishStartupFailure.describe(outer, failure, true, english).text
             assertTrue(text.contains("provider credential on the hotel service"))
             assertFalse(text.contains("did not accept this device"))
         }
-        val missing = FishStartupFailure.describe(outer, FishStartupFailure.managedHeader("session_create:http:404")!!, true)
+        val missing = FishStartupFailure.describe(outer, FishStartupFailure.managedHeader("session_create:http:404")!!, true, english)
         assertTrue(missing.text.contains("translation provider"))
         assertFalse(missing.text.contains("service URL"))
         for (status in listOf(400, 422)) {
-            val legacy = FishStartupFailure.describe(outer, FishStartupFailure.http(outer, status), true)
+            val legacy = FishStartupFailure.describe(outer, FishStartupFailure.http(outer, status), true, english)
             assertTrue(legacy.text.contains("hotel service version"))
         }
     }

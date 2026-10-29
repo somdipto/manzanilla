@@ -12,7 +12,7 @@ object FishPlan {
     // The agent and its sessions follow the device's own timezone, never a fixed hotel location.
     fun deviceTimezone(): String = java.util.TimeZone.getDefault().id
 
-    const val CONFIG_REV = "15"
+    const val CONFIG_REV = "16"
     const val CAPTION_TOOL = "manzanilla_publish_interpretation_v2"
     const val CAPTION_PROTOCOL = "language-v2"
     const val AGENT_NAME = "Manzanilla Interpreter"
@@ -36,17 +36,52 @@ object FishPlan {
         return if (guest in FAST_SWITCHING_LANGUAGES && staff in FAST_SWITCHING_LANGUAGES) FAST_ASR else BROAD_ASR
     }
 
-    internal fun captionToolMatches(expected: JSONObject, actual: JSONObject): Boolean =
-        expected.keys().asSequence().all { key ->
-            val value = expected.get(key)
-            if (value is JSONArray) {
-                val array = actual.optJSONArray(key)
-                array != null && array.length() == value.length() && (0 until value.length()).all { index ->
-                    val item = array.optJSONObject(index)
-                    item != null && captionToolMatches(value.getJSONObject(index), item)
-                }
-            } else value == actual.opt(key)
+    internal fun captionToolMatches(expected: JSONObject, actual: JSONObject): Boolean {
+        for (field in CAPTION_STRING_FIELDS) {
+            if (expected.opt(field) !is String || actual.opt(field) != expected.opt(field)) return false
         }
+        if (expected.opt("expects_response") !is Boolean ||
+            actual.opt("expects_response") != expected.opt("expects_response")) return false
+        val arguments = expected.optJSONArray("arguments") ?: return false
+        for (index in 0 until arguments.length()) {
+            val argument = arguments.optJSONObject(index) ?: return false
+            if (argument.opt("name") !is String || argument.opt("description") !is String) return false
+        }
+        val client = expected.opt("tool_type") == "client" && actual.opt("tool_type") == "client"
+        if (!client && (expected.opt("execution_mode") ?: JSONObject.NULL) !=
+            (actual.opt("execution_mode") ?: JSONObject.NULL)) return false
+        val keys = expected.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            if (client && key == "execution_mode") continue
+            if (!actual.has(key) || !expectedValueMatches(expected.get(key), actual.get(key))) return false
+        }
+        return true
+    }
+
+    private val CAPTION_STRING_FIELDS = arrayOf("name", "tool_type", "description")
+
+    private fun expectedValueMatches(expected: Any, actual: Any): Boolean {
+        when (expected) {
+            is JSONObject -> {
+                if (actual !is JSONObject) return false
+                val keys = expected.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    if (!actual.has(key) || !expectedValueMatches(expected.get(key), actual.get(key))) return false
+                }
+                return true
+            }
+            is JSONArray -> {
+                if (actual !is JSONArray || expected.length() != actual.length()) return false
+                for (index in 0 until expected.length()) {
+                    if (!expectedValueMatches(expected.get(index), actual.get(index))) return false
+                }
+                return true
+            }
+            else -> return expected.javaClass == actual.javaClass && expected == actual
+        }
+    }
 
     fun prompt(guest: String, staff: String): String {
         val g = DeskLanguages.english(guest)

@@ -2,7 +2,7 @@
 
 **Faster execution hardware for the hospitality industry.**
 
-Manzanilla Reception is a landscape Android app with an open-canvas reception home, day/night appearance and hands-free live translation. Reception and guest languages have independent selectors. The 17.0.30 release requires an enrolled hotel backend or a staff-saved device credential for translation; it does not embed a shared Fish key. Earlier pilot APKs did embed an extractable credential, which its owner must rotate.
+Manzanilla Reception is a landscape Android app with an open-canvas reception home, day/night appearance and hands-free live translation. Reception and guest languages have independent selectors. The published 17.0.37 testing APK contains an extractable shared Fish credential at the owner's request; use a disposable, account-limited key and rotate it after testing. The repair candidate separates personal testing from enrolled hotel use; it is not a qualified hotel deployment.
 
 <p align="center">
   <a href="https://github.com/somdipto/manzanilla/releases/latest/download/Manzanilla-Reception.apk"><img src="https://img.shields.io/badge/%E2%AC%87%20Download%20APK-Manzanilla%20Reception-2ea44f?style=for-the-badge&logo=android&logoColor=white" alt="Download APK" height="56"></a>
@@ -41,6 +41,54 @@ Publication uses the semantic version in `android/VERSION` and the explicit incr
 </p>
 
 Android may require an "Update" confirmation for an app installed from a file; this is not a silent remote installation. Installed apps update from a newer signed GitHub Release, not from a source push or an Actions build artifact.
+
+## Distribution and readiness — repair candidate
+
+Build property `distribution` is `personal-test` by default, or `hotel`. Debug
+builds honor the chosen behavior but always compile empty provider fields.
+Personal testing keeps PIN-free Fish setup, encrypted saved-key precedence over
+the bundled fallback, an explicit direct preference over enrollment and its
+one-click update offer. A bundled testing key is labelled extractable.
+
+Hotel new translation starts use only the enrolled managed connection. Existing
+personal keys are retained, not shown or erased; original hash-fenced cleanup
+can still use its original credential. The hotel gear and voice-setup path both
+require Android device-credential confirmation. Enrollment, appearance,
+after-hours controls, updates and diagnostics stay in protected native setup.
+Credential replacement is refused while original voice cleanup is outstanding.
+
+An enrolled connection is configured, not automatically connected. A private
+authenticated heartbeat has a three-second deadline, refreshes on resume and
+every25 foreground seconds, and becomes stale after30 seconds. Guest actions
+show availability before entry; native admission also enforces it. These flags
+describe configuration, not paid provider entitlement or somebody watching the
+inbox. Independent direct personal translation remains usable when hotel
+operations are unavailable. Uncertain submitted requests retain their exact
+reconciliation identity.
+
+All52 interface locales remain selectable and visibly human-unreviewed.
+Distribution-specific feeds and signed installation proof remain separate S7
+gates. Do not deploy hotel builds before those gates and voice qualification.
+
+## Approved hotel answers — repair candidate
+
+The repair candidate answers hotel questions only with staff-approved renderings
+for the guest's selected interface language. Existing knowledge and arrival text
+remain stored, but are not automatically approved or labelled as English.
+
+Use the admin content-review panel to select the original and target language,
+edit a draft or enter reviewed text manually, then explicitly approve its exact
+title and body. Gemini can draft translations for review and select approved
+fact references; it cannot invent guest-facing policies or execute hotel actions.
+Manual approval remains usable when drafting is unavailable.
+
+Editing a source or approved rendering withdraws stale information receipts.
+The guest can ask again or choose reception help; an unanswered question never
+creates a ticket automatically. New information requests can see new approvals,
+while replaying the same request identity performs no model call. Durable taxi,
+message and escalation receipts retain their original content and write identity.
+Arrival guidance never completes check-in. Deploy this backend before clients
+that depend on approved-content capabilities.
 
 ## Screens
 

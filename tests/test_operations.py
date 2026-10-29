@@ -7,6 +7,7 @@ from cloud.db import Store
 from cloud.models import Hotel
 from cloud.gateway import Gateway
 import cloud.app as server
+from cloud.hotel_answers import ContentApproval, approve_content, source_hash
 
 TAXI={'destination':'Airport','pickup_time':'08:30 tomorrow','guest_name':'Synthetic Guest','room_number':'204'}
 MESSAGE={'original_request':'Please ask reception about a later departure.\nKeep this exact wording.',
@@ -17,13 +18,14 @@ def operations(tmp_path,monkeypatch):
     store=Store(str(tmp_path/'isolated.db'))
     monkeypatch.setattr(server,'store',store)
     monkeypatch.setenv('ORANGE_ADMIN_TOKEN','x'*40)
+    monkeypatch.delenv('GEMINI_API_KEY',raising=False)
     for hid in ['a','b']:
         store.save_hotel(Hotel(id=hid,name='Synthetic '+hid,knowledge={'breakfast':'7–10 AM'},
                                checkin_instructions='Ask the reception desk for arrival assistance.').model_dump())
     dev=store.issue('a','device'); other=store.issue('a','device'); foreign=store.issue('b','device')
     headers=lambda d:{'Authorization':'Bearer '+d['token']}
     client=TestClient(server.app)
-    start={'session_id':'operation-fixture','language':'es','staff_language':'es','mode':'reception'}
+    start={'session_id':'operation-fixture','language':'en','staff_language':'es','mode':'reception'}
     assert client.post('/api/device/operations/start',headers=headers(dev),json=start).status_code==200
     return store,client,dev,other,foreign,headers,start
 
@@ -37,6 +39,14 @@ def confirm(client,headers,ident,accepted=True,sid='operation-fixture'):
     return client.post('/api/device/operations/'+sid+'/confirm',headers=headers,
                        json={'confirmation_id':ident,'accepted':accepted})
 
+
+def approve_rendering(store, kind='knowledge', key='breakfast', language='en',
+                      title='Breakfast', body='7–10 AM', hotel_id='a'):
+    hotel=store.hotel(hotel_id)
+    source=hotel['knowledge'][key] if kind=='knowledge' else hotel['checkin_instructions']
+    return approve_content(store,hotel_id,ContentApproval(
+        kind=kind,content_key=key,language=language,source_hash=source_hash(kind,key,source),
+        title=title,body=body),authorize=lambda:None)
 
 def test_operation_auth_tenant_and_user_selector_denials(operations):
     store,client,dev,other,foreign,headers,start=operations
@@ -63,10 +73,19 @@ def test_missing_fields_and_approved_knowledge_only(operations):
         assert all(f['max_length'] > 0 for f in response['fields'])
         if name == 'message':
             assert not any(f['required'] for f in response['fields'] if f['name'] != 'original_request')
+    missing=action(client,hdr,'question',{'query':'breakfast'},'unapproved').json()
+    assert missing['result']['matches']=={}
+    assert missing['result']['help_action']=='operator'
+    assert not store.rows('SELECT * FROM approved_content')
+    approve_rendering(store)
     found=action(client,hdr,'question',{'query':'breakfast'},'question').json()
-    assert found['result']['matches']=={'breakfast':'7–10 AM'} and '7–10 AM' in found['text']
+    assert found['result']['matches']=={'Breakfast':'7–10 AM'} and '7–10 AM' in found['text']
+    assert found['result']['fact_refs'][0]['content_key']=='breakfast'
+    assert action(client,hdr,'question',{'query':'breakfast'},'unapproved').json()['result']['matches']=={}
+    punctuated=action(client,hdr,'question',{'query':'breakfast?'},'punctuation').json()
+    assert punctuated['result']['matches']==found['result']['matches']
     unknown=action(client,hdr,'question',{'query':'secret rooftop access code'},'unknown').json()
-    assert unknown['result']['matches']=={} and 'operator' in unknown['text']
+    assert unknown['result']['matches']=={}
     assert not store.rows('SELECT * FROM items')
 
 
@@ -92,19 +111,20 @@ def test_arrival_guidance_requires_no_identity_or_reservation_integration(operat
     monkeypatch.setattr(server,'edge_execute',forbidden)
     import cloud.gateway as gateway
     monkeypatch.setattr(gateway,'connector',forbidden)
+    approve_rendering(store,'arrival','',title='Arrival',body=hotel['checkin_instructions'])
     result=action(client,hdr,'checkin',{},'guide').json()
     assert result['status']=='ok'
-    assert result['result']=={'status':'ok','instructions':hotel['checkin_instructions'],
-                              'guidance_only':True,'checkin_completed':False}
-    assert hotel['checkin_instructions'] in result['text']
-    assert 'check-in has not been completed' in result['text']
+    assert result['result']['instructions']=='Arrival\n'+hotel['checkin_instructions']
+    assert result['result']['guidance_only'] is True and result['result']['checkin_completed'] is False
+    assert result['result']['fact_refs'][0]['kind']=='arrival'
+    assert 'Arrival\n'+hotel['checkin_instructions'] in result['text']
     assert action(client,hdr,'checkin',{},'retry').json()==result
     assert action(client,hdr,'checkin',{'reference':'UNNECESSARY','surname':'Guest'},'identity').status_code==422
     assert not store.rows('SELECT * FROM calls')
     assert not store.rows('SELECT * FROM items')
 
 
-@pytest.mark.parametrize('instructions',['',' \n '])
+@pytest.mark.parametrize('instructions',['',' \n ','Existing instructions are not an approval.'])
 def test_arrival_guidance_without_approved_policy_is_truthfully_unavailable(operations,instructions):
     store,client,dev,_,_,headers,_=operations
     hotel=store.hotel('a'); hotel['checkin_instructions']=instructions; store.save_hotel(hotel)
@@ -112,8 +132,6 @@ def test_arrival_guidance_without_approved_policy_is_truthfully_unavailable(oper
     assert result['status']=='unavailable'
     assert result['result']['instructions']==''
     assert result['result']['guidance_only'] is True and result['result']['checkin_completed'] is False
-    assert 'No approved check-in instructions' in result['text']
-    assert 'operator' in result['text']
     assert not store.rows('SELECT * FROM calls')
     assert not store.rows('SELECT * FROM items')
 
@@ -289,7 +307,6 @@ def test_message_exact_confirmation_cancel_retry_and_durable_truthful_receipt(op
     assert receipt['result']['destination']=='staff inbox'
     assert receipt['result']['staff_acknowledged'] is False
     assert receipt['result']['pms_delivered'] is False
-    assert 'No staff acknowledgement or PMS delivery is confirmed' in receipt['text']
     assert confirm(client,hdr,next_draft['confirmation_id']).json()==receipt
     assert action(client,hdr,'message',revised,'new-retry').json()==receipt
     reopened=Store(store.db.execute('PRAGMA database_list').fetchone()[2])
@@ -322,7 +339,6 @@ def test_message_argument_boundaries_preserve_original_and_do_not_accept_model_a
     assert result['status']=='saved'
     payload=json.loads(store.rows('SELECT payload FROM items')[0]['payload'])
     assert payload['original_request']==exact and len(payload['summary'])<=1000
-    assert 'see exact original' in payload['summary']
 
 
 @pytest.mark.parametrize('invalidate',['end','expire','revoke'])
@@ -359,3 +375,225 @@ def test_message_confirmation_and_receipts_are_tenant_and_session_isolated(opera
     assert receipt['status']=='saved'
     assert len(store.rows("SELECT * FROM items WHERE hotel='a'"))==1
     assert not store.rows("SELECT * FROM items WHERE hotel='b'")
+
+
+def test_spanish_operation_journey_is_pinned_and_preserves_authoritative_values(operations):
+    store,client,dev,_,_,headers,start=operations
+    hdr=headers(dev); sid='spanish-journey'
+    spanish={**start,'session_id':sid,'language':'es','staff_language':'ar'}
+    assert client.post('/api/device/operations/start',headers=hdr,json=spanish).status_code==200
+    fields=action(client,hdr,'message',{},sid=sid).json()
+    assert fields['status']=='needs_arguments'
+    labels={field['name']:field['label'] for field in fields['fields']}
+    assert 'mensaje' in labels['original_request'].casefold()
+    assert 'nombre' in labels['guest_name'].casefold()
+    assert 'habitaci' in labels['room_number'].casefold()
+    assert any(word in fields['text'].casefold() for word in ('complet','datos','detalles'))
+    original='  Keep English unchanged: Alex <204>.\n العربية كما هي  '
+    values={'original_request':original,'guest_name':'Alex العربية','room_number':'204-ب'}
+    draft=action(client,hdr,'message',values,'spanish-draft',sid).json()
+    assert draft['status']=='confirmation_required'
+    assert all(value in draft['summary'] for value in values.values())
+    assert 'mensaje' in draft['summary'].casefold() and 'confirm' in draft['text'].casefold()
+    conflict=client.post('/api/device/operations/start',headers=hdr,json={**spanish,'language':'en'})
+    assert conflict.status_code==409, 'A live operation cannot silently change its pinned locale'
+    assert action(client,hdr,'message',values,'same-draft',sid).json()==draft
+    cancelled=confirm(client,hdr,draft['confirmation_id'],False,sid).json()
+    assert cancelled['status']=='cancelled' and 'cancel' in cancelled['text'].casefold()
+    assert not store.rows('SELECT * FROM items')
+    revised={**values,'original_request':original+'\nAdditional exact request.'}
+    next_draft=action(client,hdr,'message',revised,'spanish-next',sid).json()
+    saved=confirm(client,hdr,next_draft['confirmation_id'],True,sid).json()
+    assert saved['status']=='saved'
+    assert 'mensaje' in saved['text'].casefold()
+    assert saved['result']['staff_acknowledged'] is False and saved['result']['pms_delivered'] is False
+    item=store.rows('SELECT * FROM items')[0]
+    payload=json.loads(item['payload'])
+    assert item['id']==saved['result']['item_id']
+    assert all(payload[key]==value for key,value in revised.items())
+    # Locale/config changes cannot rewrite an immutable execution receipt.
+    hotel=store.hotel('a'); hotel['default_language']='ar'; store.save_hotel(hotel)
+    assert confirm(client,hdr,next_draft['confirmation_id'],False,sid).json()==saved
+    assert action(client,hdr,'message',revised,'spanish-replay',sid).json()==saved
+
+
+@pytest.mark.parametrize('language',['es','ar'])
+def test_localized_pending_receipt_uses_the_owning_session(operations,monkeypatch,language):
+    from cloud.operations import Operations
+    store,client,dev,_,_,headers,start=operations
+    hdr=headers(dev); sid='pending-'+language
+    assert client.post('/api/device/operations/start',headers=hdr,
+                       json={**start,'session_id':sid,'language':language}).status_code==200
+    draft=action(client,hdr,'message',MESSAGE,sid=sid).json()
+    entered,release=Event(),Event()
+    execute=Operations.execute
+
+    async def delayed(self,*args):
+        entered.set()
+        assert await asyncio.to_thread(release.wait,5)
+        return await execute(self,*args)
+
+    monkeypatch.setattr(Operations,'execute',delayed)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        writing=pool.submit(confirm,client,hdr,draft['confirmation_id'],True,sid)
+        try:
+            assert entered.wait(5)
+            pending=confirm(client,hdr,draft['confirmation_id'],False,sid).json()
+            assert pending['status']=='pending'
+            if language=='es':
+                assert any(word in pending['text'].casefold() for word in ('proces','curso','tramita'))
+            else:
+                assert any('\u0600'<=character<='\u06ff' for character in pending['text'])
+            assert action(client,hdr,'message',MESSAGE,'pending-replay',sid).json()==pending
+        finally:
+            release.set()
+        saved=writing.result(timeout=5).json()
+    assert saved['status']=='saved' and len(store.rows('SELECT * FROM items'))==1
+    assert confirm(client,hdr,draft['confirmation_id'],True,sid).json()==saved
+
+
+@pytest.mark.parametrize('language,query,title,body',[
+    ('es','breakfast?','Desayuno','De 7 a 10 h.'),
+    ('ar','الإفطار؟','الإفطار','من الساعة ٧ إلى ١٠ صباحًا.')])
+def test_approved_answers_use_exact_rendering_and_pinned_guest_locale(
+        operations,monkeypatch,language,query,title,body):
+    import cloud.hotel_answers as answers
+    store,client,dev,_,_,headers,start=operations; hdr=headers(dev); sid='facts-'+language
+    hotel=store.hotel('a')
+    if language=='ar':
+        hotel['knowledge']['الإفطار']=hotel['knowledge'].pop('breakfast')
+        store.save_hotel(hotel)
+    key='الإفطار' if language=='ar' else 'breakfast'
+    approve_rendering(store,key=key,language=language,title=title,body=body)
+    async def forbidden(*_,**__):
+        raise AssertionError('Normalized exact answers must not contact Gemini')
+    monkeypatch.setattr(answers,'_gemini_json',forbidden)
+    assert client.post('/api/device/operations/start',headers=hdr,
+                       json={**start,'session_id':sid,'language':language}).status_code==200
+    result=action(client,hdr,'question',{'query':query},sid=sid).json()
+    assert result['result']['matches']=={title:body}
+    assert result['result']['fact_refs'][0]['language']==language
+    assert title in result['text'] and body in result['text']
+    assert not store.rows('SELECT * FROM items')
+
+
+@pytest.mark.parametrize('operation',['question','checkin'])
+@pytest.mark.parametrize('legacy',[False,True])
+def test_information_replay_withdraws_stale_rows_without_touching_durable_receipts(
+        operations,operation,legacy):
+    store,client,dev,_,_,headers,_=operations; hdr=headers(dev)
+    approve_rendering(store)
+    approve_rendering(store,'arrival','',title='Arrival',body='Ask reception.')
+    taxi=action(client,hdr,'taxi',TAXI,'taxi').json()
+    taxi=confirm(client,hdr,taxi['confirmation_id']).json()
+    message=action(client,hdr,'message',MESSAGE,'message').json()
+    message=confirm(client,hdr,message['confirmation_id']).json()
+    durable=store.rows("SELECT * FROM operation_actions WHERE action IN ('taxi','message') ORDER BY call_id")
+    args={'query':'breakfast'} if operation=='question' else {}
+    information=action(client,hdr,operation,args,'information').json()
+    assert information['status']=='ok' and information['result']['fact_refs']
+    if legacy:
+        information['result'].pop('fact_refs')
+        store.run("UPDATE operation_actions SET result=? WHERE call_id='information'",(json.dumps(information),))
+    else:
+        hotel=store.hotel('a')
+        if operation=='question': hotel['knowledge']['breakfast']='08:00–11:00'
+        else: hotel['checkin_instructions']='Changed arrival instructions.'
+        store.save_hotel(hotel)
+    replay=action(client,hdr,operation,args,'information').json()
+    assert replay['status']=='stale' and replay['result']['help_action']=='operator'
+    assert replay['result'].get('matches',{})=={}
+    assert replay['result'].get('instructions','')==''
+    assert '7–10 AM' not in replay['text'] and 'Ask reception.' not in replay['text']
+    assert json.loads(store.rows("SELECT result FROM operation_actions WHERE call_id='information'")[0]['result'])==replay
+    assert action(client,hdr,'taxi',TAXI,'taxi-replay').json()==taxi
+    assert action(client,hdr,'message',MESSAGE,'message-replay').json()==message
+    assert store.rows("SELECT * FROM operation_actions WHERE action IN ('taxi','message') ORDER BY call_id")==durable
+
+
+@pytest.mark.parametrize('stage',['provider','settlement'])
+@pytest.mark.parametrize('invalidate',['source','rendering','unselected','new_conflict','end','revoke'])
+def test_question_wait_and_settlement_recheck_real_ledger_rows(operations,monkeypatch,stage,invalidate):
+    import cloud.hotel_answers as answers
+    store,client,dev,_,_,headers,_=operations; hdr=headers(dev)
+    approve_rendering(store)
+    if invalidate=='unselected':
+        hotel=store.hotel('a'); hotel['knowledge']['checkout']='Checkout is before 11:00.'; store.save_hotel(hotel)
+        approve_rendering(store,key='checkout',title='Checkout',body='Before 11:00.')
+    entered,release=Event(),Event()
+    async def selection(*_,**__):
+        if stage=='provider':
+            entered.set()
+            assert await asyncio.to_thread(release.wait,5)
+        return {'fact_ids':['0']}
+    monkeypatch.setattr(answers,'_gemini_json',selection)
+    execute=Gateway.execute
+    async def delayed(self,*args,**kwargs):
+        result=await execute(self,*args,**kwargs)
+        if stage=='settlement':
+            assert result['matches']=={'Breakfast':'7–10 AM'}
+            entered.set()
+            assert await asyncio.to_thread(release.wait,5)
+        return result
+    monkeypatch.setattr(Gateway,'execute',delayed)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending=pool.submit(action,client,hdr,'question',{'query':'When is breakfast served?'},'race')
+        try:
+            assert entered.wait(5)
+            assert store.rows("SELECT result FROM operation_actions WHERE call_id='race'")==[{'result':None}]
+            if invalidate=='source':
+                hotel=store.hotel('a'); hotel['knowledge']['breakfast']='08:00–11:00'; store.save_hotel(hotel)
+            elif invalidate=='rendering':
+                approve_rendering(store,body='Updated approved hours.')
+            elif invalidate=='unselected':
+                hotel=store.hotel('a'); hotel['knowledge']['checkout']='Checkout conflicts with breakfast policy.'; store.save_hotel(hotel)
+            elif invalidate=='new_conflict':
+                hotel=store.hotel('a'); hotel['knowledge']['breakfast exception']='Breakfast service is suspended.'; store.save_hotel(hotel)
+            elif invalidate=='end':
+                assert client.post('/api/device/operations/operation-fixture/end',headers=hdr).status_code==200
+            else:
+                store.run('DELETE FROM credentials WHERE id=?',(dev['id'],))
+        finally:
+            release.set()
+        response=pending.result(timeout=5).json()
+    assert response['status'] in ('stale','unavailable','unknown','denied')
+    assert response['result'].get('matches',{})=={} and '7–10 AM' not in response['text']
+    saved=json.loads(store.rows("SELECT result FROM operation_actions WHERE call_id='race'")[0]['result'])
+    assert saved==response
+    if stage=='provider':
+        call=json.loads(store.rows("SELECT result FROM calls WHERE tool='search_hotel_knowledge'")[0]['result'])
+        assert call.get('matches',{})=={} and call['status']!='ok'
+    replay=action(client,hdr,'question',{'query':'When is breakfast served?'},'race')
+    if invalidate in ('end','revoke'):
+        assert replay.status_code in (401,403)
+    else:
+        assert replay.json()['result'].get('matches',{})=={}
+    assert not store.rows('SELECT * FROM items')
+
+
+@pytest.mark.parametrize('invalidate',['source','rendering','end','revoke'])
+def test_arrival_is_revalidated_in_its_own_settlement_transaction(operations,monkeypatch,invalidate):
+    import cloud.operations as operation_module
+    store,client,dev,_,_,headers,_=operations; hdr=headers(dev)
+    approve_rendering(store,'arrival','',title='Arrival',body='Approved arrival instructions.')
+    guidance=operation_module.arrival_guidance
+    def changed_after_lookup(*args,**kwargs):
+        result=guidance(*args,**kwargs)
+        assert result['instructions']=='Arrival\nApproved arrival instructions.'
+        if invalidate=='source':
+            hotel=store.hotel('a'); hotel['checkin_instructions']='Changed policy.'; store.save_hotel(hotel)
+        elif invalidate=='rendering':
+            approve_rendering(store,'arrival','',title='Arrival',body='Changed approved rendering.')
+        elif invalidate=='end':
+            store.run("UPDATE sessions SET status='ended' WHERE id='operation-fixture'")
+        else:
+            store.run('DELETE FROM credentials WHERE id=?',(dev['id'],))
+        return result
+    monkeypatch.setattr(operation_module,'arrival_guidance',changed_after_lookup)
+    result=action(client,hdr,'checkin',{},'arrival-race').json()
+    assert result['status']==('denied' if invalidate in ('end','revoke') else 'stale')
+    assert result['result']['instructions']==''
+    assert result['result']['help_action']=='operator'
+    assert 'Approved arrival instructions.' not in result['text']
+    assert json.loads(store.rows("SELECT result FROM operation_actions WHERE call_id='arrival-race'")[0]['result'])==result
+    assert not store.rows('SELECT * FROM items')

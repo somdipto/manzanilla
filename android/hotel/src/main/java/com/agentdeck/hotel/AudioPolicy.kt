@@ -1,18 +1,16 @@
 package com.agentdeck.hotel
 
-/**
- * Local readiness accepts a saved device credential, an embedded testing key,
- * or an enrolled hotel service. An embedded key is visible to APK recipients.
- */
+/** Local configuration only, not authenticated hotel or provider reachability. */
 object AudioPolicy {
     const val LIVE_AUDIO_ENABLED = true
     const val BLOCK_REASON = "Live translation is unavailable. Ask staff to check the audio credential in Settings."
 
-    /** Local setup readiness only; it does not establish provider access. */
+    /** Local readiness only. Returned source IDs are localized by the native message producer. */
     fun blockReason(backendConfigured: Boolean, directKey: SecretStore.Status, bundledKeyAvailable: Boolean,
-                    directFishSelected: Boolean = false): String {
+                    directFishSelected: Boolean, distribution: String): String {
+        if (distribution == "hotel") return if (backendConfigured) "" else "Translation needs hotel setup. Please ask staff."
         if (!LIVE_AUDIO_ENABLED) return BLOCK_REASON
-        if (TranslationRouting.useManagedConnection(backendConfigured, directFishSelected) ||
+        if (TranslationRouting.useManagedConnection(backendConfigured, directFishSelected, distribution) ||
             directKey == SecretStore.Status.READY || bundledKeyAvailable) return ""
         return if (directKey == SecretStore.Status.ERROR)
             "The saved voice key could not be opened. Tap Set up translation to check it or save your original Fish Audio key again."

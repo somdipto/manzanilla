@@ -53,6 +53,12 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
     private var callbackUri: Uri? = null
     private var callbackIntent: PendingIntent? = null
     @Volatile private var installSessionId = -1
+    init { UiText.preload(app) }
+    private fun text(message: String, values: Map<String, String> = emptyMap()): String {
+        val language = app.getSharedPreferences("deck", Context.MODE_PRIVATE)
+            .getString("reception_guest_language", "es").orEmpty().takeIf(DeskLanguages::has) ?: "es"
+        return UiText.text(app, language, message, values)
+    }
     private val poll = object : Runnable {
         override fun run() { if (pollDownload()) ui.postDelayed(this, 1000) }
     }
@@ -273,7 +279,7 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
         if (ownership.downloadId >= 0) { watch(attempt); return }
         externalFile(attempt.request)?.delete()
         val request = DownloadManager.Request(Uri.parse(attempt.request.url))
-            .setTitle("Manzanilla ${attempt.request.versionName}").setDescription("Downloading update")
+            .setTitle("Manzanilla ${attempt.request.versionName}").setDescription(text("Downloading update"))
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setDestinationInExternalFilesDir(app, Environment.DIRECTORY_DOWNLOADS, "update-${attempt.request.key}.apk")
             .setAllowedOverMetered(true).setAllowedOverRoaming(true).addRequestHeader("User-Agent", "Manzanilla")
@@ -648,9 +654,9 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
         val manager = app.getSystemService(NotificationManager::class.java)
         if (done) { manager.cancel(7); return }
         if (Build.VERSION.SDK_INT >= 33 && app.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        if (manager.getNotificationChannel("upd") == null) manager.createNotificationChannel(NotificationChannel("upd", "Updates", NotificationManager.IMPORTANCE_LOW))
+        if (manager.getNotificationChannel("upd") == null) manager.createNotificationChannel(NotificationChannel("upd", text("Manzanilla update"), NotificationManager.IMPORTANCE_LOW))
         manager.notify(7, Notification.Builder(app, "upd").setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("Manzanilla update").setContentText(if (pct >= 0) "$pct%" else "${got / 1048576} MB")
+            .setContentTitle(text("Manzanilla update")).setContentText(if (pct >= 0) text("Downloading {percent}%", mapOf("percent" to pct.toString())) else text("Downloading {size} MB", mapOf("size" to (got / 1048576).toString())))
             .setProgress(100, pct.coerceAtLeast(0), total <= 0).setOngoing(true).setOnlyAlertOnce(true).build())
     }
 }

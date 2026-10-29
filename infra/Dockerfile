@@ -4,6 +4,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 10001 --create-home orange
 COPY cloud cloud
 COPY admin admin
+COPY shared/reception-locales.json shared/reception-locales.json
 RUN mkdir data && chown orange:orange data
 USER orange
 EXPOSE 8080

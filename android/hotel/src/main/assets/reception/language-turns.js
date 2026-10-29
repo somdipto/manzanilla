@@ -22,35 +22,27 @@
       var _a;
       return JSON.stringify([event.session_id || "", (_a = event.generation) != null ? _a : null, kind, id]);
     }
-    add(id, kind, scope) {
-      const turn = { id, kind, scope, side: null, sourceLanguage: "", original: "", text: "", final: { original: false, text: false }, reported: false, node: null };
+    add(id, kind) {
+      const turn = { id, kind, side: null, sourceLanguage: "", original: "", text: "", final: { original: false, text: false }, reported: false, node: null };
       this.byId.set(id, turn);
       this.turns.push(turn);
       return turn;
     }
     resolve(guest, staff, changed) {
-      let previous = null;
-      let scope = null;
       for (const turn of this.turns) {
         if (turn.kind !== "human") continue;
-        if (scope !== turn.scope) {
-          previous = null;
-          scope = turn.scope;
-        }
-        const side = sideFor(turn.sourceLanguage, guest, staff) || previous;
+        const side = sideFor(turn.sourceLanguage, guest, staff);
         if (turn.side !== side) {
           turn.side = side;
           changed.add(turn);
         }
-        previous = side;
       }
       return [...changed];
     }
     accept(event, guest, staff) {
-      var _a, _b, _c;
+      var _a, _b;
       if (!event || typeof event.utterance_id !== "string" || !event.utterance_id) return [];
       const changed = /* @__PURE__ */ new Set();
-      const scope = JSON.stringify([event.session_id || "", (_a = event.generation) != null ? _a : null]);
       if (event.type === "interpretation") {
         if (typeof event.original !== "string" || !event.original.trim() || typeof event.text !== "string" || typeof event.source_language !== "string" || event.language_attribution !== "model") return [];
         const language = normalize(event.source_language);
@@ -59,8 +51,8 @@
         const id = this.key(event, "human");
         const existing = this.byId.get(id);
         if (existing == null ? void 0 : existing.reported) return [];
-        const turn = existing || this.add(id, "human", scope);
-        Object.assign(turn, { original: event.original, text: event.text, sourceLanguage: language, reported: true, final: { original: true, text: true } });
+        const turn = existing || this.add(id, "human");
+        Object.assign(turn, { original: event.original, text: language === "und" ? "" : event.text, sourceLanguage: language, reported: true, final: { original: true, text: true } });
         changed.add(turn);
       } else if (event.type === "caption") {
         if (!["human", "guest", "staff", "assistant"].includes(event.side) || !["original", "text"].includes(event.field) || !["append", "replace"].includes(event.operation) || typeof event.text !== "string" || typeof event.final !== "boolean") return [];
@@ -68,7 +60,7 @@
         if (event.field !== (assistant ? "text" : "original")) return [];
         const parent = assistant && typeof event.source_utterance_id === "string" ? this.byId.get(this.key(event, "human", event.source_utterance_id)) : null;
         const id = this.key(event, assistant ? "assistant" : "human");
-        const turn = parent || this.byId.get(id) || this.add(id, assistant ? "assistant" : "human", scope);
+        const turn = parent || this.byId.get(id) || this.add(id, assistant ? "assistant" : "human");
         if (turn.reported) return [];
         if (!assistant && event.language_attribution === "model" && sideFor(event.source_language, guest, staff)) {
           turn.sourceLanguage = normalize(event.source_language);
@@ -76,7 +68,7 @@
         }
         if (!(turn.final[event.field] && (!event.final || event.operation === "append"))) {
           turn[event.field] = event.operation === "replace" ? event.text : turn[event.field] + event.text;
-          (_b = turn.final)[_c = event.field] || (_b[_c] = event.final);
+          (_a = turn.final)[_b = event.field] || (_a[_b] = event.final);
           changed.add(turn);
         }
       } else return [];

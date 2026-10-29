@@ -4,6 +4,134 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.41 readiness/distribution candidate (S4)
+
+Version 17.0.41/code71, stacked on S3. The canonical catalogue has 410 messages
+for 52 interface locales, all human-unreviewed. Proper brand names now retain
+Orange; obsolete keypad hints and unused per-turn scope storage are removed.
+Session/generation identity remains part of each immutable report key.
+
+- **Passed:** generation/check, 17 Node cases, 602 Python tests (two dependency
+  deprecation warnings), and ten Chromium151 scenarios. Coverage includes
+  per-service availability, old-backend capabilities, revoked/offline states,
+  independent direct translation, Spanish/Arabic locale changes, preserved form
+  focus/input, exact uncertain replay, first-confirm gating and hotel/personal
+  maintenance visibility at both small viewports and enlarged text.
+- **Passed:** personal-test Android JVM, debug/instrumentation assembly and lint
+  with JDK17/SDK34. Despite injected dummy provider values, APK dex inspection
+  proved `DISTRIBUTION=personal-test` and both Fish provider fields empty.
+  Actual readiness/protected-setup cases remain separate runtime gates.
+  APK SHA256:`741cc7012909cf9bcd706f0da0279ddbec908476a29fd57d5b4e276d75f215df`.
+- Probes do not create sessions or open a microphone. Service flags describe
+  configuration, not provider access or a live staff watcher. No paid provider
+  call, live data mutation, release or deployment occurred.
+
+## 17.0.40 approved-content candidate (S3)
+
+Version 17.0.40/code70, stacked on S2. The offline catalogue now has 396 messages
+for all 52 interface locales; human translation review remains unavailable.
+
+- **Reproduced:** the actual isolated S2 backend returned configured breakfast
+  hours for `breakfast` but no matches for `breakfast?`, with zero provider calls.
+- **Passed:** generated assets/check, 17 Node cases and 574 Python tests (two
+  dependency deprecation warnings). Approved-content coverage includes exact
+  English/Spanish punctuation, Arabic, absent approval, draft isolation, invalid/
+  hostile IDs, context limits, duplicate titles, source/rendering changes during
+  HTTP and settlement, closed/revoked sessions, replay withdrawal and unchanged
+  durable write receipts.
+- **Passed:** ten Chromium151 scenarios, including the actual temporary backend
+  and admin review panel. With provider credentials blank, drafting fails without
+  erasing manual text; explicit approval enables the exact Spanish rendering;
+  source change rejects stale approval and withdraws replay. Review labels render
+  in all 52 locales. An unanswered FAQ creates no staff item automatically.
+- **Passed:** Android JVM, debug/instrumentation assembly and lint with JDK17,
+  SDK34 and empty provider fields. The pinned code70 debug APK SHA256 is
+  `350d18b0c8ed568c1b655606027fc6399fec894fd302ac09572a42f1ec7eb216`.
+- **Passed:** actual isolated HTTPS admin visual smoke. Three explicit English/
+  Spanish approvals preserved exact originals;503 drafting retained manual text;
+  Spanish and Arabic RTL review panels retained the Spanish rendering. The
+  authenticated staff overview contained zero items. Private captures are in
+  `/tmp/manzanilla-s3-https-fixture-20261029/`. The first visual-script attempt
+  queried a nonexistent `/items` route; using the real `/overview` contract
+  passed. No failed attempt is counted as a pass.
+
+Information reads are scoped to their call ID, so a genuinely new question can
+see a later approval. Replaying the same ID never charges another model call.
+Write deduplication, confirmation identities and durable write receipts are
+unchanged. Missing approved arrival guidance preserves unavailable semantics.
+
+These are source, isolated HTTP and packaged-renderer results, not paid Gemini
+entitlement, human bilingual review, tablet/backend or acoustic qualification.
+No paid provider call, live hotel mutation, deployment or publication occurred.
+
+## 17.0.39 complete offline interface candidate (S2)
+
+Stacked on S1, version 17.0.39/code69. The source catalogue has 380 English message
+IDs with complete translations for all 52 offered interface locales. None has
+human language-review approval; translation presence is not acoustic qualification.
+
+- **Passed:** generation/check, 17 Node cases and 463 Python tests (two dependency
+  deprecation warnings). Coverage includes catalogue rejection, pinned producer
+  locale, preserved originals/identities and immutable historical receipts.
+- **Passed:** Android JVM, debug/instrumentation assembly and lint with JDK17,
+  SDK34 and empty provider fields.
+- **Passed:** nine Chromium151 scenarios with unchanged packaged CSP/resource
+  policy, including all52 home lookups, Spanish navigation/error/forms/review/
+  cancellation/receipt/retry, Arabic RTL with Spanish reception, 125% text at
+  837×471 and 1024×600, both appearances, focus/unsent text and physical sides.
+- **Passed:** actual isolated HTTPS backend and staff dashboard. A synthetic
+  Spanish operation produced a confirmation and persisted receipt preserving its
+  exact original. The actual admin page displayed configured legacy-invalid
+  timezone as labelled UTC, switched Spanish/Arabic RTL and retained token,
+  hotel and dirty form. Private screenshots: `/tmp/manzanilla-s2-admin-fixture/`.
+  This is not combined physical-tablet/backend or designated hotel-staff acceptance.
+
+The macOS fixture used a dedicated loopback-only Chromium/Playwright context and a
+temporary TLS identity. Production TLS, Android CSP and network restrictions were
+not relaxed. No live hotel data, provider session, paid call, publication or
+deployment was involved.
+
+## 17.0.38 caption-evidence repair candidate (S1)
+
+Baseline `a2b46ea84c0d6ab65b9f1a7fd94975ce69d7554f`, 17.0.37/code67.
+Candidate 17.0.38/code68. No release, deployment or paid provider call.
+
+- **Passed:** direct execution of the baseline shipped ledger reproduced an
+  unclear report inheriting `staff` and retaining a whitespace translation.
+  Candidate Node suite passes 15 cases, including every ordered picker pair,
+  neutral uncertain reports, exact real text, late annotations and session fences.
+- **Passed:** 459 Python tests (two dependency deprecation warnings), including
+  complete/incomplete tool lookup, immutable compatible reuse and webhook defaults.
+- **Passed:** Android JVM tests, debug/instrumentation APK assembly and debug lint
+  with JDK17/SDK34; provider fields were empty in this verification build.
+- **Passed:** all five isolated Chromium151 scenarios. Capture cases drive level
+  0.8/bands 0.7,0.5,0.2 followed by muted/off/unknown, an unrelated render and a
+  stale generation. All inline levels become zero, accessible labels agree and
+  transcript nodes/scroll survive. A separate actual-page visual inspection at
+  837×471 shows a neutral unclear caption and a non-illuminated muted control.
+- **Passed:** actual packaged native `reception-bridge`, `reception-truth` and
+  `translation-startup` on disposable API34/WebView113 emulator-5580. Each named
+  PASS includes `INSTRUMENTATION_CODE: -1`. The truth fixture now emits listening
+  before testing normal microphone-off; a still-connecting session correctly has
+  the separate connecting/microphone-off label. Failed fixture attempts are retained
+  in the execution record; no failed attempt was counted as a pass.
+- **Renderer observation only:** one pinned-baseline 120-report replay measured
+  160.7ms; one candidate replay measured 84.9ms on this host under different
+  background load. These are descriptive DOM timings, not a controlled performance
+  result and never acoustic latency evidence.
+
+Commands: `npm run build:reception`, `npm run check:reception`,
+`node --test tests/*.test.cjs`, `.venv/bin/python -m pytest tests -q`,
+`.venv/bin/python tests/run_reception_browser.py`, and
+`bash gradlew :hotel:testDebugUnitTest :hotel:assembleDebug
+:hotel:assembleDebugAndroidTest :hotel:lintDebug --no-daemon --max-workers=2`.
+Native command: `ANDROID_SERIAL=emulator-5580 adb shell am instrument -w -r
+-e case reception-truth dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture`.
+The pinned production app is from commit `e5a71da`; later test-only changes improve
+bounded diagnostics and correctly distinguish connecting from listening scenarios.
+No microphone, live provider, physical tablet or audible-latency result is claimed.
+
+
 ## 17.0.31 full-duplex and delivery candidate
 
 Base merged main `eb6e7fa`, version 17.0.31/code 61. This is a source candidate,

@@ -33,6 +33,7 @@ class HotelGatewayTest {
     private val requests = LinkedBlockingQueue<Request>()
     private val replies = LinkedBlockingQueue<Reply>()
     private val events = LinkedBlockingQueue<JSONObject>()
+    private val failures = LinkedBlockingQueue<String>()
     private val lease = SessionOwner.Lease(SessionOwner.Request("fixture-ui-session", "reception", "es", "en"), 7)
     private val note = JSONObject().put("original_request", "Exact synthetic note.\nKeep this wording: café 日本語.")
         .put("guest_name", "Synthetic Guest").put("room_number", "204")
@@ -83,9 +84,10 @@ class HotelGatewayTest {
     private fun newGateway(base: String) = HotelGateway(base, "fixture-only-device-credential", { actual, event ->
         assertEquals(lease, actual)
         events.add(event)
-    }, { _, _ -> fail("A note must never open the dialer") }, OkHttpClient.Builder()
+    }, { _, _ -> fail("A note must never open the dialer") },
+        { _, message, values -> values.entries.fold(message) { result, entry -> result.replace("{${entry.key}}", entry.value) } }, OkHttpClient.Builder()
         .sslSocketFactory(tls.socketFactory, trust).connectTimeout(2, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS).build())
+        .readTimeout(5, TimeUnit.SECONDS).build(), { failures.add(it) })
 
     @After fun stopServer() { gateway.dispose(); running = false; server.close(); serving.join(2000) }
     private fun reply(body: JSONObject, code: Int = 200) { replies.add(Reply(code, body.toString())) }
@@ -161,11 +163,55 @@ class HotelGatewayTest {
         gateway.confirm(lease, "operation:fixture-note", true)
         val failed = request()
         assertEquals("error", event().getString("status"))
+        assertTrue(gateway.canReconcileConfirmation(lease, "operation:fixture-note", true))
+        assertEquals("message", gateway.confirmationAction(lease, "operation:fixture-note"))
         reply(JSONObject().put("status", "saved").put("text", "Original synthetic receipt"))
         gateway.confirm(lease, "operation:fixture-note", true)
         val retry = request()
         assertEquals(failed.path, retry.path)
         assertEquals(failed.body.toString(), retry.body.toString())
+        assertEquals("saved", event().getString("status"))
+    }
+
+    @Test fun uncertainApprovalMayStillCancelTheSameDraftAndCannotStartAnotherAction() {
+        prepareDraft()
+        reply(JSONObject(), 503)
+        gateway.confirm(lease, "operation:fixture-note", true)
+        val attempt = request()
+        assertTrue(event().getBoolean("reconciliation_pending"))
+        gateway.action(lease, "message", note)
+        assertEquals("notice", event().getString("type"))
+        assertNull(requests.poll(200, TimeUnit.MILLISECONDS))
+        reply(JSONObject().put("status", "saved").put("text", "Earlier approval already saved this request"))
+        gateway.confirm(lease, "operation:fixture-note", false)
+        val cancellation = request()
+        assertEquals(attempt.path, cancellation.path)
+        assertEquals(attempt.body.getString("confirmation_id"), cancellation.body.getString("confirmation_id"))
+        assertFalse(cancellation.body.getBoolean("accepted"))
+        val settled = event()
+        assertEquals("saved", settled.getString("status"))
+        assertFalse(settled.getBoolean("reconciliation_pending"))
+    }
+
+    @Test fun pendingServerResultsKeepBothActionAndConfirmationReplayIdentity() {
+        reply(JSONObject().put("status", "ready"))
+        reply(JSONObject().put("status", "pending"))
+        gateway.action(lease, "message", note)
+        request()
+        val action = request()
+        assertTrue(event().getBoolean("reconciliation_pending"))
+        reply(draft())
+        gateway.action(lease, "message", note)
+        assertEquals(action.body.toString(), request().body.toString())
+        assertEquals("confirming", event().getString("phase"))
+        reply(JSONObject().put("status", "pending"))
+        gateway.confirm(lease, "operation:fixture-note", true)
+        val confirm = request()
+        assertTrue(event().getBoolean("reconciliation_pending"))
+        assertTrue(gateway.canReconcileConfirmation(lease, "operation:fixture-note", true))
+        reply(JSONObject().put("status", "saved"))
+        gateway.confirm(lease, "operation:fixture-note", true)
+        assertEquals(confirm.body.toString(), request().body.toString())
         assertEquals("saved", event().getString("status"))
     }
 
@@ -181,6 +227,49 @@ class HotelGatewayTest {
         gateway.action(lease, "message", note)
         assertTrue(request().path.endsWith("/action"))
         assertEquals("confirming", event().getString("phase"))
+    }
+
+    @Test fun uncertainActionRetryRetainsItsExactCallIdentityAndCannotBecomeAnotherRequest() {
+        reply(JSONObject().put("status", "ready"))
+        replies.add(Reply(200, "truncated receipt"))
+        gateway.action(lease, "message", note)
+        request()
+        val original = request()
+        val failed = event()
+        assertEquals("error", failed.getString("status"))
+        assertEquals("offline", failures.poll(1, TimeUnit.SECONDS))
+        assertFalse(failed.has("_uncertain"))
+        assertTrue(failed.getBoolean("reconciliation_pending"))
+        assertTrue(gateway.canReconcile(lease, "message", note))
+        val changed = JSONObject(note.toString()).put("room_number", "205")
+        assertFalse(gateway.canReconcile(lease, "message", changed))
+        gateway.action(lease, "message", changed)
+        assertEquals("notice", event().getString("type"))
+        assertNull(requests.poll(200, TimeUnit.MILLISECONDS))
+        reply(draft())
+        gateway.action(lease, "message", note)
+        val retry = request()
+        assertEquals(original.path, retry.path)
+        assertEquals(original.body.toString(), retry.body.toString())
+        assertEquals("confirming", event().getString("phase"))
+        assertFalse(gateway.canReconcile(lease, "message", note))
+    }
+
+    @Test fun serverFailureRetainsUncertainIdentityButDefinitiveRefusalReleasesIt() {
+        reply(JSONObject().put("status", "ready"))
+        reply(JSONObject(), 503)
+        gateway.action(lease, "message", note)
+        request()
+        val original = request()
+        assertEquals("error", event().getString("status"))
+        assertTrue(gateway.canReconcile(lease, "message", note))
+        reply(JSONObject(), 403)
+        gateway.action(lease, "message", note)
+        assertEquals(original.body.toString(), request().body.toString())
+        assertEquals("error", event().getString("status"))
+        assertFalse(gateway.canReconcile(lease, "message", note))
+        assertEquals("offline", failures.poll(1, TimeUnit.SECONDS))
+        assertEquals("unauthorized", failures.poll(1, TimeUnit.SECONDS))
     }
 
     @Test fun endedSessionCannotDeliverALateFormOrSubmitAnotherNote() {

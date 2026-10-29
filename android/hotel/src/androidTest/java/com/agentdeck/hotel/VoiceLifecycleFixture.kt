@@ -27,7 +27,10 @@ class VoiceLifecycleFixture : Instrumentation() {
         try {
             when (case) {
                 "reception-bridge" -> ReceptionWebViewFixture.verify(this)
+                "reception-truth" -> ReceptionWebViewFixture.verify(this, truth = true)
                 "voice-setup" -> VoiceSetupFixture.verify(this)
+                "hotel-setup-gates" -> VoiceSetupFixture.verifyHotel(this)
+                "hotel-readiness" -> HotelReadinessFixture.verify(this)
                 "microphone-permission" -> ReceptionWebViewFixture.verifyMicrophonePermission(this)
                 "microphone-permission-denied" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "deny")
                 "microphone-permission-background" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "background")
@@ -49,9 +52,18 @@ class VoiceLifecycleFixture : Instrumentation() {
             result.putString("stream", "PASS case=$case late=$late status=$status\n")
             finish(-1, result)
         } catch (e: Throwable) {
-            val detail = if (case.startsWith("installer-") || case == "update-delivery")
-                "installer fixture assertion failed; no capability diagnostics emitted" else e.message
-            result.putString("stream", "FAIL: ${e.javaClass.simpleName}: $detail\n")
+            // Never print exception messages: a provider body, Intent extra or
+            // installer capability can be embedded in them. Source locations
+            // are enough to diagnose a failed check on the isolated fixture.
+            val failure = e.cause ?: e
+            val installer = case.startsWith("installer") || case.startsWith("update")
+            val frame = if (installer) null else failure.stackTrace.firstOrNull {
+                it.className.startsWith("com.agentdeck.")
+            }
+            val location = frame?.let {
+                " at=${it.className.substringAfterLast('.').take(100)}:${it.fileName?.take(80)}:${it.lineNumber}"
+            } ?: ""
+            result.putString("stream", "FAIL case=$case ${failure.javaClass.simpleName.take(80)}$location\n")
             finish(0, result)
         }
     }
