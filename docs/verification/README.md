@@ -28,12 +28,15 @@ human language-review approval; translation presence is not acoustic qualificati
 - **Passed:** actual microphone grant on disposable API34/WebView113 with host
   OpenGL. The pending lease survived consent, the empty injected Fish resolver
   ran exactly once, and the session released without a provider call.
-- **Passed:** CI Android10 `reception-bridge`, `reception-truth` and microphone
-  grant, denial and real-background cancellation in run40849414970. Resolving a
-  system-only HOME fixed the earlier background-fixture precondition. That run
-  stopped at an incidental English substring assertion in the localized startup
-  fixture; it was deleted, retaining terminal cleanup, ownership and credential-
-  redaction checks. Final full-suite results remain a separate gate.
+- **Passed:** `reception-bridge`, `reception-truth`, microphone grant, denial and
+  background cancellation, `translation-startup` and `update-delivery` on both
+  API34/WebView113 and CI Android10 run40853905862; each named PASS has code -1.
+  System-only HOME resolution repaired the earlier background precondition.
+- **Not passed:** personal `voice-setup` timed out in the Spanish interface.
+  Its English-only password/control selectors are now role/locale-aware;
+  incidental status/prose assertions were deleted, preserving actual encrypted-
+  key retention, route and authorization checks. The rebuilt fixture passed
+  compilation; both screen-lock setup cases remain runtime gates.
 - On this Intel Mac, emulator37.2 SwiftShader produced a System UI ANR over the
   real permission dialog and an invalid color-buffer error. `-gpu host -feature
   -Vulkan` yielded the grant pass. A later full-suite attempt while Gradle was
