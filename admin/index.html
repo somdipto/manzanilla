@@ -116,7 +116,10 @@ async function transition(item,draft) {
   try {
     const result=await api('/api/hotels/'+hid()+'/items/'+encodeURIComponent(item.id),'PATCH',body);if(current!==scope())return;
     const currentItem=items.find(candidate=>candidate.id===item.id);
-    if(currentItem&&result.version>=currentItem.state_version)Object.assign(currentItem,{status:result.status,state_version:result.version,acknowledged_at:result.acknowledged_at,resolved_at:result.resolved_at},isOpen?{acknowledged_by:principal.id,responsible_name:value}:{resolution_note:value});
+    if(currentItem&&result.version>=currentItem.state_version) {
+      Object.assign(currentItem,{status:result.status,state_version:result.version,acknowledged_at:result.acknowledged_at,resolved_at:result.resolved_at},isOpen?{acknowledged_by:principal.id,responsible_name:value}:{resolution_note:value});
+      if(isOpen)draft.name='';else draft.note='';
+    }
     draft.version=result.version;await load();
   }
   catch(error) {if(current!==scope())return;if(error.status===409||error.status===403){draft.reviewRequired=true;try{await load()}catch(refreshError){showError(refreshError)}}else showError(error)}
@@ -216,7 +219,7 @@ function renderLocaleFromPoll(){
   const changed=document.documentElement.lang!==locale;if(changed)renderLocale();else{renderInbox();renderPermissions();renderReview()}
 }
 function resetScope(){
-  scopeRevision++;stopPolling();overviewFlight=null;loadedHotel='';hotelConfig=null;formBase=null;items=[];drafts.clear();dirty=false;configConflict=false;principal=null;contentAdmin=false;contentBusy=false;review=null;reviewRows=[];reviewMessage='';
+  scopeRevision++;stopPolling();overviewFlight=null;saveBusy=false;loadedHotel='';hotelConfig=null;formBase=null;items=[];drafts.clear();dirty=false;configConflict=false;principal=null;contentAdmin=false;contentBusy=false;review=null;reviewRows=[];reviewMessage='';
   for(const id of ['inbox','fleet','sessions','credential','summary','hotel-list','timezone-warning'])$(id).replaceChildren();$('content-source').replaceChildren();$('content-title').value='';$('content-body').value='';renderPermissions();renderReview();
 }
 for(const language of catalogue.languages){const option=element('option',language.native);option.value=language.code;option.lang=language.code;option.dir=language.direction;for(const id of ['staff-locale','content-language','default-language','supported-languages'])$(id).append(option.cloneNode(true))}

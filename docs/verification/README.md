@@ -20,11 +20,24 @@ immutable execution receipts; guest status contains no payload or private note.
   through a detached row reference. Applying the result to the current item by
   ID preserves the newer version; the actual browser scenario now passes.
   Ownership denial refreshes the row without granting the denied actor access.
+- A held configuration save reproduced a disabled new-hotel form after a scope
+  switch. Scope reset now releases its own busy state; a late old response cannot
+  clear a newer save. The real-backend browser regression passes both boundaries.
+- Successful acknowledgement/resolution consumes only its submitted draft.
+  Resolved private outcomes no longer appear twice; conflicting edits remain
+  available for review. The browser suite passes with clean fixture teardown.
 - **Passed:** personal-test JVM, debug/instrumentation assembly and lint with
   JDK17/SDK34 and empty provider fields.
-- Actual native receipt tracking and real native-client/HTTPS staff transitions
-  remain runtime gates. Synthetic browser staff are not designated hotel staff;
-  no physical, provider or external booking/call acceptance is claimed.
+- **Passed:** actual API34 `reception-request-tracking` through the shipped
+  WebView, bridge and Activity with synthetic HTTP interception, named PASS/-1.
+- **Passed:** real native `HotelGateway` plus actual staff browser against a
+  temporary-CA isolated HTTPS backend: one original-preserving request, open →
+  acknowledged → resolved, private outcome excluded from guest frames, and one
+  operation session ended without polling recreating it. The private smoke
+  reports named PASS/-1; its throwaway source was removed after proof.
+- Private screenshot: `/tmp/manzanilla-s5-https-fixture-20261029/staff-resolved.png`.
+  These are native-client/backend and separate native-UI proofs, not combined
+  tablet/backend, designated hotel-staff, provider or external booking acceptance.
 
 ## 17.0.41 readiness/distribution candidate (S4)
 

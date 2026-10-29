@@ -136,6 +136,46 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         assert page.locator("#emergency-contact").input_value() == "Changed by another admin"
         assert page.locator("#hotel-name").input_value() == "Staff property renamed"
 
+        # A pending save belongs to its original scope. Changing hotel must
+        # release local busy ownership; its late completion cannot clear a new save.
+        target_id = "browser-save-scope-target"
+        target_base = "/api/hotels/" + target_id
+        target_config = {**current_config(), "id": target_id, "name": "Independent scope target", "config_version": 1}
+        assert api.put(target_base, headers=admin, json=target_config).status_code == 200
+        switcher = open_dashboard(admin_token)
+        old_save, new_save = [], []
+        def hold_old_save(route):
+            if route.request.method == "PUT":
+                old_save.append(route)
+            else:
+                route.continue_()
+        switcher.route(origin + base, hold_old_save)
+        with switcher.expect_request(lambda request: request.url == origin + base and request.method == "PUT"):
+            switcher.locator("#save").click()
+        switcher.locator("#hotel").fill(target_id)
+        with switcher.expect_response(origin + target_base + "/overview"):
+            switcher.locator("#load").click()
+        expect(switcher.locator("#hotel-name")).to_be_enabled()
+        switcher.locator("#hotel-name").fill("New scope remains editable")
+        def hold_new_save(route):
+            if route.request.method == "PUT":
+                new_save.append(route)
+            else:
+                route.continue_()
+        switcher.route(origin + target_base, hold_new_save)
+        with switcher.expect_request(lambda request: request.url == origin + target_base and request.method == "PUT"):
+            switcher.locator("#save").click()
+        old_route = old_save.pop()
+        with switcher.expect_response(lambda response: response.url == origin + base and response.request.method == "PUT") as old_completed:
+            old_route.fulfill(response=old_route.fetch())
+        old_completed.value.body()
+        expect(switcher.locator("#save")).to_be_disabled()
+        new_route = new_save.pop()
+        new_route.fulfill(response=new_route.fetch())
+        expect(switcher.locator("#save")).to_be_enabled()
+        assert switcher.locator("#hotel-name").input_value() == "New scope remains editable"
+        switcher.close()
+
         staff = []
         for _ in range(2):
             response = api.post(base + "/credentials", headers=admin, json={"role": "staff"})
@@ -164,24 +204,25 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
                               "source_hash": source["source_hash"], "language": "es", "title": "Title", "body": "Body"}
         assert api.post(base + "/content/approve", headers=staff_headers, json=forbidden_approval).status_code == 401
 
-        # Hold a real overview snapshot while claiming. Single-flight polling
-        # cannot accumulate requests and its late old version cannot undo claim.
+        # Return an earlier real overview after the claim; its stale version
+        # must not undo successful acknowledgement.
+        snapshot = api.get(base + "/overview", headers=staff_headers)
+        snapshot.raise_for_status()
         held = []
         def hold_snapshot(route):
-            held.append((route, route.fetch()))
+            held.append(route)
         owner.route(overview, hold_snapshot)
         with owner.expect_request(overview):
             owner.clock.fast_forward(5001)
         owner.clock.fast_forward(15000)
-        assert len(held) == 1
         card(owner, item_id).locator("input").fill("Reception shift A")
         with owner.expect_response(lambda response: response.url.endswith("/items/" + item_id) and response.request.method == "PATCH") as acknowledged:
             card(owner, item_id).locator('[data-action="acknowledge"]').click()
         assert acknowledged.value.status == 200
         assert acknowledged.value.request.post_data_json == {"status": "acknowledged", "expected_version": 0,
                                                            "responsible_name": "Reception shift A"}
-        route, snapshot = held.pop()
-        route.fulfill(response=snapshot)
+        route = held.pop()
+        route.fulfill(status=snapshot.status_code, content_type="application/json", body=snapshot.content)
         owner.unroute(overview, hold_snapshot)
         wait_version(owner, item_id, 1)
         poll(other)
@@ -211,6 +252,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
             card(owner, item_id).locator('[data-action="resolve"]').click()
         assert resolved.value.status == 200
         wait_version(owner, item_id, 2)
+        expect(card(owner, item_id).locator("textarea")).to_have_count(0)
         public = api.get("/api/device/operations/browser-staff-session/items/" + item_id, headers=device_headers).json()
         assert public["status"] == "resolved" and public["version"] == 2
         assert set(public) == {"item_id", "status", "version", "created", "acknowledged_at", "resolved_at"}
