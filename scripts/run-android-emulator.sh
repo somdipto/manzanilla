@@ -14,9 +14,16 @@ adb shell settings put global animator_duration_scale 0
 adb install -r android/hotel/build/outputs/apk/debug/hotel-debug.apk
 adb install -r android/hotel/build/outputs/apk/androidTest/debug/hotel-debug-androidTest.apk
 adb shell dumpsys webviewupdate > "$evidence/webview.txt"
-# Keep the image's configured launcher; AOSP and Google images use different packages.
-adb logcat -c
-trap 'adb logcat -d > "$evidence/logcat.txt"; adb shell locksettings clear --old 2468 > /dev/null 2>&1 || true' EXIT
+# HOME must reach the system launcher, not our HOME candidate or Android's chooser.
+home="$(adb shell cmd package resolve-activity --brief --query-flags 0x100000 -a android.intent.action.MAIN -c android.intent.category.HOME)"
+home="${home##*$'\n'}"
+home="${home%$'\r'}"
+case "$home" in
+  ""|android/*|dev.orange.hotel/*|*" "*) echo "No unambiguous system HOME activity for the isolated fixture" >&2; exit 1 ;;
+esac
+[[ "$home" == */* ]]
+adb shell cmd package set-home-activity "$home"
+trap 'adb shell locksettings clear --old 2468 > /dev/null 2>&1 || true' EXIT
 run_fixture() {
   local fixture="$1"
   local label="${2:-$1}"
