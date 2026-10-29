@@ -26,6 +26,10 @@ class HotelGateway(
         .readTimeout(30, TimeUnit.SECONDS).build(),
     private val connectionFailure: (String) -> Unit = {}
 ) {
+    private companion object {
+        val STATUS_FIELDS = arrayOf("item_id", "status", "version", "created", "acknowledged_at", "resolved_at")
+    }
+
     private class Context(val lease: SessionOwner.Lease) {
         var pendingAction: PendingAction? = null
         var confirmationId = ""
@@ -143,12 +147,15 @@ class HotelGateway(
         val confirmation = response.optString("confirmation_id")
         val fields = response.optJSONArray("fields")
         var receiptId = ""
-        if (confirmation.isBlank() && fields == null && response.optString("status") !in
-            setOf("pending", "error", "unavailable", "cancelled")) {
+        val status = response.optString("status")
+        if (confirmation.isBlank() && fields == null && status != "pending" &&
+            status != "error" && status != "unavailable" && status != "cancelled") {
             val result = response.optJSONObject("result")
-            val id = sequenceOf("item_id", "request_id", "escalation_id")
-                .map { result?.optString(it).orEmpty() }.firstOrNull { it.isNotBlank() }.orEmpty()
-            if (id.matches(Regex("[A-Za-z0-9_-]{1,200}"))) receiptId = id
+            val id = result?.optString("item_id").orEmpty()
+                .ifBlank { result?.optString("request_id").orEmpty() }
+                .ifBlank { result?.optString("escalation_id").orEmpty() }
+            if (id.length in 1..200 && id.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '_' || it == '-' })
+                receiptId = id
         }
         if (receiptId != context.receiptId) {
             stopWatch(context)
@@ -273,7 +280,8 @@ class HotelGateway(
                         val value = JSONObject(it.body?.string().orEmpty())
                         val status = value.getString("status")
                         val version = value.getInt("version")
-                        require(value.getString("item_id") == item && status in setOf("open", "acknowledged", "resolved") && version >= 0)
+                        require(value.getString("item_id") == item &&
+                            (status == "open" || status == "acknowledged" || status == "resolved") && version >= 0)
                         // Explicit construction: private endpoint additions can never cross this boundary.
                         JSONObject().put("item_id", item).put("status", status).put("version", version)
                             .put("created", value.getDouble("created"))
@@ -292,7 +300,7 @@ class HotelGateway(
                     if (value != null && (previous == null || value.getInt("version") >= previous.getInt("version"))) {
                         context.publicStatus = value
                     }
-                    val event = context.publicStatus?.let { JSONObject(it.toString()) } ?: JSONObject().put("item_id", item)
+                    val event = context.publicStatus?.let { JSONObject(it, STATUS_FIELDS) } ?: JSONObject().put("item_id", item)
                     event.put("type", "request_status").put("status_available", value != null)
                     if (value == null) event.put("text", text(context, "Request status is unavailable. Showing the last known state."))
                     emit(context, event)
