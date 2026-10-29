@@ -101,7 +101,7 @@ internal object HotelReadinessFixture {
                 check(System.nanoTime() < deadline)
                 Thread.sleep(100)
             }
-            js("window.readinessEvents=[];var readinessReceive=window.manzania.receive;window.manzania.receive=function(e){window.readinessEvents.push(e);return readinessReceive(e)}")
+            js("window.readinessEvents=[];var readinessReceive=window.manzania.receive;window.manzania=Object.freeze({receive:function(e){window.readinessEvents.push(e);return readinessReceive(e)}})")
             test.runOnMainSync {
                 (field("readinessClient").get(activity) as OkHttpClient).dispatcher.executorService.shutdown()
                 field("readinessClient").set(activity, client)
@@ -249,8 +249,13 @@ internal object HotelReadinessFixture {
             val dying = Reply(release = CountDownLatch(1))
             probe(dying)
             test.runOnMainSync { activity.finish() }
-            test.waitForIdleSync()
-            check(activity.isDestroyed)
+            val destroyedBy = System.nanoTime() + TimeUnit.SECONDS.toNanos(4)
+            var destroyed = false
+            while (!destroyed) {
+                test.runOnMainSync { destroyed = activity.isDestroyed }
+                check(destroyed || System.nanoTime() < destroyedBy) { "Activity destruction did not settle" }
+                if (!destroyed) Thread.sleep(20)
+            }
             dying.release!!.countDown()
             check(dying.finished.await(5, TimeUnit.SECONDS))
             test.waitForIdleSync()

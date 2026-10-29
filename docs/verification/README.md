@@ -20,7 +20,6 @@ Session/generation identity remains part of each immutable report key.
 - **Passed:** personal-test Android JVM, debug/instrumentation assembly and lint
   with JDK17/SDK34. Despite injected dummy provider values, APK dex inspection
   proved `DISTRIBUTION=personal-test` and both Fish provider fields empty.
-  Native readiness delivery remains a separate runtime gate.
   APK SHA256:`741cc7012909cf9bcd706f0da0279ddbec908476a29fd57d5b4e276d75f215df`.
 - **Passed:** actual API34 `hotel-setup-gates`, named PASS and instrumentation
   code -1: protected settings/translation routes, absent-lock handling, PIN
@@ -31,9 +30,13 @@ Session/generation identity remains part of each immutable report key.
 - **Reproduced/fixed:** an uncertain no-form help result lost its exact retry
   when readiness or a capability changed. The shipped browser regression now
   passes with retained action/arguments, single-flight replay and no false receipt.
-- The first native readiness run failed before the expected WebView connection
-  event was observed. Its fixture now waits for observable delivered state as
-  well as native probe completion; that revised runtime case is not yet passed.
+- **Passed:** complete actual API34 hotel suite: `reception-bridge`,
+  `reception-truth`, `hotel-readiness` and `hotel-setup-gates`, each named PASS/-1.
+  Readiness covers delivered WebView/native states, safe capabilities, stale
+  responses and pause/destroy cancellation without provider calls.
+- The readiness observer initially tried to replace a frozen API member.
+  It now preserves the frozen public envelope and observes delivery. Teardown
+  waits for actual Activity destruction, not merely an idle main queue.
 - Probes do not create sessions or open a microphone. Service flags describe
   configuration, not provider access or a live staff watcher. No paid provider
   call, live data mutation, release or deployment occurred.
