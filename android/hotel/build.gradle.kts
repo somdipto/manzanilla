@@ -40,6 +40,10 @@ android {
         manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl") || project.hasProperty("legacyFeedUrl")) "true" else "false"
         versionName = rootProject.file("VERSION").readText().trim()
     }
+    if (project.hasProperty("installerConsentFixture")) {
+        // Private debug QA must exercise Android consent, not an eligible silent self-update.
+        sourceSets.getByName("debug").manifest.srcFile("src/installerConsent/AndroidManifest.xml")
+    }
     androidResources { noCompress += "wav" }
     buildFeatures { buildConfig = true }
     signingConfigs {

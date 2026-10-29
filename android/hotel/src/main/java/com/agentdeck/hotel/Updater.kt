@@ -7,9 +7,11 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
@@ -26,6 +28,7 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.UUID
@@ -47,6 +50,8 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
     private var installWhenReady = false
     private var lastStatus: String? = null
     private var receiver: BroadcastReceiver? = null
+    private var callbackUri: Uri? = null
+    private var callbackIntent: PendingIntent? = null
     @Volatile private var installSessionId = -1
     init { UiText.preload(app) }
     private fun text(message: String, values: Map<String, String> = emptyMap()): String {
@@ -416,19 +421,24 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
         abandonInstall()
         phase = "installing"
         status(attempt, "progress:Installing update…")
-        listen(attempt)
+        try { listen(attempt) }
+        catch (e: Exception) { installFailed(attempt, explicit, e); return }
+        val capability = callbackUri ?: return
         Thread {
             try {
                 val file = apkFile(attempt.request)
                 validate(file, attempt.request) // Revalidate immediately before handing bytes to Android.
-                writeAndCommit(file, attempt, explicit)
-            } catch (e: Exception) { ui.post { installFailed(attempt, explicit, e) } }
+                writeAndCommit(file, attempt, explicit, capability)
+            } catch (e: Exception) { ui.post {
+                if (callbackUri == capability) installFailed(attempt, explicit, e)
+            } }
         }.start()
     }
 
     private fun installFailed(attempt: UpdateAttempt, explicit: Boolean, error: Exception) {
         if (!ownership.owns(attempt)) return
-        Log.w("UPD", "PackageInstaller session failed", error)
+        // Framework failures may include the callback Intent; never log its capability.
+        Log.w("UPD", "PackageInstaller session failed (${error.javaClass.simpleName})")
         stopListening()
         abandonInstall()
         if (explicit) openSystemInstaller(attempt)
@@ -453,23 +463,27 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
                         status(attempt, "confirm:Update is downloaded. End the conversation, then tap to finish the Android update.")
                         return@post
                     }
+                    val installer = trustedInstaller(Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(UpdateApkProvider.uri(file), "application/vnd.android.package-archive")
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                    if (installer == null) {
+                        manualUpdate(attempt)
+                        return@post
+                    }
                     try {
-                        app.startActivity(Intent(Intent.ACTION_VIEW)
-                            .setDataAndType(UpdateApkProvider.uri(file), "application/vnd.android.package-archive")
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                        app.startActivity(installer)
                         phase = "confirming"
                         status(attempt, "confirm:Confirm the Android install prompt. The file is already downloaded.")
-                    } catch (e: Exception) { fail(attempt, "The Android installer could not open.", e) }
+                    } catch (_: Exception) { manualUpdate(attempt) }
                 }
             } catch (e: Exception) { ui.post { fail(attempt, e.message ?: "The update is invalid.", e) } }
         }.start()
     }
 
-    private fun writeAndCommit(file: File, attempt: UpdateAttempt, explicit: Boolean) {
+    private fun writeAndCommit(file: File, attempt: UpdateAttempt, explicit: Boolean, capability: Uri) {
         val installer = app.packageManager.packageInstaller
         val params = installParameters(attempt.request.packageName)
         val id = installer.createSession(params)
-        installSessionId = id
         try {
             installer.openSession(id).use { session ->
                 file.inputStream().use { input -> session.openWrite("update.apk", 0, file.length()).use { out -> input.copyTo(out); session.fsync(out) } }
@@ -478,10 +492,11 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
         // Copying an APK can take time. Commit only on the UI thread after checking
         // that reception is still foreground/idle; the reservation fences new starts.
         ui.post {
-            if (!ownership.owns(attempt) || installSessionId != id) {
+            if (!ownership.owns(attempt) || callbackUri != capability || phase != "installing") {
                 try { installer.abandonSession(id) } catch (_: Exception) { }
                 return@post
             }
+            installSessionId = id
             if (!canInstall()) {
                 abandonInstall()
                 stopListening()
@@ -497,8 +512,10 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
             }
             try {
                 installer.openSession(id).use { session ->
-                    val pending = PendingIntent.getBroadcast(app, id, Intent(action).setPackage(app.packageName),
+                    val pending = PendingIntent.getBroadcast(app, id,
+                        Intent(action).setPackage(app.packageName).setData(capability),
                         PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+                    callbackIntent = pending
                     session.commit(pending.intentSender)
                 }
             } catch (e: Exception) { installFailed(attempt, explicit, e) }
@@ -512,16 +529,37 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
             if (Build.VERSION.SDK_INT >= 31) setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
         }
 
-    // Pre-33 receivers have no export flag; the filter carries an app-private action and setPackage().
+    // Legacy dynamic receivers are externally reachable. The per-attempt URI is
+    // the authority; neither a custom action nor setPackage() makes them private.
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     private fun listen(attempt: UpdateAttempt) {
         stopListening()
+        callbackUri = Uri.parse(UpdateInstallerSecurity.newCallbackUri())
         val next = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                if (!ownership.owns(attempt) || intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1) != installSessionId) return
-                when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
+                val reportedSessionId = try { intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1) }
+                    catch (_: RuntimeException) { return }
+                if (intent.action != action || !UpdateInstallerSecurity.acceptsCallback(
+                        callbackUri?.toString(), intent.data?.toString(), installSessionId,
+                        reportedSessionId, ownership.owns(attempt), phase)) return
+                val result = try { intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE) }
+                    catch (_: RuntimeException) { return }
+                when (result) {
                     PackageInstaller.STATUS_PENDING_USER_ACTION -> {
                         if (phase == "confirming") return
+                        val confirm = try {
+                            if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+                            else @Suppress("DEPRECATION") intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
+                        } catch (_: RuntimeException) { null }
+                        val session = try { app.packageManager.packageInstaller.getSessionInfo(installSessionId) }
+                            catch (_: Exception) { null }
+                        val trusted = if (session != null && session.installerPackageName == app.packageName &&
+                            (session.appPackageName == null || session.appPackageName == "dev.orange.hotel"))
+                            confirm?.let { trustedInstaller(it) } else null
+                        if (trusted == null) {
+                            manualUpdate(attempt)
+                            return
+                        }
                         phase = "confirming"
                         // Keep the reservation until the prompt pauses this activity.
                         // onForeground releases it without automatically reopening consent.
@@ -532,41 +570,84 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
                             installPolicy.settled()
                             return
                         }
-                        val confirm = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
-                            else @Suppress("DEPRECATION") intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
-                        try {
-                            check(confirm != null) { "Android returned no installation prompt." }
-                            context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                        } catch (e: Exception) { fail(attempt, "The Android installer could not open.", e) }
+                        try { context.startActivity(trusted.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        catch (_: Exception) { manualUpdate(attempt) }
                     }
                     PackageInstaller.STATUS_SUCCESS -> {
+                        val matches = try { UpdateInstallerSecurity.installedCandidate(attempt.request, installed()) }
+                            catch (_: Exception) { false }
+                        if (!matches) {
+                            manualUpdate(attempt)
+                            return
+                        }
                         phase = "installed"
                         installPolicy.settled()
                         stopListening()
+                        installSessionId = -1
                     }
                     else -> {
                         phase = "ready"
                         installPolicy.settled()
                         status(attempt, "failed:Android did not install the update. Tap to retry or cancel.")
                         stopListening()
+                        abandonInstall()
                     }
                 }
             }
         }
         receiver = next
-        if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(next, IntentFilter(action), Context.RECEIVER_NOT_EXPORTED)
-        else app.registerReceiver(next, IntentFilter(action))
+        val filter = IntentFilter(action).apply {
+            addDataScheme("manzanilla-update")
+            addDataAuthority("callback", null)
+        }
+        if (Build.VERSION.SDK_INT >= 33) app.registerReceiver(next, filter, Context.RECEIVER_NOT_EXPORTED)
+        else app.registerReceiver(next, filter)
     }
 
     private fun stopListening() {
         receiver?.let { try { app.unregisterReceiver(it) } catch (_: Exception) {} }
         receiver = null
+        clearCallback()
     }
 
     private fun abandonInstall() {
+        clearCallback()
         val id = installSessionId
         installSessionId = -1
         if (id >= 0) try { app.packageManager.packageInstaller.abandonSession(id) } catch (_: Exception) {}
+    }
+
+    private fun clearCallback() {
+        callbackIntent?.cancel()
+        callbackIntent = null
+        callbackUri = null
+    }
+
+    /** A system resolver/chooser is not itself proof of a trusted default handler. */
+    private fun trustedInstaller(intent: Intent): Intent? {
+        if (intent.selector != null) return null
+        return try {
+            val pm = app.packageManager
+            val resolved = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo ?: return null
+            val application = resolved.applicationInfo ?: return null
+            if (!resolved.enabled || !application.enabled ||
+                application.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0) return null
+            val component = ComponentName(resolved.packageName, resolved.name)
+            val candidates = pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            if (candidates.none { it.activityInfo?.let { info ->
+                    ComponentName(info.packageName, info.name) == component
+                } == true }) return null
+            Intent(intent).setComponent(component)
+        } catch (_: Exception) { null }
+    }
+
+    private fun manualUpdate(attempt: UpdateAttempt) {
+        if (!ownership.owns(attempt)) return
+        stopListening()
+        abandonInstall()
+        installPolicy.settled()
+        phase = "ready"
+        status(attempt, "confirm:The verified update is kept. Ask staff to install the official signed update from https://github.com/somdipto/manzanilla/releases/latest without uninstalling this app; app data stays in place.")
     }
 
     private fun note(pct: Int = 0, got: Long = 0, total: Long = 0, done: Boolean = false) {
@@ -578,4 +659,47 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
             .setContentTitle(text("Manzanilla update")).setContentText(if (pct >= 0) text("Downloading {percent}%", mapOf("percent" to pct.toString())) else text("Downloading {size} MB", mapOf("size" to (got / 1048576).toString())))
             .setProgress(100, pct.coerceAtLeast(0), total <= 0).setOngoing(true).setOnlyAlertOnce(true).build())
     }
+}
+
+/** Pure predicates shared by the real callback path and focused JVM security tests. */
+internal object UpdateInstallerSecurity {
+    private const val PREFIX = "manzanilla-update://callback/"
+    private val random = SecureRandom()
+
+    fun newCallbackUri(): String {
+        val bytes = ByteArray(32)
+        random.nextBytes(bytes)
+        val hex = "0123456789abcdef"
+        val encoded = CharArray(64)
+        bytes.forEachIndexed { i, value ->
+            encoded[i * 2] = hex[(value.toInt() and 255) ushr 4]
+            encoded[i * 2 + 1] = hex[value.toInt() and 15]
+        }
+        return PREFIX + String(encoded)
+    }
+
+    private fun nonce(uri: String): ByteArray? {
+        if (!uri.startsWith(PREFIX) || uri.length != PREFIX.length + 64) return null
+        val bytes = ByteArray(32)
+        for (i in bytes.indices) {
+            val high = "0123456789abcdef".indexOf(uri[PREFIX.length + i * 2])
+            val low = "0123456789abcdef".indexOf(uri[PREFIX.length + i * 2 + 1])
+            if (high < 0 || low < 0) return null
+            bytes[i] = ((high shl 4) or low).toByte()
+        }
+        return bytes
+    }
+
+    fun acceptsCallback(expectedUri: String?, actualUri: String?, sessionId: Int,
+                        reportedSessionId: Int, ownsAttempt: Boolean, phase: String): Boolean {
+        if (!ownsAttempt || sessionId < 0 || reportedSessionId != sessionId ||
+            (phase != "installing" && phase != "confirming") || expectedUri == null || actualUri == null) return false
+        val expected = nonce(expectedUri) ?: return false
+        val actual = nonce(actualUri) ?: return false
+        return MessageDigest.isEqual(expected, actual) && expectedUri == actualUri
+    }
+
+    fun installedCandidate(request: UpdateRequest, installed: ApkIdentity): Boolean =
+        installed.packageName == request.packageName && installed.versionName == request.versionName &&
+            installed.versionCode == request.versionCode
 }

@@ -25,6 +25,11 @@ the chooser fixture does not manufacture a resume or loosen authorization.
 Framework lifecycle exceptions in isolated native QA emit only exception type
 and a bounded application source location before normal crash handling continues.
 Exception messages, Intent extras and raw logcat are not retained.
+Genuine installer QA waits for the candidate's committed package version before
+pulling installed bytes. Instrumentation replacement and an online device alone
+are insufficient: run40946273420 observed real Android consent but still pulled
+baseline9900 instead of candidate9901. The bounded settlement barrier does not
+retry installation or weaken exact hash/package/version/signer/retention checks.
 
 The seven reviewable candidates are resequenced to17.0.40–17.0.46/code70–76;
 S7 and S8 remain one final PR. Earlier evidence below retains the actual
@@ -32,6 +37,31 @@ versions and source commits exercised; it is not silently relabelled.
 Final original-signer upgrade/visible-Reception proof must bind the new head,
 not the already-passed17.0.45 artifact. No release, deployment, additional
 provider probe, PR merge or live-data mutation is authorized by this integration.
+
+## 17.0.43 installer-capability candidate (S6)
+
+Version17.0.43/code73. Callback identity is private per attempt and never logged.
+
+- **Passed:** actual disposable API26/29/32/34 callback execution in
+  [run40888340045](https://github.com/somdipto/manzanilla/actions/runs/40888340045).
+  API31+ also exercises the actual delivery/session-ownership boundary.
+- **Passed:** API34 actual Updater dispatch and trusted Android positive consent,
+  followed by exact installed candidate bytes, package/code, disposable signer
+  and a fresh retained preferences/file/encrypted-key check, named PASS/-1.
+  The in-place QA transition is99.0.0/code9900 →99.0.1/code9901.
+- Replacement terminated its instrumentation process. That is not acceptance:
+  the host independently verified the candidate and the fresh retained-data run.
+  No candidate was installed through adb as the update under test.
+- The first local attempt legally updated silently and was not counted as
+  genuine consent. A private debug-only manifest overlay omits unattended-update
+  permission to require the real Android prompt; production permission/policy
+  remains unchanged. Unknown foreground windows never authorize a click.
+- Instrumentation APKs legitimately lack app version fields. Their package,
+  debuggability and signer are checked separately; application identity remains
+  strict. Incidental permission/parameter-copy assertions were removed.
+- These synthetic disposable-signer checks do not certify physical OEM behavior
+  or replace the original-signer, actual packaged-Reception release gates.
+  No provider session, live-device mutation, publication or deployment occurred.
 
 ## 17.0.42 staff fulfilment candidate (S5)
 
