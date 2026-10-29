@@ -100,6 +100,20 @@ async def check_turns(ticket, tool_name):
         readers.add(task)
         task.add_done_callback(readers.discard)
     room.register_text_stream_handler("lk.transcription", consume)
+    async def await_idle():
+        # A caption tool call precedes the end of the model turn. Injecting the
+        # next instantaneous text message at that point can append it to the
+        # unfinished input. Require a settled provider boundary between fixtures.
+        deadline = time.monotonic() + 15
+        quiet_since = None
+        while time.monotonic() < deadline:
+            idle = any(p.attributes.get("lk.agent.state") in ("listening", "idle")
+                       for p in room.remote_participants.values())
+            quiet_since = (quiet_since or time.monotonic()) if idle else None
+            if quiet_since and time.monotonic() - quiet_since >= .5:
+                return
+            await asyncio.sleep(.05)
+        raise RuntimeError("synthetic turn did not settle")
     start = time.monotonic()
     try:
         await room.connect(ticket["livekit_url"], ticket["token"])
@@ -135,6 +149,7 @@ async def check_turns(ticket, tool_name):
                 print("synthetic_caption=" + json.dumps({name: str(report.get(name, ""))[:500]
                     for name in ("source_language", "original", "translation")}, ensure_ascii=True), flush=True)
                 raise RuntimeError("synthetic language routing failed")
+            await await_idle()
         print("scope=text_input_only_no_microphone_no_acoustic_latency_claim", flush=True)
     finally:
         await room.disconnect()
