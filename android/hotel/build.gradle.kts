@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 fun javaString(value: String) = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+val distribution = (project.findProperty("distribution") as String?) ?: "personal-test"
+require(distribution in setOf("personal-test", "hotel")) {
+    "distribution must be personal-test or hotel"
+}
 android {
     namespace = "com.agentdeck.hotel"
     compileSdk = 34
@@ -30,8 +34,9 @@ android {
         }
         buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://github.com/somdipto/manzanilla/releases/latest/download/release-metadata.json"))
         buildConfigField("String", "LEGACY_FEED_URL", javaString(project.findProperty("legacyFeedUrl") as String? ?: "https://api.github.com/repos/somdipto/manzanilla/releases/latest"))
-        buildConfigField("String", "FISH_API_KEY", javaString(injected("FISH_API_KEY")))
-        buildConfigField("String", "FISH_VOICE_ID", javaString(injected("FISH_VOICE_ID")))
+        buildConfigField("String", "DISTRIBUTION", javaString(distribution))
+        buildConfigField("String", "FISH_API_KEY", javaString(if (distribution == "personal-test") injected("FISH_API_KEY") else ""))
+        buildConfigField("String", "FISH_VOICE_ID", javaString(if (distribution == "personal-test") injected("FISH_VOICE_ID") else ""))
         manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl") || project.hasProperty("legacyFeedUrl")) "true" else "false"
         versionName = rootProject.file("VERSION").readText().trim()
     }
@@ -49,6 +54,11 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // Debug fixtures never receive provider credentials, even with injected inputs.
+            buildConfigField("String", "FISH_API_KEY", javaString(""))
+            buildConfigField("String", "FISH_VOICE_ID", javaString(""))
+        }
         release {
             isMinifyEnabled = false
             if (!System.getenv("ORANGE_KEYSTORE").isNullOrBlank()) signingConfig = signingConfigs.getByName("pilot")

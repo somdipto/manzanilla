@@ -84,6 +84,10 @@ class Store:
         rows = self.rows('SELECT id,hotel,role FROM credentials WHERE hash=? AND role=?',
                          (hashlib.sha256(token.encode()).hexdigest(), role))
         return rows[0] if rows else None
+    def has_staff(self, hid: str) -> bool:
+        with self.lock:
+            return self.db.execute("SELECT 1 FROM credentials WHERE hotel=? AND role='staff' LIMIT 1",
+                                   (hid,)).fetchone() is not None
     def reserve_fish(self, dev, duration, hotel_cap, account_cap, creation_seconds, token_seconds,
                      reservation=None, *, route='fish', session_id_for=None):
         if route not in {'fish', 'livekit'}:

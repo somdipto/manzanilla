@@ -164,9 +164,14 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             terminate(run, "error", text(run, "Microphone permission is needed for translation.")); return
         }
         val connection = HotelConnection(ctx).load().takeIf {
-            TranslationRouting.useManagedConnection(it != null, TranslationSettings(ctx).directFishSelected)
+            TranslationRouting.useManagedConnection(it != null, TranslationSettings(ctx).directFishSelected, BuildConfig.DISTRIBUTION)
         }
         val managed = connection != null
+        // Never use personal credentials for a new hotel session. The key resolver remains
+        // available to retryRecoveredEnd for an older direct reservation's exact credential.
+        if (BuildConfig.DISTRIBUTION == "hotel" && !managed) {
+            terminate(run, "error", text(run, "Translation needs hotel setup. Please ask staff.")); return
+        }
         val apiKey = if (managed) "" else key().trim()
         if (!managed && apiKey.isBlank()) {
             terminate(run, "error", text(run, "Ask staff to configure or recover the translation credential in Settings.")); return
@@ -397,7 +402,11 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
 
     private fun startupFailed(run: Run, stage: FishStartupFailure.Stage, error: Throwable, managed: Boolean) {
         if (!run.owner.active()) return
-        val notice = FishStartupFailure.describe(stage, error, managed) { message, values -> text(run, message, values) }
+        val notice = FishStartupFailure.describe(stage, error, managed) { message, values ->
+            if (BuildConfig.DISTRIBUTION == "hotel" && message != "{message} Reference: {reference}")
+                text(run, "Translation is unavailable. Please ask staff.")
+            else text(run, message, values)
+        }
         // Never pass the exception, request URL, response body or credential to logcat.
         Log.w("TranslationStartup", notice.reference)
         terminate(run, "error", notice.text)

@@ -4,14 +4,14 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from .db import Store
 from .models import Hotel, BookingLookup
-from .gateway import Gateway
+from .gateway import Gateway, phone_number
 from .realtime import relay
 from .operations import Operations, Start, Action, Confirmation
 from .localization import catalogue
-from .hotel_answers import ContentSelector, ContentApproval, draft_content, approve_content, content_review
+from .hotel_answers import ContentSelector, ContentApproval, draft_content, approve_content, content_review, content_availability
 from .livekit_route import mint as livekit_mint, end as end_livekit
 from .fish import FishSession, mint, end as end_fish, end_request as end_fish_request, revoke_sessions, NOT_CREATED
 from .models import Strict
@@ -146,6 +146,14 @@ class Heartbeat(BaseModel):
     app_version: str = Field(max_length=40)
     config_version: int = Field(ge=0)
     protocol: int = 1
+    language: str = ''
+
+    @field_validator('language')
+    @classmethod
+    def offered_language(cls, value):
+        if value not in {row['code'] for row in catalogue()['languages']}:
+            raise ValueError('Unsupported guest language')
+        return value
 
 def device_auth(auth):
     result=store.auth(bearer(auth),'device')
@@ -164,10 +172,23 @@ def staff_check(value: StaffCheck, authorization: str = Header(default='')):
 
 @app.post('/api/device/heartbeat')
 def heartbeat(value: Heartbeat, authorization: str = Header(default='')):
-    dev=device_auth(authorization)
-    if value.protocol!=1: raise HTTPException(426,'Client update required')
-    store.run('UPDATE credentials SET seen=?,version=?,config_version=? WHERE id=?',(time.time(),value.app_version,value.config_version,dev['id']))
-    return {'hotel':store.hotel(dev['hotel']),'device_id':dev['id'],'protocol':1}
+    with store.lock:
+        dev=device_auth(authorization)
+        if value.protocol!=1: raise HTTPException(426,'Client update required')
+        store.run('UPDATE credentials SET seen=?,version=?,config_version=? WHERE id=?',(time.time(),value.app_version,value.config_version,dev['id']))
+        hotel=store.hotel(dev['hotel'])
+        language=value.language if 'language' in value.model_fields_set else hotel['default_language']
+        content=content_availability(store,dev['hotel'],language)
+        staff=store.has_staff(dev['hotel'])
+        services={
+            'checkin':content['checkin'],
+            'question':bool(content['question'] and os.getenv('GEMINI_API_KEY','').strip()),
+            'taxi':bool((hotel['taxi_mode']=='staff_request' and staff) or
+                        (hotel['taxi_mode']=='dialer' and phone_number(hotel.get('taxi_number','')))),
+            'operator':bool(phone_number(hotel.get('operator_primary','')) or staff),
+            'message':staff,
+        }
+        return {'hotel':hotel,'device_id':dev['id'],'protocol':1,'services':services}
 
 class VoiceSession(Strict):
     mode: Literal['translation','reception']

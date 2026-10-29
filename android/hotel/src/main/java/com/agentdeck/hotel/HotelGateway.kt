@@ -21,9 +21,14 @@ class HotelGateway(
     private val dial: (SessionOwner.Lease, JSONObject) -> Unit,
     private val translate: (SessionOwner.Lease, String, Map<String, String>) -> String,
     private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS).build()
+        .readTimeout(30, TimeUnit.SECONDS).build(),
+    private val connectionFailure: (String) -> Unit = {}
 ) {
     private class Context(val lease: SessionOwner.Lease) {
+        var pendingAction: PendingAction? = null
+        var confirmationId = ""
+        var confirmationAction = ""
+        var pendingConfirmation: Boolean? = null
         val id = UUID.randomUUID().toString()
         val calls = mutableSetOf<Call>()
         var startCall: Call? = null
@@ -32,6 +37,7 @@ class HotelGateway(
         var busy = false
         var closed = false
     }
+    private class PendingAction(val action: String, val arguments: String, val id: String = UUID.randomUUID().toString())
     private var current: Context? = null
     private val pendingStarts = mutableSetOf<Call>()
     private var disposed = false
@@ -45,6 +51,11 @@ class HotelGateway(
         current = Context(lease)
     }
 
+    @Synchronized fun canReconcile(lease: SessionOwner.Lease, action: String, arguments: JSONObject): Boolean {
+        val context = current?.takeIf { it.lease == lease && !it.closed } ?: return false
+        return context.pendingAction?.let { it.action == action && it.arguments == arguments.toString() } == true
+    }
+
     @Synchronized fun action(lease: SessionOwner.Lease, action: String, arguments: JSONObject) {
         val context = current?.takeIf { it.lease == lease && !it.closed } ?: return
         if (!configured) {
@@ -52,15 +63,25 @@ class HotelGateway(
                 .put("text", text(context, "Hotel services are not connected. Ask staff to configure the hotel's secure backend.")))
             return
         }
-        if (context.busy) {
+        if (context.busy || context.pendingConfirmation != null) {
             emit(context, JSONObject().put("type", "notice").put("text", text(context, "Please wait for the current hotel request.")))
             return
         }
+        val pending = context.pendingAction
+        if (pending != null && (pending.action != action || pending.arguments != arguments.toString())) {
+            emit(context, JSONObject().put("type", "notice").put("text", text(context, "Please wait for the current hotel request.")))
+            return
+        }
+        val submission = pending ?: PendingAction(action, arguments.toString()).also { context.pendingAction = it }
         context.busy = true
         fun execute() {
             post(context, "/api/device/operations/${context.id}/action", JSONObject()
-                .put("action", action).put("call_id", UUID.randomUUID().toString()).put("arguments", arguments)) { response ->
-                synchronized(this) { context.busy = false }
+                .put("action", submission.action).put("call_id", submission.id).put("arguments", JSONObject(submission.arguments))) { response ->
+                synchronized(this) {
+                    context.busy = false
+                    if (!response.optBoolean("_uncertain") && response.optString("status") != "pending") context.pendingAction = null
+                }
+                response.remove("_uncertain")
                 result(context, action, response)
             }
         }
@@ -68,7 +89,11 @@ class HotelGateway(
         else post(context, "/api/device/operations/start", JSONObject().put("session_id", context.id)
             .put("mode", "reception").put("language", lease.request.guest).put("staff_language", lease.request.staff)) {
             if (it.optString("status") == "unavailable" || it.optString("status") == "error") {
-                synchronized(this) { context.busy = false }
+                synchronized(this) {
+                    context.busy = false
+                    if (!it.optBoolean("_uncertain")) context.pendingAction = null
+                }
+                it.remove("_uncertain")
                 result(context, action, it)
             } else {
                 synchronized(this) { context.ready = true }
@@ -77,24 +102,41 @@ class HotelGateway(
         }
     }
 
+    @Synchronized fun confirmationAction(lease: SessionOwner.Lease, draftId: String): String? =
+        current?.takeIf { it.lease == lease && !it.closed && it.confirmationId.isNotEmpty() && it.confirmationId == draftId }?.confirmationAction
+
+    @Synchronized fun canReconcileConfirmation(lease: SessionOwner.Lease, draftId: String, accepted: Boolean): Boolean =
+        current?.let { it.lease == lease && !it.closed && it.confirmationId == draftId && it.pendingConfirmation == accepted } == true
+
     @Synchronized fun confirm(lease: SessionOwner.Lease, draftId: String, accepted: Boolean) {
         val context = current?.takeIf { it.lease == lease && !it.closed } ?: return
-        if (!draftId.startsWith("operation:") || context.busy) return
+        if (!draftId.startsWith("operation:") || draftId != context.confirmationId || context.busy) return
+        context.pendingConfirmation = accepted
         context.busy = true
         post(context, "/api/device/operations/${context.id}/confirm", JSONObject()
             .put("confirmation_id", draftId.removePrefix("operation:")).put("accepted", accepted)) {
-            synchronized(this) { context.busy = false }
+            synchronized(this) {
+                context.busy = false
+                if (!it.optBoolean("_uncertain") && it.optString("status") != "pending") context.pendingConfirmation = null
+            }
             result(context, "", it)
         }
     }
 
     private fun result(context: Context, action: String, response: JSONObject) {
+        response.remove("_uncertain")
+        response.put("reconciliation_pending", context.pendingAction != null || context.pendingConfirmation != null)
         val confirmation = response.optString("confirmation_id")
         val fields = response.optJSONArray("fields")
         when {
-            confirmation.isNotBlank() -> emit(context, JSONObject().put("type", "reception_event")
-                .put("phase", "confirming").put("draft_id", "operation:$confirmation")
-                .put("message", response.optString("summary", response.optString("text"))))
+            confirmation.isNotBlank() -> {
+                context.confirmationId = "operation:$confirmation"
+                context.confirmationAction = action
+                context.pendingConfirmation = null
+                emit(context, JSONObject().put("type", "reception_event")
+                    .put("phase", "confirming").put("draft_id", context.confirmationId)
+                    .put("message", response.optString("summary", response.optString("text"))))
+            }
             fields != null -> emit(context, JSONObject().put("type", "operation_form")
                 .put("action", action).put("fields", fields).put("text", response.optString("text")))
             response.optString("status") == "dialer_required" -> dial(context.lease, response)
@@ -121,18 +163,26 @@ class HotelGateway(
         }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) = finish(call, JSONObject().put("status", "unavailable")
-                .put("text", text(context, "The hotel service could not be reached. Retry or ask reception for help.")))
+                .put("_uncertain", true).put("text", text(context, "The hotel service could not be reached. Retry or ask reception for help.")), "offline")
             override fun onResponse(call: Call, response: Response) {
+                var failedState: String? = null
                 val result = response.use {
-                    if (!it.isSuccessful) JSONObject().put("status", "error")
-                        .put("text", text(context, "Hotel request was not accepted (HTTP {status}). Ask staff to check the connection and authorization.", mapOf("status" to it.code.toString())))
-                    else try { JSONObject(it.body?.string().orEmpty()) } catch (_: Exception) {
-                        JSONObject().put("status", "error").put("text", text(context, "The hotel service returned an unreadable receipt. No success is confirmed."))
+                    if (!it.isSuccessful) {
+                        failedState = when {
+                            it.code == 401 || it.code == 403 -> "unauthorized"
+                            it.code >= 500 || it.code == 408 || it.code == 426 -> "offline"
+                            else -> null
+                        }
+                        JSONObject().put("status", "error").put("_uncertain", it.code >= 500 || it.code == 408)
+                            .put("text", text(context, "Hotel request was not accepted (HTTP {status}). Ask staff to check the connection and authorization.", mapOf("status" to it.code.toString())))
+                    } else try { JSONObject(it.body?.string().orEmpty()) } catch (_: Exception) {
+                        failedState = "offline"
+                        JSONObject().put("status", "error").put("_uncertain", true).put("text", text(context, "The hotel service returned an unreadable receipt. No success is confirmed."))
                     }
                 }
-                finish(call, result)
+                finish(call, result, failedState)
             }
-            private fun finish(call: Call, value: JSONObject) {
+            private fun finish(call: Call, value: JSONObject, failedState: String? = null) {
                 synchronized(this@HotelGateway) {
                     context.calls.remove(call)
                     val wasStart = context.startCall === call
@@ -143,6 +193,7 @@ class HotelGateway(
                     if (wasStart && context.closed) endRemote(context.id)
                     if (disposed && pendingStarts.isEmpty()) client.dispatcher.executorService.shutdown()
                     if (current !== context || context.closed) return
+                    failedState?.let(connectionFailure)
                     callback(value)
                 }
             }

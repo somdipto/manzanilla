@@ -142,8 +142,13 @@ def run_localized_fixture(browser, width=837, height=471, appearance="dark", all
             assert rect["x"] + rect["width"] <= width + 1, (selector, rect)
             assert rect["y"] + rect["height"] <= height + 1, (selector, rect)
 
-        receive({"type": "reception_info", "audio_available": True, "local_audio_state": "off",
-                 "staff_language": "es", "hotel_name": "Isolated <hotel>"})
+        def hotel_ready():
+            receive({"type": "reception_info", "audio_available": True, "local_audio_state": "off",
+                     "distribution": "personal-test", "configured": True, "state": "ready",
+                     "services": {name: True for name in ["checkin", "question", "taxi", "operator", "message"]},
+                     "staff_language": "es", "hotel_name": "Isolated <hotel>"})
+
+        hotel_ready()
         receive({"type": "language_preferences", "language": "invalid", "staff_language": "invalid"})
         assert page.locator("html").get_attribute("lang") == "es", "Invalid saved preferences must select Spanish, not browser English"
         receive({"type": "appearance", "value": appearance})
@@ -163,6 +168,11 @@ def run_localized_fixture(browser, width=837, height=471, appearance="dark", all
                     const select = document.querySelector('#guest-locale');
                     select.value = locale.code;
                     select.dispatchEvent(new Event('change', {bubbles:true}));
+                    if (document.querySelector('#guest-locale').options.length !== 52)
+                        throw Error('An offered interface language became unselectable');
+                    if (!document.querySelector('#content').textContent.includes(
+                        ui.messages['Interface translations have not been reviewed by a human.'][locale.code]))
+                        throw Error('Translation review status is hidden for ' + locale.code);
                     const heading = document.querySelector('.welcome h1');
                     if (heading.textContent !== ui.messages['Welcome.'][locale.code])
                         throw Error('Missing runtime welcome for ' + locale.code);
@@ -217,6 +227,7 @@ def run_localized_fixture(browser, width=837, height=471, appearance="dark", all
         scoped({"type": "reception_event", "phase": "stopped"})
         page.locator('[data-action="back"]').click()
         page.locator('[data-action="back"]').click()
+        hotel_ready()
         page.locator('[data-action="request:message"]').click()
         copy('[data-action="assist-go"]', "Continue")
         page.locator('[data-action="assist-go"]').click()
@@ -239,18 +250,21 @@ def run_localized_fixture(browser, width=837, height=471, appearance="dark", all
         note = page.locator('[name="original_request"]')
         note.fill(original); note.focus()
         note.evaluate("node => node.setSelectionRange(3, 9)")
-        receive({"type": "connection", "connected": True})
+        receive({"type": "connection", "connected": True, "state": "ready"})
         assert note.input_value() == original and note.evaluate("node => node === document.activeElement")
         assert note.evaluate("node => [node.selectionStart, node.selectionEnd]") == [3, 9]
-        language_messages = len(actions("languages"))
         for language in ["ar", "es"]:
             page.locator("#guest-locale").select_option(language)
             assert note.input_value() == original, "Changing UI locale erased an unsent original"
             assert note.evaluate("node => node === document.activeElement"), "Changing UI locale lost textarea focus"
             assert note.evaluate("node => [node.selectionStart, node.selectionEnd]") == [3, 9]
             copy("#operation-form [type=submit]", "Review", language)
-            assert len(actions("languages")) == language_messages, "UI locale changes must not rewrite the server-pinned operation language"
-            assert actions("start")[-1]["session_id"] == scope["session_id"]
+            assert actions("languages")[-1]["language"] == language, "Selected UI locale must immediately refresh the native preference/probe"
+            assert actions("start")[-1]["session_id"] == scope["session_id"] and actions("start")[-1]["language"] == "es", "UI locale notification must not replace the original operation lease"
+            assert page.locator("#operation-form [type=submit]").is_disabled(), "The previous locale's service capability cannot authorize a new submission"
+            copy("#connection-text", "Checking hotel connection", language)
+            hotel_ready()
+            assert note.input_value() == original and note.evaluate("node => node === document.activeElement"), "A completed locale probe must preserve the unsent form and its focus"
         fits("#operation-form [type=submit]")
         page.locator("#operation-form [type=submit]").click()
         scoped({"type": "reception_event", "phase": "confirming", "draft_id": "localized:cancel", "message": original})

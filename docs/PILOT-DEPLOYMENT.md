@@ -21,9 +21,17 @@ Create separate hotel-scoped staff and device credentials. Staff use the inbox t
 
 Install the verified signed update in place; do not uninstall existing app data. In authenticated staff setup, enter the actual HTTPS service URL and the issued device credential—not the administrator credential. The connection bundle is encrypted on-device and is not embedded in the APK.
 
+The repair candidate's hotel distribution is managed-only and its setup requires
+the tablet's existing Android screen-lock credential. It retains personal keys
+without exposing them. A saved enrollment is only configuration: wait for the
+authenticated connection state and the particular service's availability.
+Readiness is not proof of provider entitlement or a staff member watching the
+inbox. Keep a staffed dashboard and follow the separate delivery and voice gates
+before treating any hotel build as production-ready.
+
 Use Hotel assistance to select a language and open microphone-off support. Arrival guidance and answers require a current approved rendering in that language; Gemini may select approved facts, never supply policy prose. Arrival guidance never completes check-in. An unknown answer creates no ticket unless the guest chooses help or a message. Messages and taxi requests require exact review and confirmation before a durable inbox write. A receipt means saved in the staff inbox, not staff acknowledgement or a taxi booking. Human-contact options do not claim an answered call.
 
-For the owner's direct testing, the public release contains a shared Fish credential. Anyone with the APK can extract and use it; use a disposable, account-limited key and rotate it after testing. A saved device key takes precedence, and a saved hotel connection remains selected until the user chooses direct Fish. See [the self-hosted route](selfhosted-voice-route.md) for the separate worker deployment. Retained local greeting playback is not a live-speech demonstration. Physical-device echo, latency and full-duplex behavior remain unverified; validate them during supervised use.
+For the owner's direct testing, the published17.0.37 release contains a shared Fish credential. Anyone with the APK can extract and use it; use a disposable, account-limited key and rotate it after testing. The candidate personal-test distribution preserves encrypted saved-key precedence over bundled fallback and explicit direct preference over enrollment, without adding a PIN to voice-only setup. Hotel new sessions never silently fall back to that path. See [the self-hosted route](selfhosted-voice-route.md) for the separate worker evaluation. Retained local greeting playback is not a live-speech demonstration. Physical-device echo, latency and full-duplex behavior remain unverified; validate them during supervised use.
 
 Hotel operation cleanup is best effort if the tablet process dies or a network
 failure leaves a start outcome uncertain. The server also expires stale sessions;

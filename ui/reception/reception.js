@@ -19,6 +19,24 @@
   const concierge = () => ['Arrival guide','Request help from reception','Request a taxi through staff','Ask about the hotel'].map(message => uiText(message));
   const greet = (language) => (window.MANZANILLA_GREET && window.MANZANILLA_GREET[language]) || '';
   const state = { page: 'idle', mode: 'translation', night: false, language: 'es', staff_language: 'es', demo: !native, connected: false, audioAvailable: false, audioGate: '', audio: 'off', active: false, phase: '', sessionId: '', generation: null, closed: true, terminated: true, error: '', metrics: '', utterances: new Map(), draft: null, confirmed: false, operation: null, outcome: null, notices: [], hotel: '', pendingPage: '', micLevel: 0, turns: [] };
+  Object.assign(state, { distribution: 'personal-test', configured: false, connectionState: 'unconfigured', services: null, bundledKeyAvailable: false });
+  const serviceNames = ['checkin','question','taxi','operator','message'];
+  const isHotel = () => state.distribution === 'hotel';
+  function serviceReason(name = '') {
+    if (!state.configured || state.connectionState === 'unconfigured') return uiText('Hotel services need staff setup.');
+    if (state.connectionState !== 'ready') return uiText({
+      checking: 'Checking the hotel connection. Please wait.',
+      unauthorized: 'The hotel device is not authorized. Please ask staff.',
+      offline: 'The hotel connection is unavailable. Please ask staff.'
+    }[state.connectionState] || 'The hotel connection is unavailable. Please ask staff.');
+    if (!state.services) return uiText('The hotel service needs an update. Please ask staff.');
+    if (name ? !state.services[name] : !serviceNames.some(id => state.services[id])) return uiText('This service is not configured by the hotel. Please ask staff.');
+    return '';
+  }
+  const serviceNote = name => serviceReason(name) ? `<p class="service-reason" role="status">${esc(serviceReason(name))}</p>` : '';
+  const serviceChoice = (id, label, busy = false) => `<div class="service-choice">${action(id, `<strong>${esc(label)}</strong>`, 'choice shortcut', busy || !!serviceReason(id), true)}${serviceNote(id)}</div>`;
+  const reviewBlocked = () => !!state.operation && !state.operation.reconciliationPending && !!serviceReason(state.operation.action);
+  const confirmationReason = () => serviceReason(state.operation?.action || state.requestedAction || '');
   let queuedShortcut = '';
   const captionNodes = new Map();
   const turnLedger = new window.ManzanillaLanguageTurns();
@@ -60,7 +78,7 @@
   const operationField = (field, index) => {
     const limit = Number.isInteger(field.max_length) && field.max_length > 0 ? field.max_length
       : ({ original_request:4000, guest_name:100, room_number:20, destination:300, pickup_time:100, query:300 })[field.name] || 300;
-    const attrs = `id="operation-field-${index}" name="${esc(field.name)}" maxlength="${limit}" ${field.required ? 'required' : ''} ${state.operation.pending ? 'disabled' : ''} autocomplete="off" dir="auto"`;
+    const attrs = `id="operation-field-${index}" name="${esc(field.name)}" maxlength="${limit}" ${field.required ? 'required' : ''} ${state.operation.pending || state.operation.reconciliationPending ? 'disabled' : ''} autocomplete="off" dir="auto"`;
     const value = esc(state.operation.values[field.name] || '');
     const labels = { original_request: 'Exact message to send to staff', destination: 'Destination', pickup_time: 'Pickup time', query: 'Your hotel question', guest_name: state.operation.action === 'message' ? 'Guest name (optional)' : 'Guest name', room_number: state.operation.action === 'message' ? 'Room number (optional)' : 'Room number' };
     return `<label for="operation-field-${index}">${esc(uiText(labels[field.name] || 'This service is unavailable. Please ask hotel staff.'))}${field.required ? ' *' : ''}${field.name === 'original_request' ? `<textarea ${attrs}>${value}</textarea>` : `<input ${attrs} value="${value}">`}</label>`;
@@ -159,7 +177,7 @@
     const stopped = state.closed || state.terminated;
     const restart = state.terminated && !state.active && state.audio === 'off';
     const indicator = `<div class="session-icon" role="img" aria-label="${esc(uiText('Staff-led support'))}">${icons.bell}</div>`;
-    return `<div class="session-actions" data-stopped="${stopped}"><div class="session-control">${indicator}<div class="session-control-copy"><strong>${esc(stopped ? state.phase === 'ending' ? uiText("Stopping…") : uiText("Stopped") : phaseLabel())}</strong><span>${esc(sessionAudioText())}</span></div></div>${!stopped ? action('message', uiText("Message staff"), 'secondary', ['connecting','greeting'].includes(state.phase)) : ''}${action(restart ? 'restart' : 'stop', restart ? uiText("Restart") : stopped ? uiText("Releasing…") : uiText("Stop"), 'stop', stopped && !restart)}</div>`;
+    return `<div class="session-actions" data-stopped="${stopped}"><div class="session-control">${indicator}<div class="session-control-copy"><strong>${esc(stopped ? state.phase === 'ending' ? uiText("Stopping…") : uiText("Stopped") : phaseLabel())}</strong><span>${esc(sessionAudioText())}</span></div></div>${!stopped ? `<div class="service-choice">${action('message', uiText("Message staff"), 'secondary', ['connecting','greeting'].includes(state.phase) || !!serviceReason('message'))}${serviceNote('message')}</div>` : ''}${action(restart ? 'restart' : 'stop', restart ? uiText("Restart") : stopped ? uiText("Releasing…") : uiText("Stop"), 'stop', stopped && !restart)}</div>`;
   };
 
   function syncMic() {
@@ -199,14 +217,22 @@
     nightToggle.textContent = state.night ? uiText("After-hours on") : uiText("After-hours reception");
     nightToggle.setAttribute('aria-label', state.night ? uiText("Turn off after-hours reception") : uiText("Turn on after-hours reception"));
     nightToggle.setAttribute('aria-pressed', String(state.night));
-    nightToggle.hidden = state.page !== 'idle';
+    nightToggle.hidden = isHotel() || state.page !== 'idle';
     document.getElementById('settings').hidden = !native || !['idle','error','translation_languages'].includes(state.page);
-    document.getElementById('settings').setAttribute('aria-label', state.mode === 'translation' ? uiText("Fish Audio setup") : uiText("Staff setup"));
-    document.getElementById('settings').title = state.mode === 'translation' ? uiText("Fish Audio setup") : uiText("Staff setup");
-    document.getElementById('check-updates').hidden = !native || state.page !== 'idle';
+    const setupLabel = isHotel() || state.mode !== 'translation' ? uiText("Staff setup") : uiText("Fish Audio setup");
+    document.getElementById('settings').setAttribute('aria-label', setupLabel);
+    document.getElementById('settings').title = setupLabel;
+    document.getElementById('check-updates').hidden = isHotel() || !native || state.page !== 'idle';
+    if (isHotel()) document.getElementById('update-offer')?.remove();
     content.dataset.page = state.page;
     document.getElementById('mode-title').textContent = state.night ? uiText("After-hours reception") : uiText("Reception");
-    document.getElementById('connection-text').textContent = state.connected ? uiText("Hotel connected") : uiText("Hotel setup needed");
+    const connection = document.getElementById('connection');
+    connection.hidden = false;
+    connection.dataset.state = state.connectionState;
+    document.getElementById('connection-text').textContent = uiText({
+      unconfigured: 'Hotel setup needed', checking: 'Checking hotel connection', ready: 'Hotel connected',
+      offline: 'Hotel connection unavailable', unauthorized: 'Hotel authorization required'
+    }[state.connectionState]);
     document.getElementById('hotel-label').textContent = state.hotel || uiText("Hotel reception");
     document.getElementById('privacy').innerHTML = `<span class="mic-dot${state.audio === 'recording' ? ' mic-live' : ''}"></span>${esc(sessionAudioText())}`;
     document.title = uiText('Reception');
@@ -215,17 +241,16 @@
     document.getElementById('notices').setAttribute('aria-label', uiText('Hotel service updates'));
     updateClock();
     const guestLocale = () => `<label class="assist-label" for="guest-locale">${esc(uiText('Language'))}</label><select id="guest-locale" lang="${state.language}">${Object.entries(languages).map(([code,item]) => `<option value="${code}" lang="${code}" dir="${item.direction}" ${state.language === code ? 'selected' : ''}>${esc(item.native)}</option>`).join('')}</select>`;
-    document.getElementById('hardware-hint').textContent = state.active ? uiText("Green or red to stop") : state.page === 'translation_languages' ? uiText("Digits: first ten · ") + (state.audioAvailable ? uiText("Green: start · ") : uiText("Green: setup · ")) + uiText("Red: back") : state.night ? uiText("Green: hotel assistance") : uiText("Green: translation");
-    const homeAction = (name, icon, label, note = '') => `<button class="home-action${name === (state.night ? 'reception' : 'translation') ? ' home-action-main' : ''}" data-action="${name}">${name === (state.night ? 'reception' : 'translation') ? '<span class="orb">' + icons.arrow + '</span>' : icon}<span>${esc(label)}</span>${note ? '<small>' + esc(note) + '</small>' : ''}</button>`;
+    const homeAction = (name, icon, label, note = '', unavailable = '') => `<button class="home-action${name === (state.night ? 'reception' : 'translation') ? ' home-action-main' : ''}" data-action="${name}" ${unavailable ? 'disabled' : ''}>${name === (state.night ? 'reception' : 'translation') ? '<span class="orb">' + icons.arrow + '</span>' : icon}<span>${esc(label)}</span>${unavailable || note ? '<small>' + esc(unavailable || note) + '</small>' : ''}</button>`;
     const html = {
-      idle: () => `<div class="welcome"><h1>${esc(uiText('Welcome.'))}</h1><p>${esc(uiText(state.night ? 'Self-service hotel assistance.' : 'Guest and staff support.'))}</p></div>${guestLocale()}<nav class="home-actions" aria-label="${esc(uiText('Reception services'))}">${state.night ? homeAction('reception',icons.bell,uiText("Hotel assistance"),uiText("Self-service support")) + homeAction('translation',icons.translate,uiText("Live translation"),state.audioAvailable ? uiText("Talk to each other") : uiText("Audio unavailable")) : homeAction('translation',icons.translate,uiText("Live translation"),state.audioAvailable ? uiText("Talk to each other") : uiText("Audio unavailable")) + homeAction('reception',icons.bell,uiText("Hotel assistance"))}${homeAction('request:checkin',icons.bed,uiText('Arrival guide'))}${homeAction('request:taxi',icons.car,uiText('Request a taxi through staff'))}${homeAction('request:message',icons.message,uiText("Message staff"))}</nav><div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="${esc(uiText('Day / night mode · keypad 1'))}" title="${esc(uiText('Day / night mode · keypad 1'))}">${themeIcon()}</button></div>`,
-      languages: () => `<div class="status-line"><div><h2 class="language-heading">${esc(uiText('Hotel assistance'))}</h2></div><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div><label class="assist-label" for="assist-language">${esc(uiText('Language'))}</label><select id="assist-language" class="assist-language" lang="${state.language}" dir="${languageDir(state.language)}">${Object.entries(languages).map(([id,item]) => `<option value="${id}" lang="${id}" dir="${languageDir(id)}" ${state.language === id ? 'selected' : ''}>${esc(item.native)}</option>`).join('')}</select>${action('assist-go',uiText("Continue"),'primary assist-go')}`,
+      idle: () => `<div class="welcome"><h1>${esc(uiText('Welcome.'))}</h1><p>${esc(uiText(state.night ? 'Self-service hotel assistance.' : 'Guest and staff support.'))}</p></div>${guestLocale()}<nav class="home-actions" aria-label="${esc(uiText('Reception services'))}">${state.night ? homeAction('reception',icons.bell,uiText("Hotel assistance"),uiText("Self-service support"),serviceReason()) + homeAction('translation',icons.translate,uiText("Live translation"),state.audioAvailable ? uiText("Talk to each other") : uiText("Audio unavailable")) : homeAction('translation',icons.translate,uiText("Live translation"),state.audioAvailable ? uiText("Talk to each other") : uiText("Audio unavailable")) + homeAction('reception',icons.bell,uiText("Hotel assistance"),'',serviceReason())}${homeAction('request:checkin',icons.bed,uiText('Arrival guide'),'',serviceReason('checkin'))}${homeAction('request:taxi',icons.car,uiText('Request a taxi through staff'),'',serviceReason('taxi'))}${homeAction('request:message',icons.message,uiText("Message staff"),'',serviceReason('message'))}</nav>${!isHotel() ? `<div class="appearance-row"><button class="appearance-toggle" data-action="appearance" aria-label="${esc(uiText('Appearance'))}" title="${esc(uiText('Appearance'))}">${themeIcon()}</button></div>` : ''}${!isHotel() && state.bundledKeyAvailable ? fine(uiText('Personal-test build · bundled Fish key')) + fine(uiText('The bundled Fish key is extractable. Use a disposable, limited key and rotate it after testing.')) : ''}`,
+      languages: () => `<div class="status-line"><div><h2 class="language-heading">${esc(uiText('Hotel assistance'))}</h2></div><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div><label class="assist-label" for="assist-language">${esc(uiText('Language'))}</label><select id="assist-language" class="assist-language" lang="${state.language}" dir="${languageDir(state.language)}">${Object.entries(languages).map(([id,item]) => `<option value="${id}" lang="${id}" dir="${languageDir(id)}" ${state.language === id ? 'selected' : ''}>${esc(item.native)}</option>`).join('')}</select><div class="service-availability">${[...shortcuts,'message'].map((id,i) => `<div><strong>${esc(i < shortcuts.length ? concierge()[i] : uiText('Message staff'))}</strong>${serviceNote(id)}</div>`).join('')}</div>${serviceNote()}${action('assist-go',uiText("Continue"),'primary assist-go',!!serviceReason(queuedShortcut))}`,
       translation_languages: () => `<div class="status-line"><div><h2 class="language-heading">${esc(uiText('Choose languages'))}</h2><p class="keypad-hint">${esc(uiText('Guest ↔ Receptionist'))}</p></div><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div><div class="language-pair">${languagePicker('language',uiText("Guest"))}${languagePicker('staff_language',uiText("Receptionist"))}</div><p id="translation-readiness" class="setup-feedback" role="status">${esc(translationReadiness())}</p><button type="button" class="primary setup-start" data-action="${native && !state.audioAvailable ? 'setup-translation' : 'start'}" aria-describedby="translation-readiness" ${state.audio !== 'off' || ((!native || state.audioAvailable) && sameLanguage()) ? 'disabled' : ''}>${esc(uiText(native && !state.audioAvailable ? 'Set up translation' : 'Start translation'))}</button>`,
       active: () => state.mode === 'translation'
         ? `<button class="translate-back" data-action="back" aria-label="${esc(uiText('Back'))}">${icons.back}</button><p class="pair-title" dir="ltr"><bdi>${esc(langName(state.language))}</bdi> → <bdi>${esc(langName(state.staff_language))}</bdi></p><div class="session-scroll"><div class="conversation" role="log" aria-label="${esc(uiText('Conversation transcript'))}" aria-live="polite">${conversation()}</div></div>${sessionDock()}`
-        : `<div class="status-line session-top"><div><h2>${esc(uiText('Hotel assistance'))}</h2><p>${esc(phaseLabel())}</p></div><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div>${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}<div class="session-scroll">${!state.closed ? `<div class="shortcut-list">${shortcuts.map((id,i) => action(id, `<span class="key">${i + 1}</span><strong>${esc(concierge()[i])}</strong>`, 'choice shortcut', ['connecting','greeting'].includes(state.phase), true)).join('')}</div>` : ''}<div class="conversation" role="log" aria-label="${esc(uiText('Conversation transcript'))}" aria-live="polite">${conversation()}</div>${state.metrics ? `<p class="metrics">${esc(state.metrics)}</p>` : ''}</div>${sessionDock()}`,
-      operation_form: () => `<div class="status-line"><h2>${esc(state.operation?.action === 'message' ? uiText("Message staff") : concierge()[shortcuts.indexOf(state.operation?.action)] || uiText("Hotel request"))}</h2><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div>${guestLocale()}<form id="operation-form" class="operation-form" aria-busy="${!!state.operation?.pending}">${(state.operation?.fields || []).map(operationField).join('')}<div class="button-row"><button type="submit" class="primary" ${state.operation?.pending ? 'disabled' : ''}>${esc(uiText(state.operation?.pending ? 'Reviewing…' : 'Review'))}</button>${action('cancel-operation',uiText("Cancel"),'secondary',state.operation?.pending)}</div></form>${action('stop',uiText("End"),'stop')}`,
-      confirming: () => `<div class="status-line"><h2>${esc(uiText('Confirm request?'))}</h2><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div><div class="draft" dir="auto">${esc(state.draft?.message || '')}</div>${fine(state.draft?.attempted ? state.draft.approved === false ? uiText("No cancellation receipt yet. Retry to check the result.") : uiText("No receipt yet. Retry the same request to check its result.") : uiText("Confirm only if the details are correct."))}<div class="button-row">${action(state.draft?.attempted ? 'retry-draft' : 'confirm',state.confirmed ? state.draft?.approved === false ? uiText("Cancelling…") : uiText("Sending…") : state.draft?.attempted ? uiText("Retry") : uiText("Confirm"),'primary',state.confirmed)}${state.operation ? action('edit-draft',uiText("Edit"),'secondary',state.confirmed || state.draft?.attempted) : ''}${action('cancel-draft',uiText("Cancel"),'secondary',state.confirmed)}</div>`,
+        : `<div class="status-line session-top"><div><h2>${esc(uiText('Hotel assistance'))}</h2><p>${esc(phaseLabel())}</p></div><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div>${state.error ? `<div class="notice error">${esc(state.error)}</div>` : ''}<div class="session-scroll">${!state.closed ? `<div class="shortcut-list">${shortcuts.map((id,i) => serviceChoice(id, concierge()[i], ['connecting','greeting'].includes(state.phase))).join('')}</div>` : ''}<div class="conversation" role="log" aria-label="${esc(uiText('Conversation transcript'))}" aria-live="polite">${conversation()}</div>${state.metrics ? `<p class="metrics">${esc(state.metrics)}</p>` : ''}</div>${sessionDock()}`,
+      operation_form: () => `<div class="status-line"><h2>${esc(state.operation?.action === 'message' ? uiText("Message staff") : concierge()[shortcuts.indexOf(state.operation?.action)] || uiText("Hotel request"))}</h2><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div>${guestLocale()}${serviceNote(state.operation?.action)}<form id="operation-form" class="operation-form" aria-busy="${!!state.operation?.pending}">${(state.operation?.fields || []).map(operationField).join('')}<div class="button-row"><button type="submit" class="primary" ${state.operation?.pending || reviewBlocked() ? 'disabled' : ''}>${esc(uiText(state.operation?.pending ? 'Reviewing…' : state.operation?.reconciliationPending ? 'Retry' : 'Review'))}</button>${action('cancel-operation',uiText("Cancel"),'secondary',state.operation?.pending || state.operation?.reconciliationPending)}</div></form>${action('stop',uiText("End"),'stop')}`,
+      confirming: () => `<div class="status-line"><h2>${esc(uiText('Confirm request?'))}</h2><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div><div class="draft" dir="auto">${esc(state.draft?.message || '')}</div>${confirmationReason() ? fine(confirmationReason()) : ''}${fine(state.draft?.attempted ? state.draft.approved === false ? uiText("No cancellation receipt yet. Retry to check the result.") : uiText("No receipt yet. Retry the same request to check its result.") : uiText("Confirm only if the details are correct."))}<div class="button-row">${action(state.draft?.attempted ? 'retry-draft' : 'confirm',state.confirmed ? state.draft?.approved === false ? uiText("Cancelling…") : uiText("Sending…") : state.draft?.attempted ? uiText("Retry") : uiText("Confirm"),'primary',state.confirmed || (!state.draft?.attempted && !!confirmationReason()))}${state.operation ? action('edit-draft',uiText("Edit"),'secondary',state.confirmed || state.draft?.attempted) : ''}${action('cancel-draft',uiText("Cancel"),'secondary',state.confirmed)}</div>`,
       saved: () => `<h2>${esc(uiText('Request receipt'))}</h2><section class="request-receipt"><p class="lead" dir="auto">${esc(state.outcome?.text || uiText('No receipt returned. Ask staff to check.'))}</p>${state.outcome?.receipt ? `<div class="receipt" dir="auto"><bdi>${esc(state.outcome.receipt)}</bdi></div>` : ''}</section><div class="button-row">${state.outcome?.helpAction === 'operator' ? action('receipt-help',uiText('Request help from reception')) : ''}${action('continue',uiText("Continue"))}${action('stop',uiText("End"),'secondary')}</div>`,
       error: () => `<div class="status-line"><h2>${esc(uiText('Conversation unavailable'))}</h2><button class="back" data-action="back">${icons.back}${esc(uiText('Back'))}</button></div><div class="notice error">${esc(state.error || uiText("Please ask reception for help."))}</div>${fine(state.audio === 'off' ? uiText("Microphone off. Staff can check this device’s setup.") : uiText("Audio release is not confirmed. Ask reception for help before restarting."))}<div class="button-row">${action('retry',uiText("Try again"),'primary',state.audio !== 'off')}${action('home',uiText("Back to home"),'secondary')}</div>`
     };
@@ -240,6 +265,7 @@
     const retainedTurns = new Map(state.turns.filter(turn => turn.node?.isConnected).map(turn => [turn.id, turn.node]));
     captionNodes.clear();
     content.innerHTML = (html[state.page] || html.idle)();
+    if (['idle','languages','translation_languages'].includes(state.page)) content.insertAdjacentHTML('beforeend', fine(uiText('Interface translations have not been reviewed by a human.')));
     content.querySelectorAll('[data-caption-key]').forEach(node => captionNodes.set(node.dataset.captionKey, node));
     const turnNodes = new Map([...content.querySelectorAll("[data-turn-id]")].map(node => [node.dataset.turnId, node]));
     state.turns.forEach(turn => {
@@ -276,7 +302,7 @@
     if (changed) render();
   }
   function toggleAppearance() {
-    if (state.page !== 'idle' || state.active) return;
+    if (isHotel() || state.page !== 'idle' || state.active) return;
     activity();
     applyAppearance(appearance === 'light' ? 'dark' : 'light');
     send('appearance', { value:appearance });
@@ -292,7 +318,7 @@
   }
   function page(next) { state.page = next; render(); }
   function toggleNight() {
-    if (state.page !== 'idle' || state.active) return;
+    if (isHotel() || state.page !== 'idle' || state.active) return;
     activity();
     state.night = !state.night;
     state.mode = state.night ? 'reception' : 'translation';
@@ -301,6 +327,7 @@
   }
   function chooseMode(mode) {
     if (state.active || state.audio !== 'off') return;
+    if (mode === 'reception' && serviceReason()) { toast(serviceReason()); return; }
     queuedShortcut = '';
     state.mode = mode;
     state.error = '';
@@ -324,12 +351,15 @@
   }
   function selectLanguage(side, language) {
     if (state.audio !== 'off' || !hasOwn(languages, language) || (state.active && (state.mode === 'translation' || side !== 'language'))) return;
+    if (state[side] === language) return;
     state[side] = language;
     selected[side] = true;
-    if (!state.active) send('languages', { language: state.language, staff_language: state.staff_language });
+    if (side === 'language' && state.configured) { state.connectionState = 'checking'; state.services = null; }
+    send('languages', { language: state.language, staff_language: state.staff_language });
   }
   function start(restart = false) {
     if (state.active || state.phase === 'ending' || state.audio !== 'off') return;
+    if (state.mode === 'reception' && serviceReason(queuedShortcut)) { toast(serviceReason(queuedShortcut)); return; }
     if (state.mode === 'translation' && !state.audioAvailable) {
       if (native) send('voice_setup'); else toast(state.audioGate || uiText('Checking translation setup…'));
       return;
@@ -360,6 +390,8 @@
   }
   function chooseShortcut(name) {
     if (!state.active || state.closed || state.mode !== 'reception' || state.page !== 'active' || ['connecting','greeting'].includes(state.phase)) return;
+    if (serviceReason(name)) { toast(serviceReason(name)); return; }
+    state.requestedAction = name;
     if (state.demo) { addNotice(uiText("Hotel requests require a connected reception tablet."), 'unavailable'); return; }
     send(name);
   }
@@ -410,6 +442,7 @@
     if (name.startsWith('request:')) {
       const request = name.split(':')[1];
       if (state.page !== 'idle' || !['checkin','taxi','message'].includes(request)) return;
+      if (serviceReason(request)) { toast(serviceReason(request)); return; }
       chooseMode('reception');
       if (state.page === 'languages') queuedShortcut = request;
       return;
@@ -451,11 +484,12 @@
       case 'message': chooseShortcut('message'); break;
       case 'receipt-help':
         if (state.page !== 'saved' || state.outcome?.helpAction !== 'operator' || !state.active || state.closed) return;
+        if (serviceReason('operator')) { toast(serviceReason('operator')); return; }
         state.outcome = null;
         page('active');
         chooseShortcut('operator');
         break;
-      case 'cancel-operation': if (!state.operation?.pending) { state.operation = null; page('active'); } break;
+      case 'cancel-operation': if (!state.operation?.pending && !state.operation?.reconciliationPending) { state.operation = null; page('active'); } break;
       case 'edit-draft':
         if (!state.active || state.closed || state.confirmed || !state.operation || !state.draft || state.draft.attempted) return;
         state.draft = null;
@@ -467,6 +501,7 @@
       case 'cancel-draft':
         if (!state.active || state.closed || !state.draft || state.confirmed) return;
         if (name === 'retry-draft' && !state.draft.attempted) return;
+        if (name === 'confirm' && !state.draft.attempted && confirmationReason()) { toast(confirmationReason()); return; }
         state.confirmed = true;
         if (name !== 'retry-draft') state.draft.approved = name === 'confirm';
         state.draft.attempted = true;
@@ -505,7 +540,7 @@
   content.addEventListener('submit', event => {
     if (event.target.id !== 'operation-form') return;
     event.preventDefault();
-    if (!state.active || state.closed || !state.operation || state.operation.pending) return;
+    if (!state.active || state.closed || !state.operation || state.operation.pending || reviewBlocked()) return;
     for (const input of event.target.querySelectorAll('[required]')) input.setCustomValidity(input.value.trim() ? '' : uiText("Please complete this field."));
     if (!event.target.reportValidity()) return;
     activity();
@@ -523,7 +558,7 @@
   });
   document.getElementById('night-toggle').addEventListener('click', toggleNight);
   document.getElementById('settings').addEventListener('click',()=>send(state.mode === 'translation' ? 'voice_setup' : 'settings'));
-  document.getElementById('check-updates').addEventListener('click',()=>send('check_updates'));
+  document.getElementById('check-updates').addEventListener('click',()=>{ if (!isHotel()) send('check_updates'); });
 
   function hardware(key) {
     activity();
@@ -543,6 +578,7 @@
   }
 
   function offerUpdate(version, text, phase, percent) {
+    if (isHotel()) return;
     let bar = document.getElementById('update-offer');
     if (!bar) {
       bar = document.createElement('button');
@@ -619,8 +655,28 @@
       render();
       return;
     }
-    if (type === 'connection') { state.connected = event.connected === true; render(); return; }
+    if (type === 'connection') {
+      state.connectionState = ['unconfigured','checking','ready','offline','unauthorized'].includes(event.state) ? event.state : 'offline';
+      state.connected = state.connectionState === 'ready' && event.connected === true;
+      if (!state.connected && state.connectionState === 'ready') state.connectionState = 'offline';
+      render(); return;
+    }
     if (type === 'reception_info') {
+      state.distribution = event.distribution === 'hotel' ? 'hotel' : 'personal-test';
+      state.configured = event.configured === true;
+      state.bundledKeyAvailable = event.bundled_key_available === true;
+      state.services = null;
+      if (event.services_supported !== false && event.services && serviceNames.every(id => typeof event.services[id] === 'boolean')) {
+        state.services = {};
+        serviceNames.forEach(id => { state.services[id] = event.services[id]; });
+      }
+      if (['unconfigured','checking','ready','offline','unauthorized'].includes(event.state)) {
+        state.connectionState = event.state;
+        state.connected = event.state === 'ready';
+      } else if (!state.configured) {
+        state.connectionState = 'unconfigured';
+        state.connected = false;
+      }
       state.hotel = String(event.hotel_name || '');
       state.audioAvailable = event.audio_available === true;
       if (!state.active && ['off','unknown'].includes(event.local_audio_state)) state.audio = event.local_audio_state;
@@ -726,7 +782,10 @@
         // A lost response may already have saved the note. Keep its confirmation
         // identity so Retry is idempotent instead of submitting a second note.
         state.confirmed = false;
-        if (state.operation) state.operation.pending = false;
+        if (state.operation) {
+          state.operation.pending = false;
+          state.operation.reconciliationPending = event.reconciliation_pending === true || state.operation.reconciliationPending === true;
+        }
         addNotice(text || uiText("No receipt was received. Retry or ask reception to check."), event.status);
         page(state.draft ? 'confirming' : 'operation_form');
         return;

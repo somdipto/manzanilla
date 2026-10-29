@@ -2,6 +2,12 @@
 # Run only on a disposable emulator with the key-free debug build.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+distribution="${ANDROID_QA_DISTRIBUTION:-personal-test}"
+case "$distribution" in
+  personal-test) fixtures=(reception-bridge reception-truth microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery hotel-readiness) ;;
+  hotel) fixtures=(reception-bridge reception-truth hotel-readiness hotel-setup-gates) ;;
+  *) echo "Unsupported fixture distribution" >&2; exit 1 ;;
+esac
 evidence="${ANDROID_QA_OUTPUT:-work/android-emulator-qa}"
 mkdir -p "$evidence"
 adb wait-for-device
@@ -14,9 +20,17 @@ adb shell settings put global animator_duration_scale 0
 adb install -r android/hotel/build/outputs/apk/debug/hotel-debug.apk
 adb install -r android/hotel/build/outputs/apk/androidTest/debug/hotel-debug-androidTest.apk
 adb shell dumpsys webviewupdate > "$evidence/webview.txt"
-# Keep the image's configured launcher; AOSP and Google images use different packages.
-adb logcat -c
-trap 'adb logcat -d > "$evidence/logcat.txt"; adb shell locksettings clear --old 2468 > /dev/null 2>&1 || true' EXIT
+# HOME must reach the system launcher, not our HOME candidate or Android's chooser.
+home="$(adb shell cmd package resolve-activity --brief --query-flags 0x100000 -a android.intent.action.MAIN -c android.intent.category.HOME)"
+home="${home##*$'\n'}"
+home="${home%$'\r'}"
+case "$home" in
+  ""|android/*|dev.orange.hotel/*|*" "*) echo "No unambiguous system HOME activity for the isolated fixture" >&2; exit 1 ;;
+esac
+[[ "$home" == */* ]]
+adb shell cmd package set-home-activity "$home"
+# Keep only bounded fixture output, never raw logs containing installer capabilities.
+trap 'adb shell locksettings clear --old 2468 > /dev/null 2>&1 || true' EXIT
 run_fixture() {
   local fixture="$1"
   local label="${2:-$1}"
@@ -28,9 +42,10 @@ run_fixture() {
   grep -q "PASS case=$fixture " "$evidence/$label.txt"
   grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$label.txt"
 }
-for fixture in reception-bridge reception-truth microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery; do
+for fixture in "${fixtures[@]}"; do
   run_fixture "$fixture"
 done
+if [[ "$distribution" == hotel ]]; then exit 0; fi
 # Personal translation setup must work whether Android has a screen lock or not.
 # Only the known synthetic PIN may be cleared on this disposable emulator.
 adb shell locksettings clear --old 2468 > /dev/null 2>&1 || adb shell locksettings clear > /dev/null

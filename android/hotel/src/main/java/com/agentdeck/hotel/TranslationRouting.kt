@@ -1,7 +1,7 @@
 package com.agentdeck.hotel
 
-/** A personal Fish selection must not silently use a previously saved hotel service. */
+/** Distribution applies to new starts only; existing reservations retain their cleanup credential. */
 internal object TranslationRouting {
-    fun useManagedConnection(backendConfigured: Boolean, directFishSelected: Boolean): Boolean =
-        backendConfigured && !directFishSelected
+    fun useManagedConnection(backendConfigured: Boolean, directFishSelected: Boolean, distribution: String): Boolean =
+        backendConfigured && (distribution == "hotel" || !directFishSelected)
 }

@@ -4,6 +4,28 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.41 readiness/distribution candidate (S4)
+
+Version 17.0.41/code71, stacked on S3. The canonical catalogue has 410 messages
+for 52 interface locales, all human-unreviewed. Proper brand names now retain
+Orange; obsolete keypad hints and unused per-turn scope storage are removed.
+Session/generation identity remains part of each immutable report key.
+
+- **Passed:** generation/check, 17 Node cases, 602 Python tests (two dependency
+  deprecation warnings), and ten Chromium151 scenarios. Coverage includes
+  per-service availability, old-backend capabilities, revoked/offline states,
+  independent direct translation, Spanish/Arabic locale changes, preserved form
+  focus/input, exact uncertain replay, first-confirm gating and hotel/personal
+  maintenance visibility at both small viewports and enlarged text.
+- **Passed:** personal-test Android JVM, debug/instrumentation assembly and lint
+  with JDK17/SDK34. Despite injected dummy provider values, APK dex inspection
+  proved `DISTRIBUTION=personal-test` and both Fish provider fields empty.
+  Actual readiness/protected-setup cases remain separate runtime gates.
+  APK SHA256:`741cc7012909cf9bcd706f0da0279ddbec908476a29fd57d5b4e276d75f215df`.
+- Probes do not create sessions or open a microphone. Service flags describe
+  configuration, not provider access or a live staff watcher. No paid provider
+  call, live data mutation, release or deployment occurred.
+
 ## 17.0.40 approved-content candidate (S3)
 
 Version 17.0.40/code70, stacked on S2. The offline catalogue now has 396 messages
@@ -25,6 +47,13 @@ for all 52 interface locales; human translation review remains unavailable.
 - **Passed:** Android JVM, debug/instrumentation assembly and lint with JDK17,
   SDK34 and empty provider fields. The pinned code70 debug APK SHA256 is
   `350d18b0c8ed568c1b655606027fc6399fec894fd302ac09572a42f1ec7eb216`.
+- **Passed:** actual isolated HTTPS admin visual smoke. Three explicit English/
+  Spanish approvals preserved exact originals;503 drafting retained manual text;
+  Spanish and Arabic RTL review panels retained the Spanish rendering. The
+  authenticated staff overview contained zero items. Private captures are in
+  `/tmp/manzanilla-s3-https-fixture-20261029/`. The first visual-script attempt
+  queried a nonexistent `/items` route; using the real `/overview` contract
+  passed. No failed attempt is counted as a pass.
 
 Information reads are scoped to their call ID, so a genuinely new question can
 see a later approval. Replaying the same ID never charges another model call.

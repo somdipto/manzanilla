@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /** Exercises the shipped assets and real addJavascriptInterface boundary, with no audio provider. */
 internal object ReceptionWebViewFixture {
-    /** A real system permission dialog, with empty credentials so granting cannot call Fish. */
+    /** Synthetic readiness plus an empty injected resolver: granting cannot call Fish. */
     fun verifyMicrophonePermission(instrumentation: Instrumentation, outcome: String = "grant") {
         val context = instrumentation.targetContext
         check(BuildConfig.FISH_API_KEY.isEmpty() && !SecretStore(context, "fish").has()
@@ -29,6 +29,8 @@ internal object ReceptionWebViewFixture {
         instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
             flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
         }
+        val fixtureStore = SecretStore(context, "fish")
+        check(fixtureStore.save("fixture-only-permission-readiness"))
         val activity = instrumentation.startActivitySync(Intent(context, HotelActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val ownerField = HotelActivity::class.java.getDeclaredField("owner").apply { isAccessible = true }
@@ -50,6 +52,14 @@ internal object ReceptionWebViewFixture {
         fun evaluate(script: String) = evaluate(instrumentation, browser, script)
         fun permissionButton(allow: Boolean = true): AccessibilityNodeInfo? {
             val root = instrumentation.uiAutomation.rootInActiveWindow ?: return null
+            if (root.packageName?.toString() == "android" &&
+                root.findAccessibilityNodeInfosByViewId("android:id/immersive_cling_title").isNotEmpty()) {
+                check(root.findAccessibilityNodeInfosByViewId("android:id/ok").firstOrNull()
+                    ?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) {
+                    "Cannot dismiss Android's first-fullscreen tutorial"
+                }
+                return null
+            }
             for (pkg in listOf("com.android.permissioncontroller", "com.google.android.permissioncontroller", "com.android.packageinstaller")) {
                 for (id in if (allow) listOf("permission_allow_foreground_only_button", "permission_allow_button") else listOf("permission_deny_button")) {
                     val node = root.findAccessibilityNodeInfosByViewId("$pkg:id/$id").firstOrNull()
@@ -109,12 +119,13 @@ internal object ReceptionWebViewFixture {
             check(keyReads.get() == if (outcome == "grant") 1 else 0) { "Permission $outcome did not start exactly once or started when denied/backgrounded" }
             if (outcome != "background") {
                 check(evaluate("document.documentElement.dataset.captureActive") == "\"false\"") { "Permission result left JS capture active" }
-                val expected = if (outcome == "deny") "Microphone permission is required" else "configure or recover"
-                check(evaluate("document.body.innerText.indexOf('$expected') >= 0") == "true") { "Permission result lost its error detail" }
+                check(evaluate("!!document.querySelector('.notice.error')") == "true") { "Permission outcome lost its error state" }
+                check(evaluate("document.querySelector('[data-action=restart],[data-action=retry]').disabled") == "false") { "Permission outcome is not retryable after microphone release" }
             }
         } finally {
             if (permissionButton() != null) instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
             instrumentation.runOnMainSync { activity.finish() }
+            fixtureStore.clear()
         }
     }
 
