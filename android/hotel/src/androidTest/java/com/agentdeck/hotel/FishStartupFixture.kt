@@ -144,7 +144,6 @@ internal object FishStartupFixture {
             h.wire.managedStatus = 422
             val error = h.failed { h.managed() }
             h.terminal(error, true)
-            check(h.events.last().getString("text").contains("hotel service version"))
             check(h.gate.reason() == null && h.wire.managedCalls == 1)
         }
     }

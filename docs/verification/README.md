@@ -70,6 +70,31 @@ human language-review approval; translation presence is not acoustic qualificati
   timezone as labelled UTC, switched Spanish/Arabic RTL and retained token,
   hotel and dirty form. Private screenshots: `/tmp/manzanilla-s2-admin-fixture/`.
   This is not combined physical-tablet/backend or designated hotel-staff acceptance.
+- **Passed:** actual microphone grant on disposable API34/WebView113 with host
+  OpenGL. The pending lease survived consent, the empty injected Fish resolver
+  ran exactly once, and the session released without a provider call.
+- **Passed:** `reception-bridge`, `reception-truth`, microphone grant, denial and
+  background cancellation, `translation-startup` and `update-delivery` on both
+  API34/WebView113 and CI Android10 run40853905862; each named PASS has code -1.
+  System-only HOME resolution repaired the earlier background precondition.
+- **Passed:** final CI run40858640035 at commit74cf360 completed all nine Android10
+  reception, permission, startup and setup scenarios, including personal save,
+  cancel and encrypted-key reuse both without a lock and with synthetic PIN2468.
+  The separate Android12 update-delivery case also passed. Every named case
+  includes instrumentation code -1; no provider session was opened.
+- Earlier personal-setup fixtures incorrectly selected Spanish controls by
+  English prose. Password-role/locale-aware selectors and consumer-visible
+  retention/authorization checks replaced those incidental assertions.
+- On this Intel Mac, emulator37.2 SwiftShader produced a System UI ANR over the
+  real permission dialog and an invalid color-buffer error. `-gpu host -feature
+  -Vulkan` yielded the grant pass. A later full-suite attempt while Gradle was
+  running failed to attach its first process; that attempt is not a pass. Run
+  heavy builds and native UI checks separately on this host.
+- Follow-up catalogue data preserves the proper name Orange across all52
+  locales. Permission fixtures seed only synthetic local readiness, retain an
+  empty provider resolver, dismiss only Android's known fullscreen tutorial and
+  assert a recoverable error rather than incidental English wording. Temporary
+  diagnostic logging, screenshot capture and raw logcat collection were removed.
 
 The macOS fixture used a dedicated loopback-only Chromium/Playwright context and a
 temporary TLS identity. Production TLS, Android CSP and network restrictions were
