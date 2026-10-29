@@ -328,8 +328,17 @@ internal object VoiceSetupFixture {
             check(requests.get() == 1 && personal.load() == personalKey && owner.current == null)
             check(HotelConnection(context).load() == null)
         } finally {
-            test.runOnMainSync { activity?.finish() }
-            test.waitForIdleSync()
+            val closing = activity
+            if (closing != null) {
+                test.runOnMainSync { closing.finish() }
+                val destroyedBy = System.nanoTime() + TimeUnit.SECONDS.toNanos(4)
+                var destroyed = false
+                while (!destroyed) {
+                    test.runOnMainSync { destroyed = closing.isDestroyed }
+                    check(destroyed || System.nanoTime() < destroyedBy) { "Cleanup Activity destruction did not settle" }
+                    if (!destroyed) Thread.sleep(20)
+                }
+            }
             shared.set(null, previousAdmission)
             meta.edit().remove("outstanding_session").remove("pending_end_url")
                 .remove("pending_end_credential_hash").commit()
