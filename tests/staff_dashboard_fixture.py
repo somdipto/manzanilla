@@ -1,4 +1,6 @@
 """Real temporary-backend staff scenarios; no provider/native acceptance claims."""
+from contextlib import contextmanager
+
 from playwright.sync_api import expect
 
 
@@ -11,6 +13,28 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
     base = "/api/hotels/" + hotel_id
     overview = origin + base + "/overview"
 
+    @contextmanager
+    def overview_loaded(page, url=overview):
+        # Response headers (and an already-updated item version) can precede
+        # body parsing/rendering. Observe the overview output: its mutation is
+        # delivered after load's synchronous render/finally has scheduled polling.
+        completion = page.evaluate_handle("""() => {
+            const completion = {rendered: false};
+            completion.observer = new MutationObserver(() => {
+                completion.rendered = true;
+                completion.observer.disconnect();
+            });
+            completion.observer.observe(document.querySelector('#sessions'), {childList: true});
+            return completion;
+        }""")
+        try:
+            with page.expect_response(url):
+                yield
+            page.wait_for_function("completion => completion.rendered", arg=completion, polling=100)
+        finally:
+            page.evaluate("completion => completion.observer.disconnect()", completion)
+            completion.dispose()
+
     def open_dashboard(token):
         page = context.new_page()
         page.clock.install(time=0)
@@ -18,7 +42,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         page.goto(origin + "/admin")
         page.locator("#token").fill(token)
         page.locator("#hotel").fill(hotel_id)
-        with page.expect_response(overview):
+        with overview_loaded(page):
             page.locator("#load").click()
         page.locator("#staff-locale").select_option("en")
         return page
@@ -35,7 +59,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         expect(card(page, item_id)).to_have_attribute("data-version", str(version))
 
     def poll(page):
-        with page.expect_response(overview):
+        with overview_loaded(page):
             page.clock.fast_forward(5001)
 
     def submit_message(call_id, original):
@@ -130,7 +154,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         page.locator("#refresh-config").click()
         assert page.locator("#arrival-policy").input_value() == local_value
         page.once("dialog", lambda dialog: dialog.accept())
-        with page.expect_response(overview):
+        with overview_loaded(page):
             page.locator("#refresh-config").click()
         expect(page.locator("#save")).to_be_enabled()
         assert page.locator("#emergency-contact").input_value() == "Changed by another admin"
@@ -153,7 +177,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         with switcher.expect_request(lambda request: request.url == origin + base and request.method == "PUT"):
             switcher.locator("#save").click()
         switcher.locator("#hotel").fill(target_id)
-        with switcher.expect_response(origin + target_base + "/overview"):
+        with overview_loaded(switcher, origin + target_base + "/overview"):
             switcher.locator("#load").click()
         expect(switcher.locator("#hotel-name")).to_be_enabled()
         switcher.locator("#hotel-name").fill("New scope remains editable")
@@ -215,6 +239,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         with owner.expect_request(overview):
             owner.clock.fast_forward(5001)
         owner.clock.fast_forward(15000)
+        assert len(held) == 1, "An in-flight overview must prevent overlapping polls"
         card(owner, item_id).locator("input").fill("Reception shift A")
         with owner.expect_response(lambda response: response.url.endswith("/items/" + item_id) and response.request.method == "PATCH") as acknowledged:
             card(owner, item_id).locator('[data-action="acknowledge"]').click()
@@ -222,7 +247,8 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         assert acknowledged.value.request.post_data_json == {"status": "acknowledged", "expected_version": 0,
                                                            "responsible_name": "Reception shift A"}
         route = held.pop()
-        route.fulfill(status=snapshot.status_code, content_type="application/json", body=snapshot.content)
+        with overview_loaded(owner):
+            route.fulfill(status=snapshot.status_code, content_type="application/json", body=snapshot.content)
         owner.unroute(overview, hold_snapshot)
         wait_version(owner, item_id, 1)
         poll(other)
@@ -246,7 +272,7 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         owner.evaluate("Object.defineProperty(document, 'hidden', {configurable:true,get:()=>true}); document.dispatchEvent(new Event('visibilitychange'))")
         owner.clock.fast_forward(20000)
         assert not reads
-        with owner.expect_response(overview):
+        with overview_loaded(owner):
             owner.evaluate("Object.defineProperty(document, 'hidden', {configurable:true,get:()=>false}); document.dispatchEvent(new Event('visibilitychange'))")
         with owner.expect_response(lambda response: response.url.endswith("/items/" + item_id)) as resolved:
             card(owner, item_id).locator('[data-action="resolve"]').click()
