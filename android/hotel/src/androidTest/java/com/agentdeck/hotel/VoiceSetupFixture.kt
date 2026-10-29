@@ -366,7 +366,6 @@ internal object VoiceSetupFixture {
             test.sendStatus(0, Bundle().apply { putString("stream", "HOTEL_SETUP_STAGE $value\n") })
         }
         fun await(stage: String, snapshot: () -> String = { "" }, state: () -> Boolean) {
-            reportStage("waiting=$stage")
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             while (!state()) {
                 if (System.nanoTime() >= deadline) {
@@ -375,7 +374,6 @@ internal object VoiceSetupFixture {
                 }
                 Thread.sleep(100)
             }
-            reportStage("passed=$stage")
         }
         fun shell(command: String) {
             test.uiAutomation.executeShellCommand(command).use { descriptor ->
@@ -412,13 +410,36 @@ internal object VoiceSetupFixture {
         test.uiAutomation.serviceInfo = test.uiAutomation.serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
-        reportStage("enter=hotel activity launch")
-        val activity = test.startActivitySync(Intent(context, HotelActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        reportStage("passed=hotel activity launch")
+        // Observe framework lifecycle events before launching. Protected setup may
+        // legitimately replace its parent; never drive a destroyed captured view.
+        val application = context.applicationContext as android.app.Application
+        val identities = java.util.IdentityHashMap<android.app.Activity, String>()
+        val hotelStages = LinkedHashMap<HotelActivity, String>()
+        val lifecycleEvents = java.util.ArrayDeque<String>()
+        val lifecycle = object : android.app.Application.ActivityLifecycleCallbacks {
+            fun record(activity: android.app.Activity, stage: String) {
+                if (activity !is HotelActivity && activity !is KeyEntryActivity) return
+                val identity = identities.getOrPut(activity) {
+                    "${if (activity is HotelActivity) "reception" else "setup"}#${identities.size + 1}"
+                }
+                if (activity is HotelActivity && stage != "saved") hotelStages[activity] = stage
+                lifecycleEvents.addLast("$identity:$stage" +
+                    "(task=${activity.taskId},changing=${activity.isChangingConfigurations},finishing=${activity.isFinishing})")
+                if (lifecycleEvents.size > 12) lifecycleEvents.removeFirst()
+            }
+            override fun onActivityCreated(activity: android.app.Activity, state: Bundle?) =
+                record(activity, if (state == null) "created" else "created-restored")
+            override fun onActivityStarted(activity: android.app.Activity) = record(activity, "started")
+            override fun onActivityResumed(activity: android.app.Activity) = record(activity, "resumed")
+            override fun onActivityPaused(activity: android.app.Activity) = record(activity, "paused")
+            override fun onActivityStopped(activity: android.app.Activity) = record(activity, "stopped")
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, state: Bundle) = record(activity, "saved")
+            override fun onActivityDestroyed(activity: android.app.Activity) = record(activity, "destroyed")
+        }
+        var activity: HotelActivity? = null
+        var browser: WebView? = null
+        var receptionTaskId = -1
         val reception = HotelActivity::class.java.getDeclaredField("reception").apply { isAccessible = true }
-            .get(activity) as ReceptionView
-        val browser = reception.getChildAt(0) as WebView
         val authenticated = KeyEntryActivity::class.java.getDeclaredField("authenticated").apply { isAccessible = true }
         val foreground = KeyEntryActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }
         val fields = KeyEntryActivity::class.java.getDeclaredField("fields").apply { isAccessible = true }
@@ -427,11 +448,14 @@ internal object VoiceSetupFixture {
         fun receptionState(): String {
             var state = ""
             test.runOnMainSync {
-                state = "parent_foreground=${receptionForeground.getBoolean(activity)}" +
-                    " parent_focus=${activity.hasWindowFocus()} parent_finishing=${activity.isFinishing}" +
-                    " parent_destroyed=${activity.isDestroyed} browser_attached=${browser.isAttachedToWindow}" +
-                    " browser_shown=${browser.isShown} setups=${openSetups.size}" +
-                    " setups_destroyed=${openSetups.count { it.isDestroyed }}"
+                val current = activity
+                state = "parent=${identities[current] ?: "none"}" +
+                    " parent_foreground=${current?.let { receptionForeground.getBoolean(it) }}" +
+                    " parent_focus=${current?.hasWindowFocus()} parent_finishing=${current?.isFinishing}" +
+                    " parent_destroyed=${current?.isDestroyed} browser_attached=${browser?.isAttachedToWindow}" +
+                    " browser_shown=${browser?.isShown} setups=${openSetups.size}" +
+                    " setups_destroyed=${openSetups.count { it.isDestroyed }}" +
+                    " lifecycle=${lifecycleEvents.joinToString(";")}"
             }
             return state
         }
@@ -439,9 +463,26 @@ internal object VoiceSetupFixture {
             await("reception resumed: $stage", ::receptionState) {
                 var resumed = false
                 test.runOnMainSync {
-                    resumed = openSetups.all { it.isDestroyed } && !activity.isFinishing && !activity.isDestroyed &&
-                        receptionForeground.getBoolean(activity) && activity.hasWindowFocus() &&
-                        browser.isAttachedToWindow && browser.isShown
+                    val previous = activity
+                    val current = hotelStages.filter { (candidate, stage) ->
+                        stage == "resumed" && candidate.taskId == receptionTaskId
+                    }.keys.singleOrNull()
+                    if (current != null && openSetups.all { it.isDestroyed } &&
+                        (previous == null || current === previous || (previous.isDestroyed && !previous.isFinishing)) &&
+                        !current.isFinishing && !current.isDestroyed &&
+                        receptionForeground.getBoolean(current) && current.hasWindowFocus()) {
+                        val view = reception.get(current) as? ReceptionView
+                        val currentBrowser = view?.getChildAt(0) as? WebView
+                        if (currentBrowser != null && currentBrowser.isAttachedToWindow && currentBrowser.isShown) {
+                            if (current !== activity) {
+                                reportStage("parent_selected=${identities[current]} previous=${identities[activity] ?: "none"}" +
+                                    " lifecycle=${lifecycleEvents.joinToString(";")}")
+                            }
+                            activity = current
+                            browser = currentBrowser
+                            resumed = true
+                        }
+                    }
                 }
                 resumed
             }
@@ -454,15 +495,25 @@ internal object VoiceSetupFixture {
             awaitReception(stage)
             val ready = CountDownLatch(1)
             var value = ""
-            test.runOnMainSync { browser.evaluateJavascript(script) { value = it; ready.countDown() } }
+            test.runOnMainSync { checkNotNull(browser).evaluateJavascript(script) { value = it; ready.countDown() } }
             if (!ready.await(15, TimeUnit.SECONDS)) {
                 reportStage("callback_timeout=$stage ${receptionState()}")
                 error("Hotel setup WebView callback timed out: $stage")
             }
             return value
         }
+        fun awaitPage(stage: String) {
+            await("hotel packaged page: $stage", ::receptionState) {
+                js(stage, """(function() {
+                    var home = document.querySelector('[data-action=translation]');
+                    var bounds = home && home.getBoundingClientRect();
+                    return !!(window.manzania && typeof window.manzania.receive === 'function' &&
+                        window.ManzaniaNative && home && bounds.width > 0 && bounds.height > 0);
+                })()""") == "true"
+            }
+        }
         fun open(stage: String, action: () -> Unit): KeyEntryActivity {
-            awaitReception(stage)
+            awaitPage(stage)
             reportStage("opening=$stage")
             val monitor = test.addMonitor(KeyEntryActivity::class.java.name, null, false)
             return try {
@@ -479,7 +530,7 @@ internal object VoiceSetupFixture {
             // Opening setup pauses this WebView. Its JS result callback may then
             // be suspended; the ActivityMonitor above observes the real outcome.
             test.runOnMainSync {
-                browser.evaluateJavascript("window.ManzaniaNative.postMessage(JSON.stringify({action:'$route'}))", null)
+                checkNotNull(browser).evaluateJavascript("window.ManzaniaNative.postMessage(JSON.stringify({action:'$route'}))", null)
             }
         }
         fun nodes(view: android.view.View): List<android.view.View> {
@@ -542,8 +593,13 @@ internal object VoiceSetupFixture {
             }
         }
         var syntheticPin = false
+        test.runOnMainSync { application.registerActivityLifecycleCallbacks(lifecycle) }
         try {
-            await("hotel packaged page") { js("initial page", "!!document.querySelector('[data-action=translation]')") == "true" }
+            reportStage("enter=hotel activity launch")
+            val launched = test.startActivitySync(Intent(context, HotelActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            test.runOnMainSync { receptionTaskId = launched.taskId }
+            awaitPage("initial page")
             // Both guest bridge entry points and an explicit voice_only extra must fail closed without a lock.
             for (route in listOf("settings", "voice_setup", "intent")) {
                 val setup = open("no-lock $route") {
@@ -555,13 +611,18 @@ internal object VoiceSetupFixture {
                 await("no-lock hotel setup refusal", { setupState(setup) }) {
                     var refused = false
                     test.runOnMainSync {
-                        refused = nodes(setup.window.decorView).filterIsInstance<android.widget.TextView>()
-                            .any { it.text.toString().contains("no device screen-lock credential") }
+                        val visible = nodes(setup.window.decorView).filter { it.isShown }
+                        val close = visible.filterIsInstance<android.widget.Button>().singleOrNull()
+                        refused = !keyguard.isDeviceSecure && foreground.getBoolean(setup) &&
+                            !authenticated.getBoolean(setup) && inputs(setup).isEmpty() &&
+                            close?.isEnabled == true &&
+                            visible.filterIsInstance<android.widget.TextView>()
+                                .count { it !is android.widget.Button && it.text.isNotBlank() } >= 2
                     }
                     refused
                 }
                 click(setup, "Close")
-                awaitReception("after no-lock $route closes")
+                awaitPage("after no-lock $route closes")
             }
             shell("locksettings set-pin 2468")
             syntheticPin = true
@@ -610,7 +671,7 @@ internal object VoiceSetupFixture {
             await("protected maintenance result applied by parent") {
                 context.getSharedPreferences("deck", 0).getString("reception_appearance", "") == "light"
             }
-            awaitReception("after protected maintenance")
+            awaitPage("after protected maintenance")
             check(personal.load() == personalKey && TranslationSettings(context).directFishSelected)
             // A hotel guest bridge command cannot override that protected decision.
             js("guest maintenance denied", "window.ManzaniaNative.postMessage(JSON.stringify({action:'appearance',value:'dark'}))")
@@ -619,12 +680,16 @@ internal object VoiceSetupFixture {
             val finalSetup = open("final protected settings") { postSetup("settings") }
             authenticate(finalSetup)
             click(finalSetup, "Done")
-            awaitReception("after final setup closes")
+            awaitPage("after final setup closes")
             test.sendStatus(0, Bundle().apply {
                 putString("stream", "HOTEL_SETUP protected=true direct_blocked=true personal_key_retained=true maintenance=true\n")
             })
         } finally {
-            test.runOnMainSync { openSetups.forEach { if (!it.isDestroyed) it.finish() }; activity.finish() }
+            test.runOnMainSync {
+                openSetups.forEach { if (!it.isDestroyed) it.finish() }
+                hotelStages.keys.forEach { if (!it.isDestroyed) it.finish() }
+                application.unregisterActivityLifecycleCallbacks(lifecycle)
+            }
             meta.edit().remove("outstanding_session").remove("pending_end_url").remove("pending_end_credential_hash").commit()
             if (syntheticPin) shell("locksettings clear --old 2468")
         }
