@@ -25,6 +25,11 @@ the chooser fixture does not manufacture a resume or loosen authorization.
 Framework lifecycle exceptions in isolated native QA emit only exception type
 and a bounded application source location before normal crash handling continues.
 Exception messages, Intent extras and raw logcat are not retained.
+Genuine installer QA waits for the candidate's committed package version before
+pulling installed bytes. Instrumentation replacement and an online device alone
+are insufficient: run40946273420 observed real Android consent but still pulled
+baseline9900 instead of candidate9901. The bounded settlement barrier does not
+retry installation or weaken exact hash/package/version/signer/retention checks.
 
 The seven reviewable candidates are resequenced to17.0.40–17.0.46/code70–76;
 S7 and S8 remain one final PR. Earlier evidence below retains the actual

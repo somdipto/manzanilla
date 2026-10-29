@@ -104,6 +104,26 @@ printf 'consent_instrumentation_exit=%s\n' "$consent_status" >> "$evidence/platf
 grep -q 'qa_dispatch=actual_updater' "$evidence/installer-consent.txt"
 grep -q 'qa_consent=trusted_system_positive_button' "$evidence/installer-consent.txt"
 adb wait-for-device
+# Instrumentation replacement can precede the PackageManager commit. An online
+# device (and a successful pm path) can still expose the baseline at this point.
+settlement_deadline=$((SECONDS + 30))
+while :; do
+  installed_code="$(adb shell dumpsys package dev.orange.hotel | python3 -c '
+import re, sys
+match = re.search(r"^\s*versionCode=(\d+)\b", sys.stdin.read(), re.M)
+print(match[1] if match else "absent")
+')"
+  if [[ "$installed_code" == "$candidate_code" ]]; then
+    break
+  fi
+  if (( SECONDS >= settlement_deadline )); then
+    printf 'candidate_settlement=failed expected=%s observed=%s\n' "$candidate_code" "$installed_code" >> "$evidence/platform.txt"
+    echo 'Candidate package commit did not settle; installation is not accepted' >&2
+    exit 1
+  fi
+  sleep 0.2
+done
+printf 'candidate_settlement=passed version_code=%s\n' "$installed_code" >> "$evidence/platform.txt"
 installed_path="$(adb shell pm path dev.orange.hotel | tr -d '\r')"
 [[ "$installed_path" == package:/* && "$installed_path" != *$'\n'* ]]
 adb pull "${installed_path#package:}" "$evidence/installed-qa.apk"
