@@ -149,11 +149,12 @@ def main() -> int:
                   "bundled_key=false managed_required=true"
         instrument("bundled", distribution, commit,
                    f"PASS case=bundled {bundled} distribution={distribution}")
+        run("adb", "shell", "settings", "put", "secure", "immersive_mode_confirmations", "confirmed")
+        run("adb", "shell", "input", "keyevent", "82")
         stage = "reception-negative-control"
         instrument("reception-missing-script", distribution, commit,
                    "PASS case=reception-missing-script ui_rejected=true")
         stage = "reception"
-        run("adb", "shell", "settings", "put", "secure", "immersive_mode_confirmations", "confirmed")
         instrument("reception", distribution, commit,
                    f"PASS case=reception ui_ready=true bridge=true mic_off=true distribution={distribution}")
         run("adb", "pull", f"/sdcard/Android/data/{PACKAGE}.test/files/signed-reception.png",
