@@ -306,6 +306,7 @@
     state.error = '';
     silence();
     page(mode === 'translation' ? 'translation_languages' : 'languages');
+    prepareTranslation();
   }
   function clearGuest() {
     state.utterances.clear();
@@ -327,6 +328,11 @@
     state[side] = language;
     selected[side] = true;
     if (!state.active) send('languages', { language: state.language, staff_language: state.staff_language });
+    prepareTranslation();
+  }
+  function prepareTranslation() {
+    if (state.mode === 'translation' && state.audioAvailable && state.page === 'translation_languages' && !sameLanguage())
+      send('prepare_translation', { language: state.language, staff_language: state.staff_language });
   }
   function start(restart = false) {
     if (state.active || state.phase === 'ending' || state.audio !== 'off') return;
