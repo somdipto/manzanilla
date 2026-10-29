@@ -27,6 +27,7 @@ class VoiceLifecycleFixture : Instrumentation() {
         try {
             when (case) {
                 "reception-bridge" -> ReceptionWebViewFixture.verify(this)
+                "reception-truth" -> ReceptionWebViewFixture.verify(this, truth = true)
                 "voice-setup" -> VoiceSetupFixture.verify(this)
                 "microphone-permission" -> ReceptionWebViewFixture.verifyMicrophonePermission(this)
                 "microphone-permission-denied" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "deny")

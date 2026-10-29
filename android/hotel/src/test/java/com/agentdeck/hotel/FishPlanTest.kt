@@ -5,14 +5,81 @@ import org.junit.Test
 import org.json.JSONObject
 
 class FishPlanTest {
-    @Test fun existingCaptionToolMustMatchTheDisplayOnlyContract() {
-        val expected = JSONObject("""{"name":"caption","expects_response":false,"arguments":[{"name":"source_language","description":"Selected code"}]}""")
-        val actual = JSONObject(expected.toString()).put("tool_id", "provider-id")
-        assertTrue(FishPlan.captionToolMatches(expected, actual))
-        actual.put("expects_response", true)
-        assertFalse(FishPlan.captionToolMatches(expected, actual))
-        actual.put("expects_response", false).getJSONArray("arguments").getJSONObject(0).put("name", "hotel_action")
-        assertFalse(FishPlan.captionToolMatches(expected, actual))
+    private fun captionDefinition() = JSONObject("""{
+        "name":"caption","tool_type":"client","description":"Display-only captions",
+        "expects_response":false,"arguments":[
+            {"name":"source_language","description":"Selected code"},
+            {"name":"original","description":"Exact original"},
+            {"name":"translation","description":"Exact translation"}
+        ]
+    }""")
+
+    @Test fun clientCaptionReadbackAcceptsWebhookDefaultsAndServerGeneratedFields() {
+        val expected = captionDefinition()
+        for (mode in listOf(null, "blocking", "fire_and_forget")) {
+            val actual = JSONObject(expected.toString()).put("tool_id", "provider-id")
+                .put("created_at", "server-time").put("execution_mode", mode)
+                .put("timeout", 30)
+            actual.getJSONArray("arguments").getJSONObject(0).put("required", false)
+            assertTrue(FishPlan.captionToolMatches(expected, actual))
+            assertTrue(FishPlan.captionToolMatches(JSONObject(expected.toString())
+                .put("execution_mode", "fire_and_forget"), actual))
+        }
+    }
+
+    @Test fun existingCaptionToolMustMatchEveryRequiredValueAndOrderedArgument() {
+        val expected = captionDefinition()
+        for (field in listOf("name", "tool_type", "description", "expects_response", "arguments")) {
+            val actual = JSONObject(expected.toString()).apply { remove(field) }
+            assertFalse(field, FishPlan.captionToolMatches(expected, actual))
+            assertFalse(field, FishPlan.captionToolMatches(actual, expected))
+        }
+        for ((field, value) in listOf("name" to "other", "tool_type" to "webhook",
+            "description" to "Changed policy", "expects_response" to true,
+            "expects_response" to "false", "expects_response" to 0)) {
+            assertFalse(field, FishPlan.captionToolMatches(expected, JSONObject(expected.toString()).put(field, value)))
+        }
+        for (field in listOf("name", "description")) {
+            val actual = JSONObject(expected.toString())
+            actual.getJSONArray("arguments").getJSONObject(1).put(field, "Changed argument")
+            assertFalse(field, FishPlan.captionToolMatches(expected, actual))
+            actual.getJSONArray("arguments").getJSONObject(1).remove(field)
+            assertFalse(field, FishPlan.captionToolMatches(expected, actual))
+        }
+        val fewer = JSONObject(expected.toString())
+        fewer.getJSONArray("arguments").remove(2)
+        assertFalse(FishPlan.captionToolMatches(expected, fewer))
+        val extra = JSONObject(expected.toString())
+        extra.getJSONArray("arguments").put(JSONObject("""{"name":"action","description":"Not a caption"}"""))
+        assertFalse(FishPlan.captionToolMatches(expected, extra))
+        val reordered = JSONObject(expected.toString())
+        val arguments = reordered.getJSONArray("arguments")
+        val original = arguments.get(1)
+        arguments.put(1, arguments.get(2)).put(2, original)
+        assertFalse(FishPlan.captionToolMatches(expected, reordered))
+    }
+
+    @Test fun matchingMalformedDefinitionsAreNotReusableContracts() {
+        for (field in listOf("name", "tool_type", "description", "expects_response")) {
+            val malformed = captionDefinition().put(field, 0)
+            assertFalse(field, FishPlan.captionToolMatches(malformed, JSONObject(malformed.toString())))
+        }
+        for (field in listOf("name", "description")) {
+            val malformed = captionDefinition()
+            malformed.getJSONArray("arguments").getJSONObject(0).put(field, 0)
+            assertFalse(field, FishPlan.captionToolMatches(malformed, JSONObject(malformed.toString())))
+        }
+    }
+
+    @Test fun onlyClientExecutionModeIsIgnoredAndOtherExpectedFieldsRemainRequired() {
+        val expected = captionDefinition().put("tool_type", "webhook").put("execution_mode", "fire_and_forget")
+        assertFalse(FishPlan.captionToolMatches(expected, JSONObject(expected.toString()).put("execution_mode", "blocking")))
+        assertFalse(FishPlan.captionToolMatches(captionDefinition().put("tool_type", "webhook"), expected))
+        val client = captionDefinition()
+        client.getJSONArray("arguments").getJSONObject(0).put("required", true)
+        val actual = JSONObject(client.toString())
+        actual.getJSONArray("arguments").getJSONObject(0).put("required", false)
+        assertFalse(FishPlan.captionToolMatches(client, actual))
     }
     @Test fun captionToolIsTheOnlyAllowedToolAndPromptReportsEveryUtterance() {
         val config = FishPlan.agentConfig("synthetic", "de", "caption-tool")

@@ -108,7 +108,7 @@
   const captionBody = entry => captionParts(entry).map((part,index) => `<div class="caption-part${index ? ' caption-divider' : ''}" data-field="${part.field}" data-final="${entry.final[part.field]}"><span class="caption-language">${esc(part.label)}</span><p class="${state.mode === 'translation' ? part.field === 'original' ? 'said' : 'translated' : `caption-${part.field}`}" lang="${esc(part.language || 'und')}" dir="${languageDir(part.language)}">${esc(part.text)}</p></div>`).join('');
   const caption = entry => `<article class="${captionClass(entry)}" data-caption-key="${esc(entry.id)}" aria-atomic="true">${captionBody(entry)}</article>`;
   // Each model report supplies a source and its translation under one immutable ID.
-  // Unlabelled legacy captions retain continuity; unlinked output stays independent.
+  // Unlabelled legacy captions stay neutral; unlinked output stays independent.
   const turnLabel = turn => turn.kind === 'assistant' ? 'Translation'
     : turn.side === 'guest' ? `Guest · ${langName(state.language)}`
     : turn.side === 'staff' ? `Receptionist · ${langName(state.staff_language)}` : 'Language unclear';
@@ -166,17 +166,22 @@
   }
   const phaseLabel = () => ({ connecting: t().connect, ready: 'Staff-led support', greeting: 'Welcome', thinking: 'Translating', speaking: t().speaking, listening: 'Live', ending: 'Stopping', stopped: 'Stopped' })[state.phase] || t().reception;
   const sessionAudioText = () => ({ off:'Mic off', recording:'Mic on', muted:'Mic muted', stopping:'Releasing mic', unknown:'Mic state unknown · ask staff' })[state.audio];
+  const micLabel = () => ({ recording: 'Mute the microphone', muted: 'Unmute the microphone', off: state.phase === 'connecting' ? 'Connecting · microphone off' : 'Microphone off', stopping: 'Stopping · releasing microphone', unknown: 'Microphone state unknown · ask staff' })[state.audio];
+  function resetMicLevels() {
+    if (state.audio !== 'recording') { state.micLevel = 0; state.bands = [0, 0, 0]; }
+  }
   const sessionDock = () => {
     if (state.mode === 'translation') {
       if (state.terminated) {
         const safe = !state.active && state.audio === 'off';
         return `<div class="session-actions" data-stopped="true"><div class="session-control"><div class="session-control-copy"><strong>Conversation stopped</strong><span>${esc(sessionAudioText())}</span></div></div>${action('restart', 'Try again', 'primary', !safe)}</div>`;
       }
-      const bands = state.micLevel > 0 ? state.bands || [state.micLevel, state.micLevel, state.micLevel] : [0, 0, 0];
+      resetMicLevels();
+      const bands = state.bands || [state.micLevel, state.micLevel, state.micLevel];
       const muted = state.audio === 'muted';
-      const label = muted ? 'Unmute the microphone' : 'Mute the microphone';
+      const label = micLabel();
       const enabled = state.active && !state.closed && ['recording','muted'].includes(state.audio);
-      return `<button type="button" class="voice-ball" data-action="mute" data-hearing="${state.audio === 'recording'}" aria-pressed="${muted}" aria-label="${label}" ${enabled ? '' : 'disabled'} style="--level:${state.micLevel};--b0:${bands[0]};--b1:${bands[1]};--b2:${bands[2]}">${muted ? icons.micOff : icons.mic}</button>`;
+      return `<button type="button" class="voice-ball" data-action="mute" data-hearing="${state.audio === 'recording'}" aria-pressed="${muted}" aria-label="${label}" ${enabled ? '' : 'disabled'} style="--level:${state.micLevel};--b0:${bands[0]};--b1:${bands[1]};--b2:${bands[2]}">${state.audio === 'recording' ? icons.mic : icons.micOff}</button>`;
     }
     const stopped = state.closed || state.terminated;
     const restart = state.terminated && !state.active && state.audio === 'off';
@@ -185,14 +190,17 @@
   };
 
   function syncMic() {
+    resetMicLevels();
     const button = content.querySelector('.voice-ball');
     if (!button) return;
     const muted = state.audio === 'muted';
     button.disabled = !state.active || state.closed || !['recording','muted'].includes(state.audio);
     button.dataset.hearing = String(state.audio === 'recording');
     button.setAttribute('aria-pressed', String(muted));
-    button.setAttribute('aria-label', muted ? 'Unmute the microphone' : 'Mute the microphone');
-    button.innerHTML = muted ? icons.micOff : icons.mic;
+    button.setAttribute('aria-label', micLabel());
+    button.style.setProperty('--level', String(state.micLevel));
+    (state.bands || [state.micLevel, state.micLevel, state.micLevel]).forEach((band, index) => button.style.setProperty('--b' + index, String(band)));
+    button.innerHTML = state.audio === 'recording' ? icons.mic : icons.micOff;
   }
 
   function renderNotices() {
@@ -248,11 +256,20 @@
     const focusedInput = focusedElement?.closest('#operation-form') ? { name:focusedElement.name,start:focusedElement.selectionStart,end:focusedElement.selectionEnd } : null;
     const scrollTop = content.scrollTop;
     const scrolls = [...content.querySelectorAll('.session-scroll,.draft,.language-list')].map(element => ({ top: element.scrollTop, follow: element.classList.contains('session-scroll') && element.scrollHeight - element.clientHeight - element.scrollTop < 60 }));
+    const retainedTurns = new Map(state.turns.filter(turn => turn.node?.isConnected).map(turn => [turn.id, turn.node]));
     captionNodes.clear();
     content.innerHTML = (html[state.page] || html.idle)();
     content.querySelectorAll('[data-caption-key]').forEach(node => captionNodes.set(node.dataset.captionKey, node));
     const turnNodes = new Map([...content.querySelectorAll("[data-turn-id]")].map(node => [node.dataset.turnId, node]));
-    state.turns.forEach(turn => { turn.node = turnNodes.get(turn.id) || null; });
+    state.turns.forEach(turn => {
+      const rendered = turnNodes.get(turn.id);
+      const retained = retainedTurns.get(turn.id);
+      if (rendered && retained) {
+        retained.className = rendered.className;
+        rendered.replaceWith(retained);
+        turn.node = retained;
+      } else turn.node = rendered || null;
+    });
     content.scrollTop = scrollTop;
     [...content.querySelectorAll('.session-scroll,.draft,.language-list')].forEach((element,index) => {
       const previous = scrolls[index];
@@ -632,7 +649,7 @@
       if (!['off','recording','stopping','unknown','muted'].includes(event.state)) return;
       if (state.closed && !['off','unknown'].includes(event.state)) return;
       state.audio = event.state;
-      if (state.audio !== 'recording') state.micLevel = 0;
+      resetMicLevels();
       if (!finishNavigation()) {
         if (state.page === 'active' && state.mode === 'translation' && !state.terminated) {
           // A mic toggle only changes the dock and privacy line; rebuilding the

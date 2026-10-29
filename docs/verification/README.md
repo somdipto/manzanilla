@@ -4,6 +4,35 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.38 caption-evidence repair candidate (S1)
+
+Baseline `a2b46ea84c0d6ab65b9f1a7fd94975ce69d7554f`, 17.0.37/code67.
+Candidate 17.0.38/code68. No release, deployment or paid provider call.
+
+- **Passed:** direct execution of the baseline shipped ledger reproduced an
+  unclear report inheriting `staff` and retaining a whitespace translation.
+  Candidate Node suite passes 15 cases, including every ordered picker pair,
+  neutral uncertain reports, exact real text, late annotations and session fences.
+- **Passed:** 459 Python tests (two dependency deprecation warnings), including
+  complete/incomplete tool lookup, immutable compatible reuse and webhook defaults.
+- **Passed:** Android JVM tests, debug/instrumentation APK assembly and debug lint
+  with JDK17/SDK34; provider fields were empty in this verification build.
+- **Passed:** all five isolated Chromium151 scenarios. Capture cases drive level
+  0.8/bands 0.7,0.5,0.2 followed by muted/off/unknown, an unrelated render and a
+  stale generation. All inline levels become zero, accessible labels agree and
+  transcript nodes/scroll survive. A separate actual-page visual inspection at
+  837×471 shows a neutral unclear caption and a non-illuminated muted control.
+- **Renderer observation only:** one pinned-baseline 120-report replay measured
+  160.7ms; one candidate replay measured 84.9ms on this host under different
+  background load. These are descriptive DOM timings, not a controlled performance
+  result and never acoustic latency evidence.
+
+Commands: `npm run build:reception`, `npm run check:reception`,
+`node --test tests/*.test.cjs`, `.venv/bin/python -m pytest tests -q`,
+`.venv/bin/python tests/run_reception_browser.py`, and
+`bash gradlew :hotel:testDebugUnitTest :hotel:assembleDebug
+:hotel:assembleDebugAndroidTest :hotel:lintDebug --no-daemon --max-workers=2`.
+
 ## 17.0.31 full-duplex and delivery candidate
 
 Base merged main `eb6e7fa`, version 17.0.31/code 61. This is a source candidate,

@@ -123,7 +123,7 @@ internal object ReceptionWebViewFixture {
         return value
     }
 
-    fun verify(instrumentation: Instrumentation) {
+    fun verify(instrumentation: Instrumentation, truth: Boolean = false) {
         check(BuildConfig.FISH_API_KEY.isEmpty()) { "Use a key-free fixture build" }
         val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, HotelActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -132,9 +132,14 @@ internal object ReceptionWebViewFixture {
         lateinit var browser: WebView
         var unavailable = false
         instrumentation.runOnMainSync {
+            // Replace, rather than overlay, the activity's existing WebView. Two
+            // simultaneous engines obscure startup timing on software-only AVDs.
+            val receptionField = HotelActivity::class.java.getDeclaredField("reception").apply { isAccessible = true }
+            (receptionField.get(activity) as ReceptionView).dispose()
             page = ReceptionView(activity, { messages.offer(it) }) { unavailable = true }
             browser = page.getChildAt(0) as WebView
-            activity.addContentView(page, FrameLayout.LayoutParams(-1, -1))
+            receptionField.set(activity, page)
+            activity.setContentView(page)
             // Exercise native events queued before page initialization, not a hand-written JS bridge.
             page.push(JSONObject().put("type", "reception_info").put("audio_available", true)
                 .put("local_audio_state", "off").put("hotel_name", "Bridge fixture"))
@@ -149,7 +154,7 @@ internal object ReceptionWebViewFixture {
             return value
         }
         fun expectAction(action: String): JSONObject {
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             while (System.nanoTime() < deadline) {
                 val message = messages.poll(250, TimeUnit.MILLISECONDS) ?: continue
                 if (message.optString("action") == action) return message
@@ -160,7 +165,7 @@ internal object ReceptionWebViewFixture {
             expectAction("info")
             check(!unavailable) { "Shipped assets failed to load" }
             // Initial info is sent while JS initializes; onPageFinished then flushes the native queue.
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20)
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             while (evaluate("document.getElementById('hotel-label').textContent") != "\"Bridge fixture\"") {
                 check(System.nanoTime() < deadline) { "Queued native startup events did not reach the page" }
                 Thread.sleep(100)
@@ -178,6 +183,48 @@ internal object ReceptionWebViewFixture {
             check(start.optString("language") == "fr" && start.optString("staff_language") == "en")
             check(UUID.fromString(start.getString("session_id")).toString() == start.getString("session_id"))
             check(evaluate("document.documentElement.dataset.page") == "\"active\"")
+            if (truth) {
+                fun push(event: JSONObject) = instrumentation.runOnMainSync {
+                    page.push(event.put("session_id", start.getString("session_id")).put("generation", 1))
+                }
+                check(evaluate("document.querySelector('.voice-ball').dataset.hearing") == "\"false\"")
+                check(evaluate("document.querySelector('.voice-ball').getAttribute('aria-label')") == "\"Connecting · microphone off\"")
+                for ((index, language) in listOf("en", "und", "fr", "und").withIndex()) {
+                    push(JSONObject().put("type", "interpretation").put("utterance_id", "truth-$index")
+                        .put("source_language", language).put("language_attribution", "model")
+                        .put("original", "  Alex, 204?  ").put("text", if (language == "und") " \t\n" else "Exact translation"))
+                }
+                check(evaluate("JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.caption'),function(n){return n.classList.contains('caption-reception')?'staff':n.classList.contains('caption-guest')?'guest':'neutral'}))") ==
+                    "\"[\\\"staff\\\",\\\"neutral\\\",\\\"guest\\\",\\\"neutral\\\"]\"")
+                check(evaluate("document.querySelectorAll('.caption-pending .translated').length") == "0")
+                evaluate("window.truthFirst = document.querySelector('.caption')")
+                for ((audio, label) in listOf("muted" to "Unmute the microphone", "off" to "Microphone off",
+                    "unknown" to "Microphone state unknown · ask staff")) {
+                    push(JSONObject().put("type", "audio_state").put("state", "recording"))
+                    push(JSONObject().put("type", "mic_level").put("level", 0.8)
+                        .put("bands", org.json.JSONArray("[0.7,0.5,0.2]")))
+                    check(evaluate("document.querySelector('.voice-ball').style.getPropertyValue('--level')") == "\"0.8\"")
+                    push(JSONObject().put("type", "audio_state").put("state", audio))
+                    fun checkMeter() {
+                        check(evaluate("['--level','--b0','--b1','--b2'].every(function(k){return document.querySelector('.voice-ball').style.getPropertyValue(k)==='0'})") == "true")
+                        check(evaluate("document.querySelector('.voice-ball').dataset.hearing") == "\"false\"")
+                        check(evaluate("document.querySelector('.voice-ball').getAttribute('aria-label')") == JSONObject.quote(label))
+                        check(evaluate("window.truthFirst === document.querySelector('.caption')") == "true")
+                    }
+                    checkMeter()
+                    instrumentation.runOnMainSync { page.push(JSONObject().put("type", "connection").put("connected", true)) }
+                    checkMeter()
+                    instrumentation.runOnMainSync {
+                        page.push(JSONObject().put("type", "mic_level").put("session_id", start.getString("session_id"))
+                            .put("generation", 0).put("level", 1))
+                    }
+                    checkMeter()
+                }
+                push(JSONObject().put("type", "reception_event").put("phase", "stopped"))
+                push(JSONObject().put("type", "audio_state").put("state", "off"))
+                check(evaluate("!!document.querySelector('.voice-ball')") == "false")
+                check(evaluate("document.querySelector('[data-action=restart]').disabled") == "false")
+            }
         } finally {
             instrumentation.runOnMainSync { page.dispose(); activity.finish() }
         }

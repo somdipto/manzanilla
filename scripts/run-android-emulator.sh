@@ -14,7 +14,7 @@ adb shell settings put global animator_duration_scale 0
 adb install -r android/hotel/build/outputs/apk/debug/hotel-debug.apk
 adb install -r android/hotel/build/outputs/apk/androidTest/debug/hotel-debug-androidTest.apk
 adb shell dumpsys webviewupdate > "$evidence/webview.txt"
-adb shell cmd package set-home-activity com.android.launcher3/.Launcher
+# Keep the image's configured launcher; AOSP and Google images use different packages.
 adb logcat -c
 trap 'adb logcat -d > "$evidence/logcat.txt"; adb shell locksettings clear --old 2468 > /dev/null 2>&1 || true' EXIT
 run_fixture() {
@@ -28,7 +28,7 @@ run_fixture() {
   grep -q "PASS case=$fixture " "$evidence/$label.txt"
   grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$label.txt"
 }
-for fixture in reception-bridge microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery; do
+for fixture in reception-bridge reception-truth microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery; do
   run_fixture "$fixture"
 done
 # Personal translation setup must work whether Android has a screen lock or not.

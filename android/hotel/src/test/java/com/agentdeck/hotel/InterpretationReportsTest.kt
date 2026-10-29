@@ -27,12 +27,29 @@ class InterpretationReportsTest {
         val reports = InterpretationReports("fr", "de")
         val original = "<img src=x>\n  Ich brauche Zimmer 204."
         for (id in listOf("first", "second", "third")) {
-            val event = reports.accept(call(id, "de-DE", original, "Je voudrais la chambre 204."))!!
+            val translation = "  Je voudrais la chambre 204. \n"
+            val event = reports.accept(call(id, "de-DE", original, translation))!!
             assertEquals(original, event.getString("original"))
-            assertEquals("Je voudrais la chambre 204.", event.getString("text"))
+            assertEquals(translation, event.getString("text"))
             assertEquals("de", event.getString("source_language"))
         }
         assertNull(reports.accept(call("first", "fr", "Changed", "Changed")))
+    }
+
+    @Test fun uncertainReportsHaveCanonicalEmptyTextAfterEitherSpeaker() {
+        val reports = InterpretationReports("fr", "de")
+        for ((index, language) in listOf("de", "und", "fr", "und").withIndex()) {
+            val original = " \n 204 — María. \t"
+            val event = reports.accept(call("turn-$index", language, original,
+                if (language == "und") " \n\t " else "  Chambre 204. \n"))!!
+            assertEquals(language, event.getString("source_language"))
+            assertEquals(original, event.getString("original"))
+            assertEquals(if (language == "und") "" else "  Chambre 204. \n", event.getString("text"))
+        }
+        assertNull(reports.accept(call("uncertain", "und", translation = " \n204 ")))
+        assertNull(reports.accept(call("known", "de", translation = " \n\t ")))
+        assertNotNull(reports.accept(call("uncertain", "und")))
+        assertNotNull(reports.accept(call("known", "de")))
     }
 
     @Test fun validatesToolTypeLanguageAndPayloadWithoutAuthorizingActions() {
@@ -47,6 +64,10 @@ class InterpretationReportsTest {
         assertNull(reports.accept(call("g", "de").put("expectsResponse", "false")))
         assertNull(reports.accept(call("h", "de").put("type", "tool.started")))
         assertNull(reports.accept(call("bad\nid", "de")))
+        assertNull(reports.accept(call("", "de")))
+        assertNull(reports.accept(call(" ".repeat(10), "de")))
+        assertNull(reports.accept(call("x".repeat(201), "de")))
+        assertNotNull(reports.accept(call("x".repeat(200), "de")))
         assertNotNull(reports.accept(call("provider:turn/2.abc", "de")))
         val numeric = call("numeric", "de")
         numeric.getJSONObject("params").put("original", 204)
