@@ -41,7 +41,9 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
     assert(styles('body').backgroundColor === background, `${value} page background is correct`);
     assert(styles('html').colorScheme === value, `${value} native form controls use the matching scheme`);
   };
-  receive({ type: 'reception_info', audio_available: true, local_audio_state: 'off' });
+  receive({ type:'reception_info', distribution:'personal-test', configured:true, state:'ready',
+    services:{checkin:true,question:true,taxi:true,operator:true,message:true},
+    audio_available:true, local_audio_state:'off' });
   receive({ type: 'language_preferences', language: 'de', staff_language: 'en' });
   palette('dark', 'rgb(8, 15, 21)');
   click('[data-action="appearance"]');
@@ -55,7 +57,7 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
   click('[data-action="reception"]');
   assert(doc.querySelector('#content').dataset.page === 'languages', 'After-hours primary action opens hotel assistance');
   doc.querySelector('#assist-language').focus();
-  receive({ type: 'connection', connected: true });
+  receive({ type:'connection', state:'ready', connected:true });
   assert(doc.activeElement?.id === 'assist-language', 'Connection updates preserve assistance language focus');
   click('[data-action="back"]');
   assert(doc.documentElement.dataset.night === 'true', 'Navigating back preserves after-hours reception');

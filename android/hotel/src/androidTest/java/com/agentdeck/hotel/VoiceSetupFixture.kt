@@ -11,6 +11,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.WebView
 import android.widget.EditText
 import com.agentdeck.ui.ReceptionView
+import okhttp3.ResponseBody.Companion.toResponseBody
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -18,9 +19,11 @@ import java.util.concurrent.TimeUnit
 internal object VoiceSetupFixture {
     fun verify(test: Instrumentation) {
         check(Build.HARDWARE in setOf("ranchu", "goldfish"))
+        check(BuildConfig.DISTRIBUTION == "personal-test") { "Personal setup requires a personal-test fixture" }
         val context = test.targetContext
         val store = SecretStore(context, "fish")
-        check(BuildConfig.FISH_API_KEY.isEmpty() && store.status() == SecretStore.Status.ABSENT)
+        check(BuildConfig.FISH_API_KEY.isEmpty() && BuildConfig.FISH_VOICE_ID.isEmpty() &&
+            store.status() == SecretStore.Status.ABSENT)
         check(HotelConnection(context).load() == null)
         check(!TranslationSettings(context).directFishSelected)
         val secureDevice = context.getSystemService(KeyguardManager::class.java).isDeviceSecure
@@ -220,6 +223,7 @@ internal object VoiceSetupFixture {
                 js("document.getElementById('settings').click()")
             }
             personalSetupReady(reopened, "saved-key personal setup")
+
             val unsavedKey = "fixture-unsaved-key-must-not-survive-recreation"
             enterKey(unsavedKey)
             check(inputLength(reopened) == unsavedKey.length) { "Synthetic input did not reach the current setup Activity" }
@@ -268,6 +272,7 @@ internal object VoiceSetupFixture {
                 if (!staff.isFinishing && !staff.isDestroyed && windowRoot("com.android.settings") != null)
                     shell("input keyevent 4")
             } else {
+
                 click("Close")
                 check(authenticated.get(staff) == false && (fields.get(staff) as List<*>).isEmpty())
             }
@@ -275,6 +280,420 @@ internal object VoiceSetupFixture {
             check(store.load() == syntheticKey && TranslationSettings(context).directFishSelected)
         } finally {
             test.runOnMainSync { activity.finish() }
+        }
+    }
+
+    private fun verifyRestoredCleanup(test: Instrumentation, personalKey: String) {
+        val context = test.targetContext
+        val personal = SecretStore(context, "fish")
+        val meta = context.getSharedPreferences("fishmeta", 0)
+        val shared = FishVoice::class.java.getDeclaredField("sharedAdmission").apply { isAccessible = true }
+        val previousAdmission = shared.get(null)
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        var activity: HotelActivity? = null
+        try {
+            check(meta.edit().putString("outstanding_session", "fixture-old-direct:900")
+                .putString("pending_end_url", "https://api.fish.audio/v1/agent/sessions/fixture-old/end")
+                .putString("pending_end_credential_hash", "fixture-wrong-hash").commit())
+            shared.set(null, null)
+            val current = test.startActivitySync(Intent(context, HotelActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as HotelActivity
+            activity = current
+            val provider = HotelActivity::class.java.getDeclaredField("fishProvider").apply { isAccessible = true }
+                .get(current) as Lazy<*>
+            val recovery = provider.value as FishVoice
+            val http = FishVoice::class.java.getDeclaredField("http").apply { isAccessible = true }
+            http.set(recovery, (http.get(recovery) as okhttp3.OkHttpClient).newBuilder().addInterceptor { chain ->
+                check(chain.request().method == "POST" && chain.request().url.encodedPath.endsWith("/fixture-old/end"))
+                check(chain.request().header("Authorization") == "Bearer $personalKey")
+                requests.incrementAndGet()
+                okhttp3.Response.Builder().request(chain.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                    .code(204).message("No Content").body("".toResponseBody(null)).build()
+            }.build())
+            check(meta.contains("outstanding_session") && requests.get() == 0)
+            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(personalKey.toByteArray())
+                .joinToString("") { "%02x".format(it.toInt() and 255) }
+            check(meta.edit().putString("pending_end_credential_hash", hash).commit())
+            test.runOnMainSync {
+                test.callActivityOnPause(current)
+                test.callActivityOnResume(current)
+            }
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+            while (meta.contains("outstanding_session")) {
+                check(System.nanoTime() < deadline) { "Foreground hotel recovery stranded the original direct reservation" }
+                Thread.sleep(50)
+            }
+            val owner = HotelActivity::class.java.getDeclaredField("owner").apply { isAccessible = true }
+                .get(current) as SessionOwner
+            check(requests.get() == 1 && personal.load() == personalKey && owner.current == null)
+            check(HotelConnection(context).load() == null)
+        } finally {
+            val closing = activity
+            if (closing != null) {
+                test.runOnMainSync { closing.finish() }
+                test.waitForIdleSync()
+                val destroyedBy = System.nanoTime() + TimeUnit.SECONDS.toNanos(4)
+                var destroyed = false
+                while (!destroyed) {
+                    test.runOnMainSync { destroyed = closing.isDestroyed }
+                    check(destroyed || System.nanoTime() < destroyedBy) {
+                        var state = ""
+                        test.runOnMainSync {
+                            state = "finishing=${closing.isFinishing} destroyed=${closing.isDestroyed} focus=${closing.hasWindowFocus()}"
+                        }
+                        test.sendStatus(0, android.os.Bundle().apply { putString("stream", "HOTEL_CLEANUP_DESTROY $state") })
+                        "Cleanup Activity destruction did not settle"
+                    }
+                    if (!destroyed) Thread.sleep(20)
+                }
+            }
+            shared.set(null, previousAdmission)
+            meta.edit().remove("outstanding_session").remove("pending_end_url")
+                .remove("pending_end_credential_hash").commit()
+        }
+    }
+
+    /** Owns only synthetic data and PIN 2468 on a fresh, initially lock-free hotel AVD. */
+    fun verifyHotel(test: Instrumentation) {
+        check(Build.HARDWARE in setOf("ranchu", "goldfish"))
+        check(BuildConfig.DEBUG && BuildConfig.DISTRIBUTION == "hotel")
+        check(BuildConfig.FISH_API_KEY.isEmpty() && BuildConfig.FISH_VOICE_ID.isEmpty())
+        val context = test.targetContext
+        val keyguard = context.getSystemService(KeyguardManager::class.java)
+        check(!keyguard.isDeviceSecure) { "Hotel setup fixture requires an initially lock-free disposable AVD" }
+        val personal = SecretStore(context, "fish")
+        val connection = HotelConnection(context)
+        val meta = context.getSharedPreferences("fishmeta", 0)
+        check(personal.status() == SecretStore.Status.ABSENT && connection.load() == null)
+        check(!meta.contains("outstanding_session"))
+        check(context.getSharedPreferences("deck", 0).edit()
+            .putString("reception_guest_language", "en").putString("reception_staff_language", "en").commit())
+        val personalKey = "fixture-retained-personal-key-not-a-provider-credential"
+        check(personal.save(personalKey) && TranslationSettings(context).selectDirectFish())
+        fun reportStage(value: String) {
+            test.sendStatus(0, Bundle().apply { putString("stream", "HOTEL_SETUP_STAGE $value\n") })
+        }
+        fun await(stage: String, snapshot: () -> String = { "" }, state: () -> Boolean) {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+            while (!state()) {
+                if (System.nanoTime() >= deadline) {
+                    reportStage("timeout=$stage ${snapshot()}")
+                    error("Hotel setup timed out: $stage")
+                }
+                Thread.sleep(100)
+            }
+        }
+        fun shell(command: String) {
+            test.uiAutomation.executeShellCommand(command).use { descriptor ->
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
+            }
+        }
+        // Recover the original reservation through the real Activity foreground path,
+        // even before enrollment is available. No new provider session may be opened.
+        verifyRestoredCleanup(test, personalKey)
+        // Exercise the real new-start boundary even with a saved personal selection.
+        // Interceptors prevent a regression from making any provider request.
+        shell("pm grant ${context.packageName} android.permission.RECORD_AUDIO")
+        val keyReads = java.util.concurrent.atomic.AtomicInteger()
+        val requests = java.util.concurrent.atomic.AtomicInteger()
+        val events = java.util.Collections.synchronizedList(ArrayList<org.json.JSONObject>())
+        val fish = FishVoice(context, { events.add(it) }) { keyReads.incrementAndGet(); personalKey }
+        for (name in listOf("http", "sessionHttp")) {
+            val field = FishVoice::class.java.getDeclaredField(name).apply { isAccessible = true }
+            val client = field.get(fish) as okhttp3.OkHttpClient
+            field.set(fish, client.newBuilder().addInterceptor {
+                requests.incrementAndGet()
+                throw java.io.IOException("Fixture blocks provider access")
+            }.build())
+        }
+        test.runOnMainSync { fish.start("en", "es", sessionId = "hotel-no-direct", epoch = 901) }
+        await("hotel new start denied") {
+            synchronized(events) { events.any { it.optString("phase") == "error" &&
+                it.optString("text") == UiText.text(context, "en", "Translation needs hotel setup. Please ask staff.") } } &&
+                fish.admissionIssue() == null
+        }
+        check(keyReads.get() == 0 && requests.get() == 0) { "Hotel new start consulted a personal credential or provider" }
+        check(personal.load() == personalKey && TranslationSettings(context).directFishSelected)
+        test.uiAutomation.serviceInfo = test.uiAutomation.serviceInfo.apply {
+            flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
+        // Observe framework lifecycle events before launching. Protected setup may
+        // legitimately replace its parent; never drive a destroyed captured view.
+        val application = context.applicationContext as android.app.Application
+        val identities = java.util.IdentityHashMap<android.app.Activity, String>()
+        val hotelStages = LinkedHashMap<HotelActivity, String>()
+        val lifecycleEvents = java.util.ArrayDeque<String>()
+        val lifecycle = object : android.app.Application.ActivityLifecycleCallbacks {
+            fun record(activity: android.app.Activity, stage: String) {
+                if (activity !is HotelActivity && activity !is KeyEntryActivity) return
+                val identity = identities.getOrPut(activity) {
+                    "${if (activity is HotelActivity) "reception" else "setup"}#${identities.size + 1}"
+                }
+                if (activity is HotelActivity && stage != "saved") hotelStages[activity] = stage
+                lifecycleEvents.addLast("$identity:$stage" +
+                    "(task=${activity.taskId},changing=${activity.isChangingConfigurations},finishing=${activity.isFinishing})")
+                if (lifecycleEvents.size > 12) lifecycleEvents.removeFirst()
+            }
+            override fun onActivityCreated(activity: android.app.Activity, state: Bundle?) =
+                record(activity, if (state == null) "created" else "created-restored")
+            override fun onActivityStarted(activity: android.app.Activity) = record(activity, "started")
+            override fun onActivityResumed(activity: android.app.Activity) = record(activity, "resumed")
+            override fun onActivityPaused(activity: android.app.Activity) = record(activity, "paused")
+            override fun onActivityStopped(activity: android.app.Activity) = record(activity, "stopped")
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, state: Bundle) = record(activity, "saved")
+            override fun onActivityDestroyed(activity: android.app.Activity) = record(activity, "destroyed")
+        }
+        var activity: HotelActivity? = null
+        var browser: WebView? = null
+        var receptionTaskId = -1
+        val reception = HotelActivity::class.java.getDeclaredField("reception").apply { isAccessible = true }
+        val authenticated = KeyEntryActivity::class.java.getDeclaredField("authenticated").apply { isAccessible = true }
+        val foreground = KeyEntryActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }
+        val fields = KeyEntryActivity::class.java.getDeclaredField("fields").apply { isAccessible = true }
+        val openSetups = ArrayList<KeyEntryActivity>()
+        val receptionForeground = HotelActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }
+        fun receptionState(): String {
+            var state = ""
+            test.runOnMainSync {
+                val current = activity
+                state = "parent=${identities[current] ?: "none"}" +
+                    " parent_foreground=${current?.let { receptionForeground.getBoolean(it) }}" +
+                    " parent_focus=${current?.hasWindowFocus()} parent_finishing=${current?.isFinishing}" +
+                    " parent_destroyed=${current?.isDestroyed} browser_attached=${browser?.isAttachedToWindow}" +
+                    " browser_shown=${browser?.isShown} setups=${openSetups.size}" +
+                    " setups_destroyed=${openSetups.count { it.isDestroyed }}" +
+                    " lifecycle=${lifecycleEvents.joinToString(";")}"
+            }
+            return state
+        }
+        fun awaitReception(stage: String) {
+            await("reception resumed: $stage", ::receptionState) {
+                var resumed = false
+                test.runOnMainSync {
+                    val previous = activity
+                    val current = hotelStages.filter { (candidate, stage) ->
+                        stage == "resumed" && candidate.taskId == receptionTaskId
+                    }.keys.singleOrNull()
+                    if (current != null && openSetups.all { it.isDestroyed } &&
+                        (previous == null || current === previous || (previous.isDestroyed && !previous.isFinishing)) &&
+                        !current.isFinishing && !current.isDestroyed &&
+                        receptionForeground.getBoolean(current) && current.hasWindowFocus()) {
+                        val view = reception.get(current) as? ReceptionView
+                        val currentBrowser = view?.getChildAt(0) as? WebView
+                        if (currentBrowser != null && currentBrowser.isAttachedToWindow && currentBrowser.isShown) {
+                            if (current !== activity) {
+                                reportStage("parent_selected=${identities[current]} previous=${identities[activity] ?: "none"}" +
+                                    " lifecycle=${lifecycleEvents.joinToString(";")}")
+                            }
+                            activity = current
+                            browser = currentBrowser
+                            resumed = true
+                        }
+                    }
+                }
+                resumed
+            }
+        }
+        fun inputs(setup: KeyEntryActivity): List<EditText> {
+            @Suppress("UNCHECKED_CAST")
+            return fields.get(setup) as List<EditText>
+        }
+        fun js(stage: String, script: String): String {
+            awaitReception(stage)
+            val ready = CountDownLatch(1)
+            var value = ""
+            test.runOnMainSync { checkNotNull(browser).evaluateJavascript(script) { value = it; ready.countDown() } }
+            if (!ready.await(15, TimeUnit.SECONDS)) {
+                reportStage("callback_timeout=$stage ${receptionState()}")
+                error("Hotel setup WebView callback timed out: $stage")
+            }
+            return value
+        }
+        fun awaitPage(stage: String) {
+            await("hotel packaged page: $stage", ::receptionState) {
+                js(stage, """(function() {
+                    var home = document.querySelector('[data-action=translation]');
+                    var bounds = home && home.getBoundingClientRect();
+                    return !!(window.manzania && typeof window.manzania.receive === 'function' &&
+                        window.ManzaniaNative && home && bounds.width > 0 && bounds.height > 0);
+                })()""") == "true"
+            }
+        }
+        fun open(stage: String, action: () -> Unit): KeyEntryActivity {
+            awaitPage(stage)
+            reportStage("opening=$stage")
+            val monitor = test.addMonitor(KeyEntryActivity::class.java.name, null, false)
+            return try {
+                action()
+                val setup = monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
+                if (setup == null) {
+                    reportStage("open_timeout=$stage ${receptionState()}")
+                    error("Hotel setup did not open: $stage")
+                }
+                setup.also(openSetups::add)
+            } finally { test.removeMonitor(monitor) }
+        }
+        fun postSetup(route: String) {
+            // Opening setup pauses this WebView. Its JS result callback may then
+            // be suspended; the ActivityMonitor above observes the real outcome.
+            test.runOnMainSync {
+                checkNotNull(browser).evaluateJavascript("window.ManzaniaNative.postMessage(JSON.stringify({action:'$route'}))", null)
+            }
+        }
+        fun nodes(view: android.view.View): List<android.view.View> {
+            val result = arrayListOf(view)
+            if (view is android.view.ViewGroup) for (index in 0 until view.childCount)
+                result.addAll(nodes(view.getChildAt(index)))
+            return result
+        }
+        fun click(setup: KeyEntryActivity, label: String) {
+            test.runOnMainSync {
+                val button = nodes(setup.window.decorView).filterIsInstance<android.widget.Button>()
+                    .single { it.text.toString().equals(label, ignoreCase = true) }
+                check(button.isEnabled && button.performClick())
+            }
+            test.waitForIdleSync()
+        }
+        fun setupState(setup: KeyEntryActivity): String {
+            var state = ""
+            test.runOnMainSync {
+                state = "setup_foreground=${foreground.getBoolean(setup)} setup_focus=${setup.hasWindowFocus()}" +
+                    " setup_finishing=${setup.isFinishing} setup_destroyed=${setup.isDestroyed}" +
+                    " setup_attached=${setup.window.decorView.isAttachedToWindow}" +
+                    " setup_shown=${setup.window.decorView.isShown}"
+            }
+            return state
+        }
+        fun locked(setup: KeyEntryActivity) {
+            await("locked setup has no fields", { setupState(setup) }) {
+                var result = false
+                test.runOnMainSync { result = !authenticated.getBoolean(setup) && inputs(setup).isEmpty() }
+                result
+            }
+        }
+        fun descendants(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
+            val result = arrayListOf(node)
+            for (index in 0 until node.childCount) node.getChild(index)?.let { result.addAll(descendants(it)) }
+            return result
+        }
+        fun authenticate(setup: KeyEntryActivity) {
+            locked(setup)
+            await("real Android credential prompt", { setupState(setup) }) {
+                test.uiAutomation.windows.mapNotNull { it.root }.any { root ->
+                    root.packageName?.toString() in setOf("com.android.settings", "com.android.systemui") &&
+                        descendants(root).any { it.isEditable && it.isVisibleToUser }
+                }
+            }
+            shell("input text 2468")
+            shell("input keyevent 66")
+            await("authenticated enrollment form", { setupState(setup) }) {
+                var result = false
+                test.runOnMainSync {
+                    result = authenticated.getBoolean(setup) && foreground.getBoolean(setup) && inputs(setup).size == 2
+                }
+                result
+            }
+            test.runOnMainSync {
+                check(nodes(setup.window.decorView).filterIsInstance<android.widget.TextView>()
+                    .none { it.text.toString() == "Fish Audio" })
+                check(inputs(setup).none { it.contentDescription?.toString() == "New Fish Audio key, masked" })
+            }
+        }
+        var syntheticPin = false
+        test.runOnMainSync { application.registerActivityLifecycleCallbacks(lifecycle) }
+        try {
+            reportStage("enter=hotel activity launch")
+            val launched = test.startActivitySync(Intent(context, HotelActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            test.runOnMainSync { receptionTaskId = launched.taskId }
+            awaitPage("initial page")
+            // Both guest bridge entry points and an explicit voice_only extra must fail closed without a lock.
+            for (route in listOf("settings", "voice_setup", "intent")) {
+                val setup = open("no-lock $route") {
+                    if (route == "intent") context.startActivity(Intent(context, KeyEntryActivity::class.java)
+                        .putExtra("voice_only", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    else postSetup(route)
+                }
+                locked(setup)
+                await("no-lock hotel setup refusal", { setupState(setup) }) {
+                    var refused = false
+                    test.runOnMainSync {
+                        refused = nodes(setup.window.decorView).filterIsInstance<android.widget.TextView>()
+                            .any { it.text.toString().contains("no device screen-lock credential") }
+                    }
+                    refused
+                }
+                click(setup, "Close")
+                awaitPage("after no-lock $route closes")
+            }
+            shell("locksettings set-pin 2468")
+            syntheticPin = true
+            await("synthetic device credential enrolled") { keyguard.isDeviceSecure }
+            val setup = open("protected voice setup") { postSetup("voice_setup") }
+            authenticate(setup)
+            // Replacing or clearing enrollment cannot strand the original remote-cleanup credential.
+            val originalToken = "fixture-original-device-token-000000000000"
+            check(connection.save("https://127.0.0.1:1", originalToken))
+            check(meta.edit().putString("outstanding_session", "fixture-owned:902")
+                .putString("pending_end_url", "https://127.0.0.1:1/api/device/fish-session/fixture/end")
+                .putString("pending_end_credential_hash", "fixture-original-hash").commit())
+            val originalMetadata = meta.all.toMap()
+            test.runOnMainSync {
+                inputs(setup)[0].setText("https://127.0.0.1:2")
+                inputs(setup)[1].setText("fixture-replacement-device-token-000000000")
+            }
+            click(setup, "Save Hotel connection key")
+            check(connection.load()?.token == originalToken && meta.all == originalMetadata)
+            click(setup, "Remove Hotel connection key")
+            test.runOnMainSync {
+                val dialog = KeyEntryActivity::class.java.getDeclaredField("dialog").apply { isAccessible = true }
+                    .get(setup) as android.app.AlertDialog
+                check(dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick())
+            }
+            check(connection.load()?.token == originalToken && meta.all == originalMetadata)
+            check(meta.edit().remove("outstanding_session").remove("pending_end_url")
+                .remove("pending_end_credential_hash").commit())
+            // Diagnostics remains in this authenticated Activity and is discarded on background.
+            click(setup, "Voice diagnostics")
+            shell("input keyevent 3")
+            await("background clears authorization and credentials", { setupState(setup) }) {
+                var result = false
+                test.runOnMainSync { result = !authenticated.getBoolean(setup) && inputs(setup).isEmpty() }
+                result
+            }
+            reportStage("enter=protected setup foreground return")
+            context.startActivity(Intent(context, KeyEntryActivity::class.java)
+                .putExtra("voice_only", true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+            authenticate(setup)
+            test.runOnMainSync { check(inputs(setup)[1].text.isEmpty()) }
+            // A protected return drives the existing parent maintenance owner; no new updater is created.
+            check(context.getSharedPreferences("deck", 0).edit().putString("reception_appearance", "dark").commit())
+            click(setup, "Light appearance")
+            await("protected maintenance result applied by parent") {
+                context.getSharedPreferences("deck", 0).getString("reception_appearance", "") == "light"
+            }
+            awaitPage("after protected maintenance")
+            check(personal.load() == personalKey && TranslationSettings(context).directFishSelected)
+            // A hotel guest bridge command cannot override that protected decision.
+            js("guest maintenance denied", "window.ManzaniaNative.postMessage(JSON.stringify({action:'appearance',value:'dark'}))")
+            test.waitForIdleSync()
+            check(context.getSharedPreferences("deck", 0).getString("reception_appearance", "") == "light")
+            val finalSetup = open("final protected settings") { postSetup("settings") }
+            authenticate(finalSetup)
+            click(finalSetup, "Done")
+            awaitPage("after final setup closes")
+            test.sendStatus(0, Bundle().apply {
+                putString("stream", "HOTEL_SETUP protected=true direct_blocked=true personal_key_retained=true maintenance=true\n")
+            })
+        } finally {
+            test.runOnMainSync {
+                openSetups.forEach { if (!it.isDestroyed) it.finish() }
+                hotelStages.keys.forEach { if (!it.isDestroyed) it.finish() }
+                application.unregisterActivityLifecycleCallbacks(lifecycle)
+            }
+            meta.edit().remove("outstanding_session").remove("pending_end_url").remove("pending_end_credential_hash").commit()
+            if (syntheticPin) shell("locksettings clear --old 2468")
         }
     }
 }

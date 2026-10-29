@@ -20,8 +20,17 @@ import android.widget.FrameLayout
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import com.agentdeck.ui.ReceptionView
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONObject
 import java.util.UUID
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Native capture, credentials and gateway ownership; the packaged guest UI has none. */
@@ -72,6 +81,30 @@ class HotelActivity : Activity() {
     private var pendingPermission: SessionOwner.Lease? = null
     private var returnToTranslation = false
     private var audioState = "off"
+    private enum class HotelStatus { unconfigured, checking, ready, offline, unauthorized }
+    private var hotelStatus = HotelStatus.unconfigured
+    private var hotelStatusAt = 0L
+    private var hotelProbeGeneration = 0L
+    private var hotelProbe: Call? = null
+    private var hotelIdentity: HotelConnection.Credentials? = null
+    private var hotelLocale = ""
+    private var hotelConfigVersion = 0
+    private var hotelName = ""
+    private var hotelServices = JSONObject()
+    private var hotelServicesSupported = false
+    private val hotelServiceNames = arrayOf("checkin", "question", "taxi", "operator", "message")
+    private var pendingMaintenance: String? = null
+    private var awaitingStaffSetup = false
+    private val maintenanceActions = setOf("check_updates", "apply_update", "appearance_light", "appearance_dark", "night_on", "night_off")
+    private var readinessClient = OkHttpClient.Builder().callTimeout(3, TimeUnit.SECONDS)
+        .followRedirects(false).followSslRedirects(false).build()
+    private val hotelPoll = object : Runnable {
+        override fun run() {
+            if (!foreground || destroyed) return
+            refreshHotelStatus()
+            ui.postDelayed(this, 25_000L)
+        }
+    }
     private var lastActivity = 0L
     private val watchdog = object : Runnable {
         override fun run() {
@@ -83,11 +116,119 @@ class HotelActivity : Activity() {
                 pushState()
             }
             updater.tryInstallIfIdle()
+            consumeMaintenance()
             ui.postDelayed(this, 1_000)
         }
     }
 
     private fun backendConfigured() = hotelConnection.load() != null
+    private fun guestLocale() = deck.getString("reception_guest_language", "es").orEmpty().takeIf(DeskLanguages::has) ?: "es"
+
+    private fun cancelHotelProbe() {
+        hotelProbeGeneration++
+        hotelProbe?.cancel()
+        hotelProbe = null
+    }
+
+    /** Configuration is not evidence of authenticated reachability. No operation or microphone is opened. */
+    private fun refreshHotelStatus() {
+        val connection = hotelConnection.load()
+        val language = guestLocale()
+        if (connection != hotelIdentity || language != hotelLocale) {
+            cancelHotelProbe()
+            if (connection != hotelIdentity) { hotelConfigVersion = 0; hotelName = "" }
+            hotelIdentity = connection
+            hotelLocale = language
+            hotelServices = JSONObject()
+            hotelServicesSupported = false
+            hotelStatusAt = 0L
+        }
+        if (connection == null) {
+            hotelStatus = HotelStatus.unconfigured
+            pushState()
+            return
+        }
+        if (!foreground || destroyed || hotelProbe != null) return
+        if (hotelStatusAt == 0L || SystemClock.elapsedRealtime() - hotelStatusAt > 30_000L)
+            hotelStatus = HotelStatus.checking
+        val generation = ++hotelProbeGeneration
+        val body = JSONObject().put("app_version", BuildConfig.VERSION_NAME).put("config_version", hotelConfigVersion)
+            .put("protocol", 1).put("language", language)
+        val request = Request.Builder().url(connection.base.trimEnd('/') + "/api/device/heartbeat")
+            .header("Authorization", "Bearer ${connection.token}")
+            .post(body.toString().toRequestBody("application/json".toMediaType())).build()
+        val call = readinessClient.newCall(request)
+        hotelProbe = call
+        pushState()
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) = settle(HotelStatus.offline, null)
+            override fun onResponse(call: Call, response: Response) {
+                var payload: JSONObject? = null
+                val status = response.use {
+                    when {
+                        it.code == 401 || it.code == 403 -> HotelStatus.unauthorized
+                        !it.isSuccessful -> HotelStatus.offline
+                        else -> try {
+                            val source = it.body?.source() ?: throw IOException()
+                            source.request(262_145)
+                            if (source.buffer.size > 262_144) throw IOException()
+                            payload = JSONObject(source.readUtf8())
+                            val hotel = payload!!.getJSONObject("hotel")
+                            if (payload!!.getInt("protocol") != 1 || hotel.getString("name").isBlank() ||
+                                hotel.getInt("config_version") < 1) throw IOException()
+                            // Absence is the old-backend contract, not an authentication failure.
+                            payload!!.optJSONObject("services")?.let { services ->
+                                for (key in hotelServiceNames)
+                                    if (services.opt(key) !is Boolean) throw IOException()
+                            }
+                            if (payload!!.has("services") && payload!!.optJSONObject("services") == null) throw IOException()
+                            HotelStatus.ready
+                        } catch (_: Exception) { payload = null; HotelStatus.offline }
+                    }
+                }
+                settle(status, payload)
+            }
+            private fun settle(status: HotelStatus, payload: JSONObject?) = runOnUiThread {
+                if (destroyed || !foreground || generation != hotelProbeGeneration || hotelProbe !== call ||
+                    hotelConnection.load() != connection || guestLocale() != language) return@runOnUiThread
+                hotelProbe = null
+                hotelStatus = status
+                hotelStatusAt = SystemClock.elapsedRealtime()
+                hotelServices = JSONObject()
+                hotelServicesSupported = false
+                if (status == HotelStatus.ready && payload != null) {
+                    val hotel = payload.getJSONObject("hotel")
+                    hotelName = hotel.getString("name").take(300).filterNot { it.isISOControl() }
+                    hotelConfigVersion = hotel.getInt("config_version")
+                    payload.optJSONObject("services")?.let { services ->
+                        hotelServicesSupported = true
+                        for (key in hotelServiceNames)
+                            hotelServices.put(key, services.getBoolean(key))
+                    }
+                }
+                pushState()
+            }
+        })
+    }
+
+    private fun hotelBlockReason(action: String? = null): String {
+        if (hotelConnection.load() != hotelIdentity || guestLocale() != hotelLocale ||
+            (hotelStatusAt != 0L && SystemClock.elapsedRealtime() - hotelStatusAt > 30_000L)) {
+            hotelStatus = if (backendConfigured()) HotelStatus.checking else HotelStatus.unconfigured
+            refreshHotelStatus()
+        }
+        return when (hotelStatus) {
+            HotelStatus.unconfigured -> "Hotel services need staff setup."
+            HotelStatus.checking -> "Checking the hotel connection. Please wait."
+            HotelStatus.offline -> "The hotel connection is unavailable. Please ask staff."
+            HotelStatus.unauthorized -> "The hotel device is not authorized. Please ask staff."
+            HotelStatus.ready -> when {
+                !hotelServicesSupported -> "The hotel service needs an update. Please ask staff."
+                action != null && !hotelServices.optBoolean(action) -> "This service is not configured by the hotel. Please ask staff."
+                else -> ""
+            }
+        }
+    }
     private fun canInstallUpdate(): Boolean = foreground && !destroyed && owner.current == null &&
         !owner.closing && pendingPermission == null && audioState == "off" &&
         fish.localAudioState() == "off" && fish.admissionIssue() == null
@@ -103,15 +244,18 @@ class HotelActivity : Activity() {
 
     private fun pushState() {
         val page = reception ?: return
-        val ready = backendConfigured()
+        val configured = backendConfigured()
+        val audioGate = AudioPolicy.blockReason(configured, fishStore.status(), BuildConfig.FISH_API_KEY.isNotBlank(),
+            TranslationSettings(this).directFishSelected, BuildConfig.DISTRIBUTION)
         if (owner.current == null) audioState = fish.localAudioState()
-        val audioGate = AudioPolicy.blockReason(ready, fishStore.status(), BuildConfig.FISH_API_KEY.isNotBlank(),
-            TranslationSettings(this).directFishSelected)
         val audioReady = audioGate.isEmpty()
         page.push(JSONObject().put("type", "appearance").put("value", deck.getString("reception_appearance", "dark")))
         page.push(JSONObject().put("type", "night_mode").put("enabled", night))
-        page.push(JSONObject().put("type", "reception_info").put("hotel_name", text("Hotel reception"))
-            .put("sample_hotel", false).put("configured", ready)
+        page.push(JSONObject().put("type", "reception_info").put("hotel_name", hotelName.ifBlank { text("Hotel reception") })
+            .put("sample_hotel", false).put("configured", configured).put("distribution", BuildConfig.DISTRIBUTION)
+            .put("state", hotelStatus.name).put("services", safeServices())
+            .put("services_supported", hotelServicesSupported)
+            .put("bundled_key_available", BuildConfig.DISTRIBUTION == "personal-test" && BuildConfig.FISH_API_KEY.isNotBlank())
             .put("audio_available", audioReady)
             .put("local_audio_state", audioState)
             .put("audio_gate", if (audioGate.isEmpty()) "" else text(audioGate))
@@ -120,9 +264,14 @@ class HotelActivity : Activity() {
         val staff = deck.getString("reception_staff_language", null)
         if (guest != null && staff != null) page.push(JSONObject().put("type", "language_preferences")
             .put("language", guest).put("staff_language", staff))
-        page.push(JSONObject().put("type", "prep").put("status", if (ready) "ready" else "nokey").put("version", BuildConfig.VERSION_NAME))
-        page.push(JSONObject().put("type", "connection").put("connected", ready))
-        updateStatus?.let(::onUpdate)
+        page.push(JSONObject().put("type", "prep").put("status", if (configured) "ready" else "nokey").put("version", BuildConfig.VERSION_NAME))
+        page.push(JSONObject().put("type", "connection").put("connected", hotelStatus == HotelStatus.ready).put("state", hotelStatus.name))
+        if (BuildConfig.DISTRIBUTION == "personal-test") updateStatus?.let(::onUpdate)
+    }
+
+    private fun safeServices() = JSONObject().apply {
+        for (key in hotelServiceNames)
+            put(key, hotelStatus == HotelStatus.ready && hotelServicesSupported && hotelServices.optBoolean(key))
     }
 
     private fun forward(message: JSONObject) {
@@ -167,6 +316,22 @@ class HotelActivity : Activity() {
                 .put("session_id", request.id).put("generation", 0))
             return
         }
+        val usesHotel = request.mode == "reception" || TranslationRouting.useManagedConnection(backendConfigured(),
+            TranslationSettings(this).directFishSelected, BuildConfig.DISTRIBUTION)
+        val readinessError = when {
+            request.mode == "translation" && BuildConfig.DISTRIBUTION == "hotel" && !backendConfigured() ->
+                "Translation needs hotel setup. Please ask staff."
+            usesHotel -> hotelBlockReason().let { if (request.mode == "translation" && hotelStatus == HotelStatus.ready) "" else it }
+            else -> ""
+        }
+        if (readinessError.isNotEmpty()) {
+            reception?.push(JSONObject().put("type", "audio_state").put("state", "off")
+                .put("session_id", request.id).put("generation", 0))
+            reception?.push(JSONObject().put("type", "reception_event").put("phase", "error")
+                .put("text", text(readinessError, language = request.guest))
+                .put("session_id", request.id).put("generation", 0))
+            return
+        }
         val blocked = if (request.mode == "translation") fish.admissionIssue() else null
         if (blocked != null) {
             fish.retryCleanup()
@@ -177,7 +342,8 @@ class HotelActivity : Activity() {
             if (last != null && audioState == "off") owner.confirmLateRelease(last.request.id, last.generation)
             reception?.push(JSONObject().put("type", "audio_state").put("state", audioState)
                 .put("session_id", request.id).put("generation", 0))
-            reception?.push(JSONObject().put("type", "reception_event").put("phase", "error").put("text", blocked)
+            reception?.push(JSONObject().put("type", "reception_event").put("phase", "error").put("text",
+                if (BuildConfig.DISTRIBUTION == "hotel") text("Translation is unavailable. Please ask staff.", language = request.guest) else blocked)
                 .put("session_id", request.id).put("generation", 0))
             return
         }
@@ -197,13 +363,31 @@ class HotelActivity : Activity() {
     private fun connect(lease: SessionOwner.Lease) {
         if (!current(lease) || !foreground) return
         val request = lease.request
+        if (request.mode == "translation" && BuildConfig.DISTRIBUTION == "hotel" && !backendConfigured()) {
+            stopSession("error", text("Translation needs hotel setup. Please ask staff.", language = request.guest))
+            return
+        }
+        if (request.mode == "translation" && TranslationRouting.useManagedConnection(backendConfigured(),
+                TranslationSettings(this).directFishSelected, BuildConfig.DISTRIBUTION) &&
+            hotelBlockReason().isNotEmpty() && hotelStatus != HotelStatus.ready) {
+            stopSession("error", text("Translation is unavailable. Please ask staff.", language = request.guest))
+            return
+        }
         if (request.mode == "reception") {
             gateway?.dispose()
             val credentials = hotelConnection.load()
             gateway = HotelGateway(credentials?.base.orEmpty(), credentials?.token.orEmpty(),
                 { currentLease, event -> runOnUiThread { if (current(currentLease)) push(currentLease, event) } },
                 { currentLease, event -> runOnUiThread { if (current(currentLease)) dialOperation(currentLease, event) } },
-                { currentLease, message, values -> text(message, values, currentLease.request.guest) })
+                { currentLease, message, values -> text(message, values, currentLease.request.guest) },
+                connectionFailure = { failedState -> runOnUiThread {
+                    if (current(lease) && hotelConnection.load() == credentials) {
+                        cancelHotelProbe()
+                        hotelStatus = if (failedState == "unauthorized") HotelStatus.unauthorized else HotelStatus.offline
+                        hotelStatusAt = SystemClock.elapsedRealtime()
+                        pushState()
+                    }
+                } })
                 .also { it.begin(lease) }
             audio(lease, "off")
             phase(lease, "ready")
@@ -245,6 +429,7 @@ class HotelActivity : Activity() {
     private fun finishReleaseActions() {
         while (afterRelease.isNotEmpty()) afterRelease.removeAt(0).invoke()
         updater.tryInstallIfIdle()
+        consumeMaintenance()
     }
 
 
@@ -259,10 +444,12 @@ class HotelActivity : Activity() {
 
     private fun openStaffSetup(voiceOnly: Boolean = false) = stopSession(done = {
         if (!destroyed && foreground) {
-            val setup = Intent(this, KeyEntryActivity::class.java).putExtra("voice_only", voiceOnly)
-            if (voiceOnly) {
+            val hotel = BuildConfig.DISTRIBUTION == "hotel"
+            val setup = Intent(this, KeyEntryActivity::class.java).putExtra("voice_only", voiceOnly && !hotel)
+            if (voiceOnly || hotel) {
+                if (hotel) awaitingStaffSetup = true
                 @Suppress("DEPRECATION")
-                startActivityForResult(setup, 41)
+                startActivityForResult(setup, if (hotel) 42 else 41)
             } else startActivity(setup)
         }
     })
@@ -282,6 +469,7 @@ class HotelActivity : Activity() {
     private fun onUpdate(status: String) {
         updateStatus = status
         val page = reception ?: return
+        if (BuildConfig.DISTRIBUTION == "hotel") return
         when {
             status.startsWith("checking:") -> page.push(JSONObject().put("type", "update_status").put("phase", "checking").put("text", text("Checking for updates…")))
             status.startsWith("current:") -> page.push(JSONObject().put("type", "update_status").put("phase", "current").put("text", text("Up to date · {version}", mapOf("version" to BuildConfig.VERSION_NAME))))
@@ -306,6 +494,8 @@ class HotelActivity : Activity() {
 
     private fun handle(message: JSONObject) {
         val action = message.optString("action")
+        if (BuildConfig.DISTRIBUTION == "hotel" &&
+            (action == "appearance" || action == "night" || action == "check_updates" || action == "apply_update")) return
         when (action) {
             "stop", "message", "confirm", "checkin", "operator", "taxi", "question" ->
                 if (!owner.accepts(message.optString("session_id"), message.optInt("generation", -1), duringClose = true)) return
@@ -322,10 +512,12 @@ class HotelActivity : Activity() {
                 deck.edit().putBoolean("reception_night", night).apply()
                 reception?.push(JSONObject().put("type", "night_mode").put("enabled", night))
             }
-            "languages" -> if (owner.current == null) {
+            "languages" -> if (owner.current?.request?.mode != "translation") {
                 val guest = message.optString("language"); val staff = message.optString("staff_language")
                 if (DeskLanguages.has(guest) && DeskLanguages.has(staff)) {
+                    val changed = guest != guestLocale()
                     deck.edit().putString("reception_guest_language", guest).putString("reception_staff_language", staff).apply()
+                    if (changed) { cancelHotelProbe(); refreshHotelStatus() }
                     pushState()
                 }
             }
@@ -348,17 +540,20 @@ class HotelActivity : Activity() {
                 begin(SessionOwner.Request(id, mode, guest, staff, message.optString("greet")))
             }
             "stop" -> stopSession()
-            "message" -> owner.current?.takeIf { current(it) && it.request.mode == "reception" }?.let {
-                gateway?.action(it, "message", message.optJSONObject("arguments") ?: JSONObject())
-            }
+            "message" -> dispatchHotelAction(message)
             "confirm" -> owner.current?.takeIf { current(it) }?.let { lease ->
                 val id = message.optString("draft_id"); val approved = message.optBoolean("approved")
-                if (id.startsWith("operation:")) gateway?.confirm(lease, id, approved)
-                else notice(text("This request is no longer available. Review a new request."))
+                val draftAction = gateway?.confirmationAction(lease, id)
+                if (draftAction == null) notice(text("This request is no longer available. Review a new request."))
+                else {
+                    val reason = if (!approved || gateway?.canReconcileConfirmation(lease, id, approved) == true) ""
+                        else hotelBlockReason(draftAction)
+                    if (reason.isEmpty()) gateway?.confirm(lease, id, approved)
+                    else push(lease, JSONObject().put("type", "operation_result").put("status", "unavailable")
+                        .put("text", text(reason, language = lease.request.guest)))
+                }
             }
-            "checkin", "operator", "taxi", "question" -> owner.current?.takeIf { current(it) && it.request.mode == "reception" }?.let {
-                gateway?.action(it, message.optString("action"), message.optJSONObject("arguments") ?: JSONObject())
-            }
+            "checkin", "operator", "taxi", "question" -> dispatchHotelAction(message)
             "activity" -> lastActivity = SystemClock.elapsedRealtime()
             "mute" -> owner.current?.takeIf { current(it) && it.request.mode == "translation" }
                 ?.let { fish.setMuted(message.optBoolean("muted")) }
@@ -368,6 +563,37 @@ class HotelActivity : Activity() {
             "apply_update" -> if (canInstallUpdate()) updater.installOffered()
                 else onUpdate("confirm:The downloaded update will wait until the conversation and audio cleanup finish.")
         }
+    }
+
+    private fun dispatchHotelAction(message: JSONObject) {
+        val lease = owner.current?.takeIf { current(it) && it.request.mode == "reception" } ?: return
+        val action = message.optString("action")
+        val arguments = message.optJSONObject("arguments") ?: JSONObject()
+        // An uncertain submitted call must reconcile its original identity, even when a later probe fails.
+        val reason = if (gateway?.canReconcile(lease, action, arguments) == true) "" else hotelBlockReason(action)
+        if (reason.isNotEmpty()) {
+            push(lease, JSONObject().put("type", "operation_result").put("status", "unavailable")
+                .put("text", text(reason, language = lease.request.guest)))
+            return
+        }
+        gateway?.action(lease, action, arguments)
+    }
+
+    private fun consumeMaintenance() {
+        val action = pendingMaintenance ?: return
+        if (!canInstallUpdate()) return
+        pendingMaintenance = null
+        when (action) {
+            "check_updates" -> updater.check()
+            "apply_update" -> updater.installOffered()
+            "appearance_light" -> setAppearance("light")
+            "appearance_dark" -> setAppearance("dark")
+            "night_on", "night_off" -> {
+                night = action == "night_on"
+                deck.edit().putBoolean("reception_night", night).apply()
+            }
+        }
+        pushState()
     }
 
     private fun setAppearance(value: String) {
@@ -407,7 +633,12 @@ class HotelActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foreground = true
+        // Owned recovery must remain reachable before enrollment or new-start readiness.
+        fish.retryCleanup()
         reception?.setShown(true)
+        refreshHotelStatus()
+        ui.removeCallbacks(hotelPoll)
+        ui.postDelayed(hotelPoll, 25_000L)
         pushState()
         if (returnToTranslation) {
             returnToTranslation = false
@@ -422,6 +653,7 @@ class HotelActivity : Activity() {
             if (current(lease)) connect(lease)
         }
         updater.onForeground()
+        consumeMaintenance()
         updater.check()
         ui.removeCallbacks(updatePoll)
         ui.postDelayed(updatePoll, 10 * 60_000L)
@@ -432,6 +664,16 @@ class HotelActivity : Activity() {
         // Restore only non-sensitive language selection, never a prior conversation.
         // Both Save and Cancel return here; neither starts microphone capture.
         if (requestCode == 41) returnToTranslation = true
+        if (requestCode == 42) {
+            val protectedReturn = awaitingStaffSetup
+            awaitingStaffSetup = false
+            if (protectedReturn && resultCode == RESULT_OK && BuildConfig.DISTRIBUTION == "hotel") {
+                data?.getStringExtra("maintenance_action")?.takeIf { it in maintenanceActions }?.let {
+                    pendingMaintenance = it
+                    consumeMaintenance()
+                }
+            }
+        }
     }
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, permissions, results)
@@ -450,6 +692,8 @@ class HotelActivity : Activity() {
         foreground = false
         if (fishProvider.isInitialized()) fish.cancelPreparation()
         ui.removeCallbacks(updatePoll)
+        ui.removeCallbacks(hotelPoll)
+        cancelHotelProbe()
         // The system permission dialog pauses us without hiding this window.
         // No microphone exists yet; retain its proposed session and visible UI.
         if (pendingPermission == null) {
@@ -472,6 +716,10 @@ class HotelActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33) backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
         ui.removeCallbacks(watchdog)
         ui.removeCallbacks(updatePoll)
+        ui.removeCallbacks(hotelPoll)
+        cancelHotelProbe()
+        readinessClient.connectionPool.evictAll()
+        readinessClient.dispatcher.executorService.shutdown()
         stopSession(done = {
             if (fishProvider.isInitialized()) fish.release()
             gateway?.dispose()

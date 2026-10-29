@@ -62,9 +62,10 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
     /** Prepare immutable provider configuration while choosing languages; never mint a
      * session, connect media or open the microphone before Start. */
     fun prepare(guest: String, staff: String) {
-        if (current != null || !DeskLanguages.has(guest) || !DeskLanguages.has(staff) || guest == staff) return
+        if (BuildConfig.DISTRIBUTION == "hotel" || current != null ||
+            !DeskLanguages.has(guest) || !DeskLanguages.has(staff) || guest == staff) return
         val connection = HotelConnection(ctx).load()
-        if (TranslationRouting.useManagedConnection(connection != null, TranslationSettings(ctx).directFishSelected)) return
+        if (TranslationRouting.useManagedConnection(connection != null, TranslationSettings(ctx).directFishSelected, BuildConfig.DISTRIBUTION)) return
         if (preparation?.isActive == true && preparationRun?.owner?.staff == staff) return
         cancelPreparation()
         val run = Run(VoiceSession("prepare", 0, guest, staff, "translation") {}, "")
@@ -141,7 +142,7 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
     fun admissionIssue(): String? = (admission.reason() ?: if (current != null) "The previous conversation cleanup is still finishing." else null)?.let { text(it) }
     fun localAudioState(): String = admission.localAudioState()
 
-    /** A deliberate subsequent start attempt can retry the same uncertain end, never mint a new session. */
+    /** Foreground recovery and later start attempts retry an owned uncertain end, never mint a new session. */
     fun retryCleanup() {
         val run = current ?: run {
             admission.retrySettledRelease()
@@ -212,9 +213,14 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
             terminate(run, "error", text(run, "Microphone permission is needed for translation.")); return
         }
         val connection = HotelConnection(ctx).load().takeIf {
-            TranslationRouting.useManagedConnection(it != null, TranslationSettings(ctx).directFishSelected)
+            TranslationRouting.useManagedConnection(it != null, TranslationSettings(ctx).directFishSelected, BuildConfig.DISTRIBUTION)
         }
         val managed = connection != null
+        // Never use personal credentials for a new hotel session. The key resolver remains
+        // available to retryRecoveredEnd for an older direct reservation's exact credential.
+        if (BuildConfig.DISTRIBUTION == "hotel" && !managed) {
+            terminate(run, "error", text(run, "Translation needs hotel setup. Please ask staff.")); return
+        }
         val apiKey = if (managed) "" else key().trim()
         if (!managed && apiKey.isBlank()) {
             terminate(run, "error", text(run, "Ask staff to configure or recover the translation credential in Settings.")); return
@@ -445,7 +451,11 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
 
     private fun startupFailed(run: Run, stage: FishStartupFailure.Stage, error: Throwable, managed: Boolean) {
         if (!run.owner.active()) return
-        val notice = FishStartupFailure.describe(stage, error, managed) { message, values -> text(run, message, values) }
+        val notice = FishStartupFailure.describe(stage, error, managed) { message, values ->
+            if (BuildConfig.DISTRIBUTION == "hotel" && message != "{message} Reference: {reference}")
+                text(run, "Translation is unavailable. Please ask staff.")
+            else text(run, message, values)
+        }
         // Never pass the exception, request URL, response body or credential to logcat.
         Log.w("TranslationStartup", notice.reference)
         terminate(run, "error", notice.text)

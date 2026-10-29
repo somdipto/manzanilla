@@ -30,6 +30,16 @@ import java.util.concurrent.TimeUnit
  * This fixture never joins LiveKit, requests microphone permission or uses a provider credential.
  */
 internal object FishStartupFixture {
+    fun verifyHotelPreparation(instrumentation: Instrumentation) {
+        check(BuildConfig.DISTRIBUTION == "hotel" && BuildConfig.FISH_API_KEY.isBlank())
+        Harness(instrumentation.targetContext, preparing = true).use { h ->
+            h.prepare("fr", "de")
+            check(h.wire.requests.isEmpty()) { "Hotel preparation contacted a personal provider" }
+            check(h.events.isEmpty())
+            h.noAudio()
+        }
+    }
+
     fun verify(instrumentation: Instrumentation) {
         check(BuildConfig.FISH_API_KEY.isBlank()) { "Use a key-free verification APK" }
         verifyPagePreparation(instrumentation)
@@ -345,10 +355,12 @@ internal object FishStartupFixture {
         }
         fun prepare(guest: String, staff: String) {
             fish.prepare(guest, staff)
-            val job = FishVoice::class.java.getDeclaredField("preparation").apply { isAccessible = true }.get(fish) as Job
-            fish.prepare(guest, staff) // The same in-flight configuration must be shared.
-            check(FishVoice::class.java.getDeclaredField("preparation").apply { isAccessible = true }.get(fish) === job)
-            runBlocking { withTimeout(5000) { job.join() } }
+            val job = FishVoice::class.java.getDeclaredField("preparation").apply { isAccessible = true }.get(fish) as? Job
+            if (job != null) {
+                fish.prepare(guest, staff) // The same in-flight configuration must be shared.
+                check(FishVoice::class.java.getDeclaredField("preparation").apply { isAccessible = true }.get(fish) === job)
+                runBlocking { withTimeout(5000) { job.join() } }
+            }
         }
         fun cancelPreparation() {
             fish.prepare("fr", "de")

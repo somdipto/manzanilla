@@ -29,6 +29,8 @@ class VoiceLifecycleFixture : Instrumentation() {
                 "reception-bridge" -> ReceptionWebViewFixture.verify(this)
                 "reception-truth" -> ReceptionWebViewFixture.verify(this, truth = true)
                 "voice-setup" -> VoiceSetupFixture.verify(this)
+                "hotel-setup-gates" -> VoiceSetupFixture.verifyHotel(this)
+                "hotel-readiness" -> HotelReadinessFixture.verify(this)
                 "microphone-permission" -> ReceptionWebViewFixture.verifyMicrophonePermission(this)
                 "microphone-permission-denied" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "deny")
                 "microphone-permission-background" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "background")
