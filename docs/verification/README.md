@@ -34,6 +34,41 @@ not a substitute for unavailable provider or physical acceptance.
   qualification and verified remaining aggregate $4 allowance. No paid call,
   acoustic-improvement claim, release or deployment was made.
 
+## 17.0.42 staff fulfilment candidate (S5)
+
+Version 17.0.42/code72, stacked on S4. Staff lifecycle metadata is separate from
+immutable execution receipts; guest status contains no payload or private note.
+
+- **Passed:** 638 Python cases, 17 Node cases and catalogue generation/check.
+  Coverage includes transactional configuration CAS, claim races, ownership,
+  idempotent transitions, legacy resolution, revocation and exact session privacy.
+- **Passed:** ten Chromium151 scenarios including actual temporary backend/staff
+  interactions: blank creation, labelled dictionary-preserving settings, dirty
+  configuration conflict, acknowledgement/resolution, retained private outcomes,
+  scoped/hidden single-flight refresh, RTL and immutable guest receipts.
+- The delayed-overview regression initially lost a successful acknowledgement
+  through a detached row reference. Applying the result to the current item by
+  ID preserves the newer version; the actual browser scenario now passes.
+  Ownership denial refreshes the row without granting the denied actor access.
+- A held configuration save reproduced a disabled new-hotel form after a scope
+  switch. Scope reset now releases its own busy state; a late old response cannot
+  clear a newer save. The real-backend browser regression passes both boundaries.
+- Successful acknowledgement/resolution consumes only its submitted draft.
+  Resolved private outcomes no longer appear twice; conflicting edits remain
+  available for review. The browser suite passes with clean fixture teardown.
+- **Passed:** personal-test JVM, debug/instrumentation assembly and lint with
+  JDK17/SDK34 and empty provider fields.
+- **Passed:** actual API34 `reception-request-tracking` through the shipped
+  WebView, bridge and Activity with synthetic HTTP interception, named PASS/-1.
+- **Passed:** real native `HotelGateway` plus actual staff browser against a
+  temporary-CA isolated HTTPS backend: one original-preserving request, open →
+  acknowledged → resolved, private outcome excluded from guest frames, and one
+  operation session ended without polling recreating it. The private smoke
+  reports named PASS/-1; its throwaway source was removed after proof.
+- Private screenshot: `/tmp/manzanilla-s5-https-fixture-20261029/staff-resolved.png`.
+  These are native-client/backend and separate native-UI proofs, not combined
+  tablet/backend, designated hotel-staff, provider or external booking acceptance.
+
 ## 17.0.41 readiness/distribution candidate (S4)
 
 Version 17.0.41/code71, stacked on S3. The canonical catalogue has 410 messages
@@ -50,8 +85,23 @@ Session/generation identity remains part of each immutable report key.
 - **Passed:** personal-test Android JVM, debug/instrumentation assembly and lint
   with JDK17/SDK34. Despite injected dummy provider values, APK dex inspection
   proved `DISTRIBUTION=personal-test` and both Fish provider fields empty.
-  Actual readiness/protected-setup cases remain separate runtime gates.
   APK SHA256:`741cc7012909cf9bcd706f0da0279ddbec908476a29fd57d5b4e276d75f215df`.
+- **Passed:** actual API34 `hotel-setup-gates`, named PASS and instrumentation
+  code -1: protected settings/translation routes, absent-lock handling, PIN
+  reauthentication, personal-key retention, no direct hotel fallback and the
+  maintenance allowlist. The restored direct reservation initially stranded
+  cleanup before enrollment; foreground retry of the original hash-fenced end
+  fixes it without permitting a new direct session.
+- **Reproduced/fixed:** an uncertain no-form help result lost its exact retry
+  when readiness or a capability changed. The shipped browser regression now
+  passes with retained action/arguments, single-flight replay and no false receipt.
+- **Passed:** complete actual API34 hotel suite: `reception-bridge`,
+  `reception-truth`, `hotel-readiness` and `hotel-setup-gates`, each named PASS/-1.
+  Readiness covers delivered WebView/native states, safe capabilities, stale
+  responses and pause/destroy cancellation without provider calls.
+- The readiness observer initially tried to replace a frozen API member.
+  It now preserves the frozen public envelope and observes delivery. Teardown
+  waits for actual Activity destruction, not merely an idle main queue.
 - Probes do not create sessions or open a microphone. Service flags describe
   configuration, not provider access or a live staff watcher. No paid provider
   call, live data mutation, release or deployment occurred.
@@ -77,13 +127,20 @@ for all 52 interface locales; human translation review remains unavailable.
 - **Passed:** Android JVM, debug/instrumentation assembly and lint with JDK17,
   SDK34 and empty provider fields. The pinned code70 debug APK SHA256 is
   `350d18b0c8ed568c1b655606027fc6399fec894fd302ac09572a42f1ec7eb216`.
-- **Passed:** actual isolated HTTPS admin visual smoke. Three explicit English/
-  Spanish approvals preserved exact originals;503 drafting retained manual text;
-  Spanish and Arabic RTL review panels retained the Spanish rendering. The
-  authenticated staff overview contained zero items. Private captures are in
-  `/tmp/manzanilla-s3-https-fixture-20261029/`. The first visual-script attempt
-  queried a nonexistent `/items` route; using the real `/overview` contract
-  passed. No failed attempt is counted as a pass.
+- **Passed:** actual isolated HTTPS admin interaction manually approved English
+  breakfast, exact Spanish breakfast and Spanish `desayuno` renderings. Missing
+  draft-provider configuration preserved manual edits; Spanish/Arabic RTL review
+  retained the selected rendering. Private screenshots remain in
+  `/tmp/manzanilla-s3-https-fixture-20261029/`.
+- **Passed:** the shipped native `HotelGateway` on isolated API34 used that real
+  HTTPS backend with a temporary-CA/custom-client fixture, leaving production TLS
+  unchanged. Punctuated English, two exact approved Spanish answers, unknown
+  policy and unapproved Arabic behaved as required. Three operation leases
+  settled, with zero staff items or dial handoffs. `hotel-answers-smoke` reported
+  named PASS and instrumentation code -1; its throwaway source was removed.
+- This is native-client/backend communication, not a combined tablet UI test.
+  That optional gate still needs a device-trusted isolated test origin; human
+  bilingual review, actual Gemini access and physical/acoustic gates remain open.
 
 Information reads are scoped to their call ID, so a genuinely new question can
 see a later approval. Replaying the same ID never charges another model call.
@@ -115,6 +172,31 @@ human language-review approval; translation presence is not acoustic qualificati
   timezone as labelled UTC, switched Spanish/Arabic RTL and retained token,
   hotel and dirty form. Private screenshots: `/tmp/manzanilla-s2-admin-fixture/`.
   This is not combined physical-tablet/backend or designated hotel-staff acceptance.
+- **Passed:** actual microphone grant on disposable API34/WebView113 with host
+  OpenGL. The pending lease survived consent, the empty injected Fish resolver
+  ran exactly once, and the session released without a provider call.
+- **Passed:** `reception-bridge`, `reception-truth`, microphone grant, denial and
+  background cancellation, `translation-startup` and `update-delivery` on both
+  API34/WebView113 and CI Android10 run40853905862; each named PASS has code -1.
+  System-only HOME resolution repaired the earlier background precondition.
+- **Passed:** final CI run40858640035 at commit74cf360 completed all nine Android10
+  reception, permission, startup and setup scenarios, including personal save,
+  cancel and encrypted-key reuse both without a lock and with synthetic PIN2468.
+  The separate Android12 update-delivery case also passed. Every named case
+  includes instrumentation code -1; no provider session was opened.
+- Earlier personal-setup fixtures incorrectly selected Spanish controls by
+  English prose. Password-role/locale-aware selectors and consumer-visible
+  retention/authorization checks replaced those incidental assertions.
+- On this Intel Mac, emulator37.2 SwiftShader produced a System UI ANR over the
+  real permission dialog and an invalid color-buffer error. `-gpu host -feature
+  -Vulkan` yielded the grant pass. A later full-suite attempt while Gradle was
+  running failed to attach its first process; that attempt is not a pass. Run
+  heavy builds and native UI checks separately on this host.
+- Follow-up catalogue data preserves the proper name Orange across all52
+  locales. Permission fixtures seed only synthetic local readiness, retain an
+  empty provider resolver, dismiss only Android's known fullscreen tutorial and
+  assert a recoverable error rather than incidental English wording. Temporary
+  diagnostic logging, screenshot capture and raw logcat collection were removed.
 
 The macOS fixture used a dedicated loopback-only Chromium/Playwright context and a
 temporary TLS identity. Production TLS, Android CSP and network restrictions were

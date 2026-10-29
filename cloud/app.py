@@ -2,10 +2,10 @@ import asyncio, hashlib, json, os, secrets, time, uuid
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
-from .db import Store
+from .db import Store, HotelVersionConflict
 from .models import Hotel, BookingLookup
 from .gateway import Gateway, phone_number
 from .realtime import relay
@@ -42,9 +42,11 @@ def admin(authorization: str = Header(default='')):
 
 def scoped(hid, authorization):
     secret = os.getenv('ORANGE_ADMIN_TOKEN','')
-    if len(secret)>=32 and secrets.compare_digest(bearer(authorization),secret): return
+    if len(secret)>=32 and secrets.compare_digest(bearer(authorization),secret):
+        return {'role':'admin','id':'admin','hotel':hid}
     staff = store.auth(bearer(authorization),'staff')
     if not staff or staff['hotel']!=hid: raise HTTPException(403,'Forbidden')
+    return staff
 
 @app.get('/health')
 def health(): return {'status':'ok','version':'0.1.0','protocol':1}
@@ -65,7 +67,12 @@ def save_hotel(hid: str, value: Hotel):
     if value.id != hid: raise HTTPException(400,'Hotel ID mismatch')
     try: ZoneInfo(value.timezone)
     except Exception: raise HTTPException(400,'Invalid timezone')
-    return store.save_hotel(value.model_dump())
+    submitted = value.model_dump()
+    if 'config_version' not in value.model_fields_set:
+        submitted.pop('config_version')
+    try: return store.save_hotel(submitted)
+    except HotelVersionConflict as exc:
+        return JSONResponse(status_code=409,content={'detail':'Hotel configuration conflict','config_version':exc.version})
 
 @app.post('/api/hotels/{hid}/content/draft', dependencies=[Depends(admin)])
 async def draft_hotel_content(hid: str, value: ContentSelector, authorization: str = Header(default='')):
@@ -108,7 +115,7 @@ async def revoke(ident: str):
 
 @app.get('/api/hotels/{hid}/overview')
 def overview(hid: str, authorization: str = Header(default='')):
-    scoped(hid,authorization)
+    principal = scoped(hid,authorization)
     try: hotel = store.hotel(hid)
     except KeyError: raise HTTPException(404,'Hotel not found')
     try: content_admin = admin(authorization)
@@ -118,17 +125,78 @@ def overview(hid: str, authorization: str = Header(default='')):
     for row in devices: row['online'] = bool(row['seen'] and now-row['seen']<75)
     items = store.rows('SELECT * FROM items WHERE hotel=? ORDER BY created DESC LIMIT 500',(hid,))
     for item in items: item['payload']=json.loads(item['payload'])
-    return {'hotel':hotel,'devices':devices,'items':items,
+    return {'hotel':hotel,'devices':devices,'items':items,'principal':principal,
             'sessions':store.rows('SELECT * FROM sessions WHERE hotel=? ORDER BY started DESC LIMIT 100',(hid,)),
             'content_review':content_review(store,hid),'content_admin':content_admin,
             'integrations':{'pms':hotel['connector'], 'crm':'not configured', 'edge':hid in edge_connections}}
 
+class ItemTransition(Strict):
+    status: Literal['acknowledged','resolved']
+    expected_version: int = Field(ge=0,strict=True)
+    responsible_name: str = Field(default='',max_length=80,strict=True)
+    resolution_note: str = Field(default='',max_length=1000,strict=True)
+
+
+def public_item(row):
+    return {'item_id':row['id'],'status':row['status'],'version':row['state_version'],
+            'created':row['created'],'acknowledged_at':row['acknowledged_at'],'resolved_at':row['resolved_at']}
+
+
 @app.patch('/api/hotels/{hid}/items/{ident}')
-def resolve(hid: str, ident: str, authorization: str = Header(default='')):
-    scoped(hid,authorization)
-    cur=store.run("UPDATE items SET status='resolved' WHERE id=? AND hotel=?",(ident,hid))
-    if not cur.rowcount: raise HTTPException(404,'Item not found')
-    return {'status':'resolved'}
+async def transition_item(hid: str, ident: str, request: Request, authorization: str = Header(default='')):
+    body = await request.body()
+    value = None
+    if body:
+        try: value = ItemTransition.model_validate_json(body,strict=True)
+        except ValueError: raise HTTPException(422,'Invalid item transition')
+        if value.status == 'acknowledged' and not value.responsible_name.strip():
+            raise HTTPException(422,'A responsible name is required')
+        if value.status == 'resolved' and not value.resolution_note.strip():
+            raise HTTPException(422,'A private resolution note is required')
+    with store.lock, store.db:
+        db = store.db
+        db.execute('BEGIN IMMEDIATE')
+        # Authenticate inside the write transaction: a concurrent revocation
+        # must not authorize a transition based on a stale principal.
+        principal = scoped(hid,authorization)
+        row = db.execute('SELECT * FROM items WHERE id=? AND hotel=?',(ident,hid)).fetchone()
+        if not row: raise HTTPException(404,'Item not found')
+        if value is None and row['status'] == 'resolved':
+            return public_item(row)
+        status = value.status if value else 'resolved'
+        version = value.expected_version if value else row['state_version']
+        name = value.responsible_name if value else ''
+        note = value.resolution_note if value else 'Resolved through legacy staff client'
+        canonical = json.dumps([principal['role'],principal['id'],version,status,name,note],
+                               ensure_ascii=False,separators=(',',':'))
+        fingerprint = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+        if fingerprint == row['last_transition_hash']:
+            return public_item(row)
+        if (row['acknowledged_by'] and principal['role'] != 'admin'
+                and row['acknowledged_by'] != principal['id']):
+            raise HTTPException(403,'Item belongs to another staff credential')
+        allowed = (row['status'] == 'open' and status == 'acknowledged'
+                   or row['status'] == 'acknowledged' and status == 'resolved'
+                   or value is None and row['status'] == 'open')
+        if version != row['state_version'] or not allowed:
+            return JSONResponse(status_code=409,content={'detail':'Item state conflict','current':public_item(row)})
+        now = time.time()
+        if status == 'acknowledged':
+            cur = db.execute("""UPDATE items SET status='acknowledged',acknowledged_at=?,acknowledged_by=?,
+                responsible_name=?,last_transition_hash=?,state_version=state_version+1
+                WHERE id=? AND hotel=? AND status=? AND state_version=?""",
+                (now,principal['id'],name,fingerprint,ident,hid,row['status'],version))
+        else:
+            cur = db.execute("""UPDATE items SET status='resolved',resolved_at=?,resolution_note=?,
+                last_transition_hash=?,state_version=state_version+1
+                WHERE id=? AND hotel=? AND status=? AND state_version=?""",
+                (now,note,fingerprint,ident,hid,row['status'],version))
+        if not cur.rowcount:
+            current = db.execute('SELECT * FROM items WHERE id=? AND hotel=?',(ident,hid)).fetchone()
+            return JSONResponse(status_code=409,content={'detail':'Item state conflict','current':public_item(current)})
+        db.execute('INSERT INTO audit VALUES(?,?,?,?,?,?)',
+                   (str(uuid.uuid4()),hid,row['session'],now,'item_transition',status))
+        return public_item(db.execute('SELECT * FROM items WHERE id=? AND hotel=?',(ident,hid)).fetchone())
 
 @app.get('/api/hotels/{hid}/morning')
 def morning(hid: str, start: float, end: float, authorization: str = Header(default='')):
@@ -212,6 +280,17 @@ async def operations_confirm(sid: str, value: Confirmation, authorization: str =
 @app.post('/api/device/operations/{sid}/end')
 def operations_end(sid: str, authorization: str = Header(default='')):
     return Operations(store,edge_execute).end(device_auth(authorization),sid)
+
+@app.get('/api/device/operations/{sid}/items/{ident}')
+def operations_item_status(sid: str, ident: str, authorization: str = Header(default='')):
+    with store.lock, store.db:
+        store.db.execute('BEGIN')
+        dev = device_auth(authorization)
+        Operations(store,edge_execute).valid(dev,sid)
+        row = store.db.execute('SELECT * FROM items WHERE id=? AND hotel=? AND session=?',
+                               (ident,dev['hotel'],sid)).fetchone()
+        if not row: raise HTTPException(404,'Item not found')
+        return public_item(row)
 
 @app.post('/api/device/fish-session')
 async def fish_session(value: FishSession, authorization: str = Header(default='')):

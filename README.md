@@ -179,6 +179,27 @@ message and escalation receipts retain their original content and write identity
 Arrival guidance never completes check-in. Deploy this backend before clients
 that depend on approved-content capabilities.
 
+## Staff-owned requests — repair candidate
+
+A saved receipt, staff acknowledgement and staff-marked resolution are separate
+states. The inbox records one responsible credential/label on acknowledgement
+and a private outcome on resolution. A shared credential is not proof of an
+individual's identity. Another staff credential cannot resolve that owner's
+request; an admin can intervene explicitly.
+
+The visible dashboard refreshes every five seconds without replacing an
+in-progress note. Conflicts retain edits and require review of the refreshed
+request. Guest receipt tracking reads only public state and timestamps, stops
+when the receipt is left or the conversation ends, and never extends a session.
+Neither acknowledgement nor resolution rewrites the original execution receipt,
+confirms a taxi booking, completes check-in or proves an answered call.
+
+Use the labelled admin settings, not a JSON editor. Saving an existing hotel
+requires its current `config_version`; a conflict preserves the unsaved form.
+Staff-token users cannot save configuration or approve content. Human help with
+a staffed inbox but no configured phone is queued, not reported as a failed call.
+A staffed dashboard and designated-staff acceptance remain deployment prerequisites.
+
 ## Screens
 
 17.0.28 candidate on an actual Android10 emulator with stock WebView74.

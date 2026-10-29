@@ -145,6 +145,9 @@ def main() -> int:
                   "bundled_key=false managed_required=true"
         instrument("bundled", distribution, commit,
                    f"PASS case=bundled {bundled} distribution={distribution}")
+        stage = "reception-negative-control"
+        instrument("reception-missing-script", distribution, commit,
+                   "PASS case=reception-missing-script ui_rejected=true")
         stage = "reception"
         run("adb", "shell", "settings", "put", "secure", "immersive_mode_confirmations", "confirmed")
         instrument("reception", distribution, commit,

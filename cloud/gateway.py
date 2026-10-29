@@ -139,6 +139,9 @@ class Gateway:
             if hotel['operator_primary']:
                 return {'status':'dialer_required','escalation_id':ident,'connected':False,
                         'number':hotel['operator_primary'],'fallback':hotel['operator_secondary'] or hotel['emergency_contact']}
+            if self.store.has_staff(self.hid):
+                return {'status':'queued','escalation_id':ident,'connected':False,
+                        'reason':'Request saved in the staff inbox. No taxi booking or call is confirmed.'}
             return {'status':'unavailable','escalation_id':ident,'connected':False,
                     'primary':hotel['operator_primary'],'fallback':hotel['operator_secondary'] or hotel['emergency_contact']}
         kind = 'note' if name == 'leave_reception_note' else 'request'

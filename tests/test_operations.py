@@ -597,3 +597,264 @@ def test_arrival_is_revalidated_in_its_own_settlement_transaction(operations,mon
     assert 'Approved arrival instructions.' not in result['text']
     assert json.loads(store.rows("SELECT result FROM operation_actions WHERE call_id='arrival-race'")[0]['result'])==result
     assert not store.rows('SELECT * FROM items')
+
+
+def submitted_message(operations, call='staff-request'):
+    store,client,dev,_,_,headers,_=operations
+    draft=action(client,headers(dev),'message',MESSAGE,call).json()
+    result=confirm(client,headers(dev),draft['confirmation_id']).json()
+    assert result['status']=='saved'
+    return result['result']['item_id'],result,draft['confirmation_id']
+
+
+def test_staff_fulfilment_private_status_replay_and_restart(operations,monkeypatch):
+    import hashlib
+    store,client,dev,_,_,headers,_=operations
+    staff=store.issue('a','staff')
+    ident,receipt,confirmation=submitted_message(operations)
+    url='/api/hotels/a/items/'+ident
+    status_url='/api/device/operations/operation-fixture/items/'+ident
+    session_before=store.rows("SELECT * FROM sessions WHERE id='operation-fixture'")[0]
+    expiry_before=store.rows("SELECT * FROM operation_sessions WHERE id='operation-fixture'")[0]
+    initial=client.get(status_url,headers=headers(dev)).json()
+    assert initial=={'item_id':ident,'status':'open','version':0,
+                    'created':store.rows('SELECT created FROM items WHERE id=?',(ident,))[0]['created'],
+                    'acknowledged_at':None,'resolved_at':None}
+    acknowledgement={'status':'acknowledged','expected_version':0,'responsible_name':'  María 接待  '}
+    first=client.patch(url,headers=headers(staff),json=acknowledgement)
+    assert first.status_code==200
+    assert first.json()['status']=='acknowledged' and first.json()['version']==1
+    saved=store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]
+    assert saved['acknowledged_by']==staff['id'] and saved['responsible_name']=='  María 接待  '
+    assert saved['acknowledged_at'] is not None and saved['resolved_at'] is None
+    canonical=json.dumps(['staff',staff['id'],0,'acknowledged','  María 接待  ',''],
+                         ensure_ascii=False,separators=(',',':'))
+    assert saved['last_transition_hash']==hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+    audit_before=store.rows("SELECT * FROM audit WHERE tool='item_transition'")
+    assert len(audit_before)==1
+    # Explicit empty optional strings and omitted optional strings are one action.
+    retried=client.patch(url,headers=headers(staff),json={**acknowledgement,'resolution_note':''})
+    assert retried.json()==first.json()
+    assert store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]==saved
+    assert store.rows("SELECT * FROM audit WHERE tool='item_transition'")==audit_before
+    resolution={'status':'resolved','expected_version':1,'resolution_note':'  Private: guest collected it.\nNo booking claimed.  '}
+    resolved=client.patch(url,headers=headers(staff),json=resolution)
+    assert resolved.status_code==200
+    public=client.get(status_url,headers=headers(dev)).json()
+    assert public==resolved.json() and public['status']=='resolved' and public['version']==2
+    assert set(public)=={'item_id','status','version','created','acknowledged_at','resolved_at'}
+    assert public['acknowledged_at']==first.json()['acknowledged_at'] and public['resolved_at'] is not None
+    final=store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]
+    assert final['resolution_note']==resolution['resolution_note']
+    assert final['responsible_name']==acknowledgement['responsible_name']
+    assert client.patch(url,headers=headers(staff),json=resolution).json()==public
+    assert store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]==final
+    assert len(store.rows("SELECT * FROM audit WHERE tool='item_transition'"))==2
+    assert json.loads(final['payload'])['original_request']==MESSAGE['original_request']
+    assert client.get('/api/hotels/a/overview',headers=headers(staff)).json()['principal']=={
+        'role':'staff','id':staff['id'],'hotel':'a'}
+    reopened=Store(store.db.execute('PRAGMA database_list').fetchone()[2])
+    monkeypatch.setattr(server,'store',reopened)
+    try:
+        assert reopened.rows('SELECT * FROM items WHERE id=?',(ident,))[0]==final
+        assert client.get(status_url,headers=headers(dev)).json()==public
+        assert confirm(client,headers(dev),confirmation).json()==receipt
+        assert receipt['result']['staff_acknowledged'] is False and receipt['result']['pms_delivered'] is False
+        assert reopened.rows("SELECT * FROM sessions WHERE id='operation-fixture'")[0]==session_before
+        assert reopened.rows("SELECT * FROM operation_sessions WHERE id='operation-fixture'")[0]==expiry_before
+    finally:
+        reopened.db.close()
+
+
+def test_staff_claim_race_owner_conflict_and_admin_resolution(operations):
+    from threading import Barrier
+    store,client,_,_,_,headers,_=operations
+    ident,_,_=submitted_message(operations)
+    staff=[store.issue('a','staff'),store.issue('a','staff')]
+    barrier=Barrier(2)
+    url='/api/hotels/a/items/'+ident
+    def claim(credential):
+        barrier.wait(timeout=5)
+        return client.patch(url,headers=headers(credential),json={
+            'status':'acknowledged','expected_version':0,'responsible_name':credential['id']})
+    with ThreadPoolExecutor(2) as pool:
+        results=list(pool.map(claim,staff))
+    assert sorted(response.status_code for response in results)==[200,403]
+    winner=next(credential for credential,response in zip(staff,results) if response.status_code==200)
+    loser=next(credential for credential in staff if credential!=winner)
+    row=store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]
+    assert row['acknowledged_by']==winner['id'] and row['state_version']==1
+    assert len(store.rows("SELECT * FROM audit WHERE tool='item_transition'"))==1
+    resolution={'status':'resolved','expected_version':1,'resolution_note':'Private resolution'}
+    assert client.patch(url,headers=headers(loser),json=resolution).status_code==403
+    conflict=client.patch(url,headers=headers(winner),json={**resolution,'expected_version':0})
+    assert conflict.status_code==409 and conflict.json()['current']['version']==1
+    assert set(conflict.json()['current'])=={'item_id','status','version','created','acknowledged_at','resolved_at'}
+    assert client.patch(url,headers=headers(winner),json={
+        'status':'acknowledged','expected_version':1,'responsible_name':'Reassignment'}).status_code==409
+    admin={'Authorization':'Bearer '+'x'*40}
+    assert client.patch(url,headers=admin,json=resolution).json()['status']=='resolved'
+    final=store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]
+    assert final['acknowledged_by']==winner['id'] and final['responsible_name']==winner['id']
+    assert final['state_version']==2 and final['resolution_note']=='Private resolution'
+    changed=client.patch(url,headers=admin,json={**resolution,'resolution_note':'Changed outcome'})
+    assert changed.status_code==409 and changed.json()['current']['status']=='resolved'
+    assert store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]==final
+
+
+@pytest.mark.parametrize('body',[
+    'null','{}','[]','{',' ',
+    '{"status":"open","expected_version":0}',
+    '{"status":"acknowledged","expected_version":"0","responsible_name":"Staff"}',
+    '{"status":"acknowledged","expected_version":true,"responsible_name":"Staff"}',
+    '{"status":"acknowledged","expected_version":-1,"responsible_name":"Staff"}',
+    '{"status":"acknowledged","expected_version":0}',
+    '{"status":"acknowledged","expected_version":0,"responsible_name":" \\n "}',
+    '{"status":"acknowledged","expected_version":0,"responsible_name":null}',
+    '{"status":"acknowledged","expected_version":0,"responsible_name":"Staff","resolution_note":null}',
+    '{"status":"acknowledged","expected_version":0,"responsible_name":"Staff","extra":1}',
+    '{"status":"resolved","expected_version":0}',
+    '{"status":"resolved","expected_version":0,"resolution_note":"  "}',
+    json.dumps({'status':'acknowledged','expected_version':0,'responsible_name':'x'*81}),
+    json.dumps({'status':'resolved','expected_version':0,'resolution_note':'x'*1001}),
+])
+def test_transition_invalid_bodies_are_not_legacy(operations,body):
+    store,client,_,_,_,headers,_=operations
+    staff=store.issue('a','staff')
+    ident,_,_=submitted_message(operations)
+    before=store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]
+    response=client.patch('/api/hotels/a/items/'+ident,headers=headers(staff),content=body)
+    assert response.status_code==422
+    assert store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]==before
+    assert not store.rows("SELECT * FROM audit WHERE tool='item_transition'")
+
+
+def test_legacy_resolution_and_explicit_forward_only_transitions(operations):
+    store,client,_,_,_,headers,_=operations
+    owner=store.issue('a','staff'); other=store.issue('a','staff')
+    ident,_,_=submitted_message(operations)
+    url='/api/hotels/a/items/'+ident
+    assert client.patch(url,headers=headers(owner),json={
+        'status':'resolved','expected_version':0,'resolution_note':'Cannot skip acknowledgement'}).status_code==409
+    direct=client.patch(url,headers=headers(owner))
+    assert direct.status_code==200 and direct.json()['status']=='resolved' and direct.json()['version']==1
+    row=store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]
+    assert row['acknowledged_by'] is None and row['acknowledged_at'] is None and row['responsible_name'] is None
+    assert row['resolution_note']=='Resolved through legacy staff client' and row['resolved_at'] is not None
+    assert client.patch(url,headers=headers(other)).json()==direct.json()
+    assert store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]==row
+    assert len(store.rows("SELECT * FROM audit WHERE tool='item_transition'"))==1
+    second=store.item('a','historical-unrelated-session','note',{'original_request':'Historical request'})
+    url='/api/hotels/a/items/'+second
+    assert client.patch(url,headers=headers(owner),json={
+        'status':'acknowledged','expected_version':0,'responsible_name':'Night shift'}).status_code==200
+    assert client.patch(url,headers=headers(other)).status_code==403
+    assert client.patch(url,headers=headers(owner)).json()['version']==2
+    row=store.rows('SELECT * FROM items WHERE id=?',(second,))[0]
+    assert row['responsible_name']=='Night shift' and row['acknowledged_by']==owner['id']
+    assert client.patch('/api/hotels/a/items/missing',headers=headers(owner)).status_code==404
+    foreign=store.issue('b','staff')
+    assert client.patch(url,headers=headers(foreign)).status_code==403
+    assert client.patch('/api/hotels/b/items/'+second,headers=headers(foreign)).status_code==404
+    assert client.patch(url).status_code==403
+
+
+@pytest.mark.parametrize('invalid',['other_device','other_hotel','old_item','missing','closed','expired','revoked','staff','no_auth'])
+def test_request_status_exact_session_device_and_credential_privacy(operations,invalid):
+    store,client,dev,other,foreign,headers,_=operations
+    ident,_,_=submitted_message(operations)
+    auth=headers(dev); expected=403
+    if invalid=='other_device': auth=headers(other)
+    elif invalid=='other_hotel': auth=headers(foreign)
+    elif invalid=='old_item':
+        ident=store.item('a','unrelated-old-session','note',{'original_request':'Old private original'})
+        expected=404
+    elif invalid=='missing': ident='missing'; expected=404
+    elif invalid=='closed': store.run("UPDATE sessions SET status='ended' WHERE id='operation-fixture'")
+    elif invalid=='expired': store.run("UPDATE operation_sessions SET expires=? WHERE id='operation-fixture'",(time.time()-1,))
+    elif invalid=='revoked':
+        store.run('DELETE FROM credentials WHERE id=?',(dev['id'],)); expected=401
+    elif invalid=='staff': auth=headers(store.issue('a','staff')); expected=401
+    else: auth={}; expected=401
+    sessions=store.rows('SELECT * FROM sessions')
+    leases=store.rows('SELECT * FROM operation_sessions')
+    credentials=store.rows('SELECT * FROM credentials')
+    response=client.get('/api/device/operations/operation-fixture/items/'+ident,headers=auth)
+    assert response.status_code==expected
+    assert 'original_request' not in response.text and 'resolution_note' not in response.text
+    assert store.rows('SELECT * FROM sessions')==sessions
+    assert store.rows('SELECT * FROM operation_sessions')==leases
+    assert store.rows('SELECT * FROM credentials')==credentials
+
+
+def test_staff_revocation_serializes_with_transition_transaction(operations,monkeypatch):
+    store,client,_,_,_,headers,_=operations
+    staff=store.issue('a','staff')
+    ident,_,_=submitted_message(operations)
+    external=Store(store.db.execute('PRAGMA database_list').fetchone()[2])
+    entered,attempted=Event(),Event()
+    original=server.scoped
+    def scoped_in_transaction(hid,authorization):
+        principal=original(hid,authorization)
+        entered.set()
+        assert attempted.wait(timeout=5)
+        return principal
+    monkeypatch.setattr(server,'scoped',scoped_in_transaction)
+    def revoke():
+        assert entered.wait(timeout=5)
+        attempted.set()
+        external.run('DELETE FROM credentials WHERE id=?',(staff['id'],))
+    try:
+        with ThreadPoolExecutor(1) as pool:
+            pending=pool.submit(revoke)
+            response=client.patch('/api/hotels/a/items/'+ident,headers=headers(staff),json={
+                'status':'acknowledged','expected_version':0,'responsible_name':'Staff'})
+            pending.result(timeout=5)
+        assert response.status_code==200
+        before=store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]
+        assert client.patch('/api/hotels/a/items/'+ident,headers=headers(staff),json={
+            'status':'resolved','expected_version':1,'resolution_note':'Revoked actor'}).status_code==403
+        assert store.rows('SELECT * FROM items WHERE id=?',(ident,))[0]==before
+        assert len(store.rows("SELECT * FROM audit WHERE tool='item_transition'"))==1
+    finally:
+        external.db.close()
+
+
+def test_human_help_without_phone_is_saved_for_staff_and_remains_an_immutable_receipt(operations):
+    store,client,dev,_,_,headers,_=operations
+    staff=store.issue('a','staff')
+    response=action(client,headers(dev),'operator',{},'human-help')
+    assert response.status_code==200
+    receipt=response.json()
+    assert receipt['status']=='queued' and receipt['result']['connected'] is False
+    ident=receipt['result']['escalation_id']
+    assert action(client,headers(dev),'operator',{},'retry-help').json()==receipt
+    items=store.rows("SELECT * FROM items WHERE kind='escalation'")
+    assert len(items)==1 and items[0]['id']==ident and items[0]['status']=='open'
+    status='/api/device/operations/operation-fixture/items/'+ident
+    assert client.get(status,headers=headers(dev)).json()['status']=='open'
+    url='/api/hotels/a/items/'+ident
+    assert client.patch(url,headers=headers(staff),json={
+        'status':'acknowledged','expected_version':0,'responsible_name':'Reception'}).status_code==200
+    assert client.patch(url,headers=headers(staff),json={
+        'status':'resolved','expected_version':1,'resolution_note':'Staff helped in person, not a phone connection.'}).status_code==200
+    assert client.get(status,headers=headers(dev)).json()['status']=='resolved'
+    assert action(client,headers(dev),'operator',{},'after-resolution').json()==receipt
+    assert receipt['result']['connected'] is False
+
+
+def test_resolution_does_not_turn_a_taxi_request_into_a_booking(operations):
+    store,client,dev,_,_,headers,_=operations
+    staff=store.issue('a','staff')
+    draft=action(client,headers(dev),'taxi',TAXI).json()
+    receipt=confirm(client,headers(dev),draft['confirmation_id']).json()
+    assert receipt['status']=='queued' and receipt['result']['booked'] is False
+    ident=receipt['result']['request_id']
+    url='/api/hotels/a/items/'+ident
+    assert client.patch(url,headers=headers(staff),json={
+        'status':'acknowledged','expected_version':0,'responsible_name':'Reception'}).status_code==200
+    assert client.patch(url,headers=headers(staff),json={
+        'status':'resolved','expected_version':1,'resolution_note':'Marked handled by reception.'}).status_code==200
+    assert confirm(client,headers(dev),draft['confirmation_id']).json()==receipt
+    assert receipt['result']['booked'] is False
+    assert len(store.rows('SELECT * FROM items'))==1
