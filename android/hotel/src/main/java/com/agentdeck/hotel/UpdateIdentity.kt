@@ -4,6 +4,18 @@ import org.json.JSONObject
 import java.net.URI
 import java.security.MessageDigest
 
+/** Missing metadata is accepted only when inspecting an already-installed historical APK. */
+object UpdateDistribution {
+    const val METADATA = "dev.orange.hotel.DISTRIBUTION"
+    fun valid(value: String): Boolean = value == "personal-test" || value == "hotel"
+
+    fun fromManifest(value: Any?, historical: Boolean): String {
+        if (value == null && historical) return "personal-test"
+        require(value is String && valid(value)) { "The APK distribution is missing or invalid." }
+        return value
+    }
+}
+
 /** Metadata is snapshotted from one release, never reconstructed from a later latest-feed response. */
 data class UpdateRequest(
     val tag: String,
@@ -11,11 +23,13 @@ data class UpdateRequest(
     val packageName: String,
     val versionName: String,
     val versionCode: Long,
-    val sha256: String?
+    val sha256: String?,
+    val distribution: String
 ) {
     init {
         require(ReleaseVersion.valid(tag) && tag == "v$versionName")
         require(packageName == "dev.orange.hotel" && versionCode > 0)
+        require(UpdateDistribution.valid(distribution))
         val uri = URI(url)
         require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null && uri.fragment == null)
         require(sha256 == null || Regex("[0-9a-f]{64}").matches(sha256))
@@ -23,14 +37,16 @@ data class UpdateRequest(
 
     fun json(): JSONObject = JSONObject().put("schema", 1).put("tag", tag).put("url", url)
         .put("package_name", packageName).put("version_name", versionName).put("version_code", versionCode)
+        .put("distribution", distribution)
         .apply { sha256?.let { put("sha256", it) } }
 
     // Includes all expectations, not merely the version label, to prevent cache collisions.
-    val key: String = hash(listOf(tag, url, packageName, versionName, versionCode.toString(), sha256.orEmpty())
+    val key: String = hash(listOf(tag, url, packageName, versionName, versionCode.toString(), sha256.orEmpty(), distribution)
         .joinToString("\n").toByteArray(Charsets.UTF_8))
 
     fun rejects(apk: ApkIdentity, installed: ApkIdentity, digest: String): String? = when {
         apk.packageName != packageName || installed.packageName != packageName -> "The APK belongs to another application."
+        apk.distribution != distribution || installed.distribution != distribution -> "The APK distribution does not match this installation."
         apk.versionName != versionName || apk.versionCode != versionCode -> "The APK version does not match its release."
         !ReleaseVersion.offer(tag, installed.versionName, installed.versionCode, apk.versionCode) -> "The APK is not newer than the installed application."
         apk.signers.isEmpty() || apk.signers != installed.signers -> "The APK signing identity does not match this installation."
@@ -43,14 +59,17 @@ data class UpdateRequest(
             require(json.getInt("schema") == 1)
             return UpdateRequest(json.getString("tag"), json.getString("url"), json.getString("package_name"),
                 json.getString("version_name"), json.getLong("version_code"),
-                json.optString("sha256").takeIf { it.isNotEmpty() }?.lowercase())
+                json.optString("sha256").takeIf { it.isNotEmpty() }?.lowercase(), json.getString("distribution"))
         }
         fun hash(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes)
             .joinToString("") { "%02x".format(it.toInt() and 255) }
     }
 }
 
-data class ApkIdentity(val packageName: String, val versionName: String, val versionCode: Long, val signers: Set<String>)
+data class ApkIdentity(val packageName: String, val versionName: String, val versionCode: Long,
+                       val signers: Set<String>, val distribution: String) {
+    init { require(UpdateDistribution.valid(distribution)) }
+}
 data class UpdateAttempt(val request: UpdateRequest, val revision: Long)
 
 /** UI-thread-owned lease: cancellation/retry invalidates every in-flight callback from the old attempt. */

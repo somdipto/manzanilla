@@ -97,22 +97,29 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
 
     @Suppress("DEPRECATION")
     private fun installed(): ApkIdentity {
-        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        val flags = PackageManager.GET_META_DATA or
+            (if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES)
         val info = app.packageManager.getPackageInfo(app.packageName, flags)
         val signatures = if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else info.signatures
         return ApkIdentity(info.packageName, info.versionName.orEmpty(), code(info),
-            signatures?.map { UpdateRequest.hash(it.toByteArray()) }?.toSet() ?: emptySet())
+            signatures?.map { UpdateRequest.hash(it.toByteArray()) }?.toSet() ?: emptySet(),
+            UpdateDistribution.fromManifest(info.applicationInfo?.metaData?.get(UpdateDistribution.METADATA), historical = true))
+            .also { require(it.distribution == BuildConfig.DISTRIBUTION) { "Installed distribution does not match this build." } }
     }
 
     /** apksig verifies the entire signed archive, not just ZIP magic or untrusted manifest certificates. */
     private fun validate(file: File, request: UpdateRequest) {
+        require(request.distribution == BuildConfig.DISTRIBUTION) { "The update belongs to another distribution." }
         require(file.isFile && file.length() > 0) { "The update file is missing." }
         val verification = ApkVerifier.Builder(file).setMinCheckedPlatformVersion(26).build().verify()
         require(verification.isVerified) { "The APK signature or signed contents are invalid." }
-        val info = app.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+        val flags = PackageManager.GET_META_DATA or
+            (if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES)
+        val info = app.packageManager.getPackageArchiveInfo(file.absolutePath, flags)
             ?: error("The download is not an Android package.")
         val apk = ApkIdentity(info.packageName, info.versionName.orEmpty(), code(info),
-            verification.signerCertificates.map { UpdateRequest.hash(it.encoded) }.toSet())
+            verification.signerCertificates.map { UpdateRequest.hash(it.encoded) }.toSet(),
+            UpdateDistribution.fromManifest(info.applicationInfo?.metaData?.get(UpdateDistribution.METADATA), historical = false))
         val digest = MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
             val buffer = ByteArray(64 * 1024)
@@ -123,7 +130,8 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
     }
 
     private fun eligible(request: UpdateRequest): Boolean = installed().let {
-        request.packageName == it.packageName && ReleaseVersion.offer(request.tag, it.versionName, it.versionCode, request.versionCode)
+        request.distribution == BuildConfig.DISTRIBUTION && request.distribution == it.distribution &&
+            request.packageName == it.packageName && ReleaseVersion.offer(request.tag, it.versionName, it.versionCode, request.versionCode)
     }
 
     private fun persist(attempt: UpdateAttempt) {
@@ -210,13 +218,13 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
     private fun releaseRequest(): UpdateRequest? {
         var primaryFailure: Exception? = null
         try {
-            return UpdateFeed.parse(getJson(BuildConfig.FEED_URL, "update feed")) { getJson(it, "release manifest") }
+            return UpdateFeed.parse(getJson(BuildConfig.FEED_URL, "update feed"), BuildConfig.DISTRIBUTION) { getJson(it, "release manifest") }
         } catch (e: Exception) {
             primaryFailure = e
             Log.w("UPD", "Primary update feed failed; trying the legacy release API", e)
         }
         try {
-            return UpdateFeed.parse(getJson(BuildConfig.LEGACY_FEED_URL, "update feed")) { getJson(it, "release manifest") }
+            return UpdateFeed.parse(getJson(BuildConfig.LEGACY_FEED_URL, "update feed"), BuildConfig.DISTRIBUTION) { getJson(it, "release manifest") }
         } catch (fallbackFailure: Exception) {
             Log.w("UPD", "Legacy release API failed as well", fallbackFailure)
             throw primaryFailure ?: fallbackFailure
@@ -701,5 +709,5 @@ internal object UpdateInstallerSecurity {
 
     fun installedCandidate(request: UpdateRequest, installed: ApkIdentity): Boolean =
         installed.packageName == request.packageName && installed.versionName == request.versionName &&
-            installed.versionCode == request.versionCode
+            installed.versionCode == request.versionCode && installed.distribution == request.distribution
 }

@@ -4,7 +4,8 @@ import subprocess
 
 import pytest
 
-from scripts.release_policy import check_repository, release_impact, validate_change
+from scripts import release_policy
+from scripts.release_policy import check_repository, download_previous, previous_asset, release_impact, validate_change
 
 
 VERSIONS = {"android/VERSION", "android/VERSION_CODE"}
@@ -16,6 +17,8 @@ VERSIONS = {"android/VERSION", "android/VERSION_CODE"}
     "shared/reception-locales.json",
     "scripts/release_policy.py", "scripts/release_policy_check.py", "scripts/publish_release.py", "scripts/verify-signed-upgrade.sh",
     "scripts/run-updater-emulator.sh",
+    "scripts/check_fish_auth.py",
+    "scripts/signed_upgrade_proof.py",
     ".github/workflows/publish.yml", ".github/workflows/release.yml", ".github/workflows/verify.yml",
 ])
 def test_release_inputs_require_both_version_changes(path):
@@ -146,3 +149,123 @@ def test_credential_scan_failure_does_not_pass(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     assert module.main() == 1
     assert "scan could not complete" in capsys.readouterr().err
+
+
+def published_release(*names, ident=7):
+    return {
+        "id": ident, "tag_name": "v17.0.43", "draft": False, "prerelease": False,
+        "assets": [{"name": name, "size": 3, "state": "uploaded"} for name in names],
+    }
+
+
+def test_previous_apk_is_selected_by_distribution_not_asset_order():
+    latest = published_release("unrelated.apk", "Manzanilla-Hotel.apk", "Manzanilla-Reception.apk")
+    assert previous_asset(latest, [], "personal-test") == ("v17.0.43", "Manzanilla-Reception.apk", 3)
+    assert previous_asset(latest, [], "hotel") == ("v17.0.43", "Manzanilla-Hotel.apk", 3)
+
+
+def test_first_hotel_bootstrap_requires_complete_history_without_hotel():
+    latest = published_release("Manzanilla-Reception.apk")
+    earlier = published_release("Manzanilla-Reception.apk", ident=6)
+    assert previous_asset(latest, [latest, earlier], "hotel")[1] == "Manzanilla-Reception.apk"
+    for incomplete in ([], [earlier], [latest, {"id": 6}]):
+        with pytest.raises(ValueError):
+            previous_asset(latest, incomplete, "hotel")
+
+
+@pytest.mark.parametrize("prior_name", ["Manzanilla-Hotel.apk", "hotel-release-metadata.json"])
+def test_hotel_never_bootstraps_again_after_any_published_hotel_pair(prior_name):
+    latest = published_release("Manzanilla-Reception.apk")
+    earlier = published_release(prior_name, ident=6)
+    with pytest.raises(ValueError, match="forbidden"):
+        previous_asset(latest, [latest, earlier], "hotel")
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda release: release.pop("assets"),
+    lambda release: release.update(draft=True),
+    lambda release: release.update(prerelease=True),
+    lambda release: release["assets"][0].update(size=0),
+    lambda release: release["assets"][0].update(state="new"),
+    lambda release: release["assets"].append(dict(release["assets"][0])),
+])
+def test_malformed_or_unfinished_previous_hotel_is_not_absence(mutation):
+    latest = published_release("Manzanilla-Hotel.apk", "Manzanilla-Reception.apk")
+    mutation(latest)
+    with pytest.raises(ValueError):
+        previous_asset(latest, [latest], "hotel")
+
+
+def test_personal_feed_does_not_select_hotel_when_personal_asset_is_missing():
+    latest = published_release("Manzanilla-Hotel.apk")
+    with pytest.raises(ValueError):
+        previous_asset(latest, [latest], "personal-test")
+
+
+def test_previous_download_uses_exact_asset_and_complete_history(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    latest = published_release("Manzanilla-Reception.apk")
+    calls = []
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:3] == ["gh", "api", "--paginate"]:
+            return SimpleNamespace(stdout=json.dumps([[latest], []]))
+        if argv[:2] == ["gh", "api"]:
+            return SimpleNamespace(stdout=json.dumps(latest))
+        assert argv == [
+            "gh", "release", "download", "v17.0.43", "--repo", "fixture/repository",
+            "--pattern", "Manzanilla-Reception.apk", "--dir", str(tmp_path),
+        ]
+        (tmp_path / "Manzanilla-Reception.apk").write_bytes(b"apk")
+        return SimpleNamespace(stdout="")
+    monkeypatch.setattr(release_policy.subprocess, "run", fake_run)
+    download_previous("fixture/repository", tmp_path, "hotel")
+    assert len(calls) == 3
+    assert (tmp_path / "Manzanilla-Reception.apk").read_bytes() == b"apk"
+
+
+@pytest.mark.parametrize("failure_stage", ["latest", "history", "download"])
+def test_previous_download_never_falls_back_after_transport_failure(tmp_path, monkeypatch, failure_stage):
+    import json
+    from types import SimpleNamespace
+
+    latest = published_release("Manzanilla-Reception.apk")
+    calls = []
+    def fake_run(argv, **kwargs):
+        stage = "history" if "--paginate" in argv else "download" if "download" in argv else "latest"
+        calls.append(stage)
+        if stage == failure_stage:
+            raise subprocess.CalledProcessError(1, argv, stderr="private diagnostic body")
+        return SimpleNamespace(stdout=json.dumps([[latest]]) if stage == "history" else json.dumps(latest))
+    monkeypatch.setattr(release_policy.subprocess, "run", fake_run)
+    with pytest.raises(ValueError, match="Cannot retrieve") as error:
+        download_previous("fixture/repository", tmp_path, "hotel")
+    assert calls == ["latest", "history", "download"][:["latest", "history", "download"].index(failure_stage) + 1]
+    assert "private diagnostic body" not in str(error.value)
+    assert not list(tmp_path.iterdir())
+
+
+def test_previous_download_rejects_stale_directory_before_contacting_github(tmp_path, monkeypatch):
+    (tmp_path / "Manzanilla-Reception.apk").write_bytes(b"stale")
+    def unexpected_call(*args, **kwargs):
+        pytest.fail("stale previous directory triggered a download")
+    monkeypatch.setattr(release_policy.subprocess, "run", unexpected_call)
+    with pytest.raises(ValueError, match="empty"):
+        download_previous("fixture/repository", tmp_path, "hotel")
+
+
+def test_previous_download_rejects_truncated_bytes(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    latest = published_release("Manzanilla-Hotel.apk")
+    def fake_run(argv, **kwargs):
+        if argv[:2] == ["gh", "api"]:
+            return SimpleNamespace(stdout=json.dumps(latest))
+        (tmp_path / "Manzanilla-Hotel.apk").write_bytes(b"x")
+        return SimpleNamespace(stdout="")
+    monkeypatch.setattr(release_policy.subprocess, "run", fake_run)
+    with pytest.raises(ValueError, match="does not match"):
+        download_previous("fixture/repository", tmp_path, "hotel")

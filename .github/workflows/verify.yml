@@ -6,18 +6,6 @@ on:
   workflow_dispatch:
   workflow_call:
 jobs:
-  fish-auth:
-    # This one-off check is restricted to the release branch; other PRs do not
-    # receive the repository secret or depend on provider availability.
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/embed-fish-test-17-0-37'
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - uses: actions/checkout@v4
-      - name: Verify Fish account access without creating a session
-        env:
-          FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
-        run: python3 scripts/check_fish_auth.py
   cloud:
     runs-on: ubuntu-latest
     steps:
@@ -62,7 +50,7 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
-      - run: bash gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug :hotel:assembleDebugAndroidTest --no-daemon
+      - run: bash gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug :hotel:assembleDebugAndroidTest -Pdistribution=personal-test --no-daemon --max-workers=2
         working-directory: android
       - name: Enable emulator hardware acceleration
         run: |

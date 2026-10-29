@@ -12,8 +12,10 @@ on:
       - 'scripts/build-reception.cjs'
       - 'scripts/release_policy.py'
       - 'scripts/release_policy_check.py'
+      - 'scripts/check_fish_auth.py'
       - 'scripts/publish_release.py'
       - 'scripts/verify-signed-upgrade.sh'
+      - 'scripts/signed_upgrade_proof.py'
       - 'scripts/run-updater-emulator.sh'
       - '.github/workflows/publish.yml'
       - '.github/workflows/release.yml'
@@ -70,26 +72,60 @@ jobs:
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
       - uses: actions/download-artifact@v4
         with:
-          name: orange-signed-pilot-apk
-          path: candidate
-      - name: Recheck exact artifact and latest published APK before publication
+          name: orange-signed-personal-test-apk
+          path: artifacts/personal-test
+      - uses: actions/download-artifact@v4
+        with:
+          name: orange-signed-hotel-apk
+          path: artifacts/hotel
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-upgrade-personal-test-evidence
+          path: evidence/personal-test
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-upgrade-hotel-evidence
+          path: evidence/hotel
+      - name: Collect both immutable public pairs and separately named private proofs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir candidate
+          cp artifacts/personal-test/Manzanilla-Reception.apk candidate/
+          cp artifacts/personal-test/release-metadata.json candidate/
+          cp artifacts/hotel/Manzanilla-Hotel.apk candidate/
+          cp artifacts/hotel/hotel-release-metadata.json candidate/
+          cp evidence/personal-test/verification.json candidate/verification-personal-test.json
+          cp evidence/hotel/verification.json candidate/verification-hotel.json
+      - name: Recheck both exact artifacts against their previous-distribution releases
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           export PATH="$ANDROID_HOME/build-tools/34.0.0:$PATH"
+          printf '%s/build-tools/34.0.0\n' "$ANDROID_HOME" >> "$GITHUB_PATH"
           version="$(tr -d '\r\n' < android/VERSION)"
           tag="v${version}"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then test "$GITHUB_REF_NAME" = "$tag"; fi
-          mkdir -p "$RUNNER_TEMP/previous"
-          gh release download --repo "$GITHUB_REPOSITORY" --pattern '*.apk' --dir "$RUNNER_TEMP/previous"
-          previous=("$RUNNER_TEMP/previous/"*.apk)
-          test "${#previous[@]}" -eq 1
-          python android/release_identity.py --apk candidate/Manzanilla-Reception.apk \
-            --previous-apk "${previous[0]}" --tag "$tag" --repository "$GITHUB_REPOSITORY" \
-            --output "$RUNNER_TEMP/rechecked-metadata.json"
-          cmp candidate/release-metadata.json "$RUNNER_TEMP/rechecked-metadata.json"
+          for distribution in personal-test hotel; do
+            if [[ "$distribution" == personal-test ]]; then
+              apk=Manzanilla-Reception.apk
+              metadata=release-metadata.json
+            else
+              apk=Manzanilla-Hotel.apk
+              metadata=hotel-release-metadata.json
+            fi
+            previous_dir="$RUNNER_TEMP/previous-$distribution"
+            python scripts/release_policy.py --download-previous "$previous_dir" \
+              --github-repository "$GITHUB_REPOSITORY" --distribution "$distribution"
+            previous=("$previous_dir/"*)
+            test "${#previous[@]}" -eq 1
+            python android/release_identity.py --apk "candidate/$apk" \
+              --previous-apk "${previous[0]}" --tag "$tag" --repository "$GITHUB_REPOSITORY" \
+              --distribution "$distribution" --output "$RUNNER_TEMP/rechecked-$metadata"
+            cmp "candidate/$metadata" "$RUNNER_TEMP/rechecked-$metadata"
+          done
           # Merge builds publish the already-verified candidate here. A tag made
           # with GITHUB_TOKEN does not trigger another workflow, so do not rely
           # on a second tag-push run to deliver the installed-app update.

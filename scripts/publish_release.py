@@ -1,8 +1,9 @@
 """Publish verified APKs through a draft; never expose or replace incomplete releases.
 
-The signed build and release_identity.py establish APK signing/version continuity.
-This helper makes the final publication atomic for latest-release consumers and
-supports resuming only the same tag, commit and exact artifact bytes.
+Requires SDK aapt/apksigner on PATH for publication. Both signed APKs are inspected
+and bound to private UI/retention proofs before any draft mutation. Public assets
+remain hidden until all four server digests match; recovery accepts only the same
+tag, commit and exact artifact bytes. Private proofs are never uploaded as assets.
 """
 from __future__ import annotations
 
@@ -12,14 +13,23 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
+import sys
 from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
-APK = "Manzanilla-Reception.apk"
-MANIFEST = "release-metadata.json"
-ASSETS = (APK, MANIFEST)
+# Direct script execution puts scripts/, not the repository root, on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from android.release_identity import inspect
+
+
+PAIRS = (
+    ("personal-test", "Manzanilla-Reception.apk", "release-metadata.json"),
+    ("hotel", "Manzanilla-Hotel.apk", "hotel-release-metadata.json"),
+)
+ASSETS = tuple(name for _, apk, manifest in PAIRS for name in (apk, manifest))
 SEMVER = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 
 
@@ -118,9 +128,11 @@ class GitHub:
         return self.request("PATCH", f"/repos/{self.repository}/releases/{release_id}",
                             payload={"draft": False, "prerelease": False, "make_latest": "true"})
 
-    def public_manifest(self, tag):
+    def public_manifest(self, tag, name):
+        if name not in {manifest for _, _, manifest in PAIRS}:
+            raise PublicationError("Unknown release metadata asset")
         # This is a public asset download. No authorization is sent to the CDN.
-        url = f"https://github.com/{self.repository}/releases/download/{tag}/{MANIFEST}"
+        url = f"https://github.com/{self.repository}/releases/download/{tag}/{name}"
         with self.opener.open(Request(url, headers={"User-Agent": "Manzanilla-release"}), timeout=60) as response:
             data = response.read(64 * 1024 + 1)
         if len(data) > 64 * 1024:
@@ -163,19 +175,44 @@ class Publisher:
             assets[name] = asset
         return assets
 
-    def _manifest(self, data, apk_digest):
+    def _manifest(self, data, apk_digest, distribution, apk_name):
         try:
             manifest = json.loads(data)
             valid = (type(manifest.get("schema")) is int and manifest["schema"] == 1 and manifest.get("tag") == self.tag
                      and manifest.get("version_name") == self.tag[1:]
                      and manifest.get("package_name") == "dev.orange.hotel"
                      and type(manifest.get("version_code")) is int and 0 < manifest["version_code"] <= 2_100_000_000
+                     and manifest.get("distribution") == distribution
                      and manifest.get("sha256") == apk_digest
-                     and manifest.get("url") == f"https://github.com/{self.repository}/releases/download/{self.tag}/{APK}")
+                     and manifest.get("url") == f"https://github.com/{self.repository}/releases/download/{self.tag}/{apk_name}")
         except (ValueError, TypeError, AttributeError):
             valid = False
         if not valid:
             raise PublicationError("Release metadata does not describe this immutable APK")
+        return manifest
+
+    def _proof(self, data, identity, apk_digest):
+        fields = {"schema", "commit", "apk_sha256", "package_name", "version_code",
+                  "signer_sha256", "distribution", "ui_ready", "bridge", "mic_off",
+                  "retained_preferences", "retained_voice_key"}
+        try:
+            proof = json.loads(data)
+            valid = (isinstance(proof, dict) and set(proof) == fields
+                     and type(proof["schema"]) is int and proof["schema"] == 1
+                     and proof["commit"] == self.commit
+                     and proof["apk_sha256"] == apk_digest
+                     and proof["package_name"] == identity.package
+                     and type(proof["version_code"]) is int and proof["version_code"] == identity.code
+                     and proof["distribution"] == identity.distribution
+                     and isinstance(proof["signer_sha256"], str)
+                     and re.fullmatch(r"[0-9a-f]{64}", proof["signer_sha256"]) is not None
+                     and identity.signers == frozenset({proof["signer_sha256"]})
+                     and all(proof[key] is True for key in (
+                         "ui_ready", "bridge", "mic_off", "retained_preferences", "retained_voice_key")))
+        except (ValueError, TypeError, KeyError, AttributeError):
+            valid = False
+        if not valid:
+            raise PublicationError("Signed upgrade proof does not match the actual candidate and source")
 
     def already_published(self):
         release = self._release()
@@ -184,17 +221,36 @@ class Publisher:
         assets = self._assets(release)
         if set(assets) != set(ASSETS):
             raise PublicationError("Published release is incomplete; it cannot be treated as a successful rerun")
-        data = self.api.public_manifest(self.tag)
-        if digest(data) != assets[MANIFEST]["digest"].removeprefix("sha256:") or len(data) != assets[MANIFEST]["size"]:
-            raise PublicationError("Published metadata does not match its asset digest")
-        self._manifest(data, assets[APK]["digest"].removeprefix("sha256:"))
+        versions = set()
+        for distribution, apk, manifest in PAIRS:
+            data = self.api.public_manifest(self.tag, manifest)
+            if digest(data) != assets[manifest]["digest"].removeprefix("sha256:") or len(data) != assets[manifest]["size"]:
+                raise PublicationError("Published metadata does not match its asset digest")
+            value = self._manifest(data, assets[apk]["digest"].removeprefix("sha256:"), distribution, apk)
+            versions.add(value["version_code"])
+        if len(versions) != 1:
+            raise PublicationError("Published distributions do not share one version code")
         return True
 
     def publish(self, directory: Path):
-        files = {name: (directory / name).read_bytes() for name in ASSETS}
-        if not files[APK]:
-            raise PublicationError("The verified APK is empty")
-        self._manifest(files[MANIFEST], digest(files[APK]))
+        try:
+            files = {name: (directory / name).read_bytes() for name in ASSETS}
+            identities = []
+            for distribution, apk, manifest in PAIRS:
+                if not files[apk]:
+                    raise PublicationError("The verified APK is empty")
+                apk_digest = digest(files[apk])
+                value = self._manifest(files[manifest], apk_digest, distribution, apk)
+                identity = inspect(directory / apk, require_distribution=True)
+                if (identity.package != value["package_name"] or identity.name != value["version_name"]
+                        or identity.code != value["version_code"] or identity.distribution != distribution):
+                    raise PublicationError("Release metadata differs from the actual signed APK identity")
+                self._proof((directory / f"verification-{distribution}.json").read_bytes(), identity, apk_digest)
+                identities.append(identity)
+            if (identities[0].code != identities[1].code or identities[0].signers != identities[1].signers):
+                raise PublicationError("Both distributions must share one version and signing identity")
+        except (OSError, ValueError, subprocess.CalledProcessError) as error:
+            raise PublicationError("Cannot validate candidate artifacts and signed upgrade evidence") from error
         release = self._release()
         if release is None:
             if self.api.tag_commit(self.tag) != self.commit:

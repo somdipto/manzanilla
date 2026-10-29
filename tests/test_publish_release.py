@@ -2,22 +2,34 @@
 import copy
 import json
 from pathlib import Path
+from subprocess import CalledProcessError, CompletedProcess
 from urllib.request import Request
 
 import pytest
 
-from scripts.publish_release import APK, MANIFEST, GitHub, PublicationError, Publisher, SafeRedirect, digest
+from scripts.publish_release import ASSETS, PAIRS, GitHub, PublicationError, Publisher, SafeRedirect, digest
 
 
 REPOSITORY = "owner/hotel"
 TAG = "v17.0.29"
 COMMIT = "a" * 40
+SIGNER = "b" * 64
+APK, MANIFEST = PAIRS[0][1:]
+HOTEL_APK, HOTEL_MANIFEST = PAIRS[1][1:]
 
 
-def metadata(apk):
+def metadata(apk, distribution="personal-test"):
+    name = APK if distribution == "personal-test" else HOTEL_APK
     return json.dumps({"schema": 1, "tag": TAG, "version_name": "17.0.29", "version_code": 59,
-                       "package_name": "dev.orange.hotel", "sha256": digest(apk),
-                       "url": f"https://github.com/{REPOSITORY}/releases/download/{TAG}/{APK}"}).encode()
+                       "package_name": "dev.orange.hotel", "sha256": digest(apk), "distribution": distribution,
+                       "url": f"https://github.com/{REPOSITORY}/releases/download/{TAG}/{name}"}).encode()
+
+
+def proof(apk, distribution):
+    return {"schema": 1, "commit": COMMIT, "apk_sha256": digest(apk), "package_name": "dev.orange.hotel",
+            "version_code": 59, "signer_sha256": SIGNER, "distribution": distribution,
+            "ui_ready": True, "bridge": True, "mic_off": True, "retained_preferences": True,
+            "retained_voice_key": True}
 
 
 class FakeGitHub:
@@ -54,7 +66,7 @@ class FakeGitHub:
                                      "digest": "sha256:" + (self.corrupt_digest or digest(data))})
 
     def publish(self, release_id):
-        assert {row["name"] for row in self.value["assets"]} == {APK, MANIFEST}
+        assert {row["name"] for row in self.value["assets"]} == set(ASSETS)
         self.calls.append("publish_latest")
         self.value["draft"] = False
         return copy.deepcopy(self.value)
@@ -66,16 +78,33 @@ class FakeGitHub:
         self.calls.append("discard_empty_placeholder")
         self.value["assets"].remove(asset)
 
-    def public_manifest(self, tag):
+    def public_manifest(self, tag, name):
         assert not self.value["draft"]
-        return self.contents[MANIFEST]
+        return self.contents[name]
 
 
 @pytest.fixture
-def candidate(tmp_path):
-    apk = b"synthetic signed APK bytes; real APK qualification runs before publication"
-    (tmp_path / APK).write_bytes(apk)
-    (tmp_path / MANIFEST).write_bytes(metadata(apk))
+def candidate(tmp_path, monkeypatch):
+    for distribution, apk_name, manifest in PAIRS:
+        apk = f"{distribution} synthetic signed APK bytes".encode()
+        (tmp_path / apk_name).write_bytes(apk)
+        (tmp_path / manifest).write_bytes(metadata(apk, distribution))
+        (tmp_path / f"verification-{distribution}.json").write_text(json.dumps(proof(apk, distribution)))
+
+    def run(command, **kwargs):
+        # SDK output boundary only; publisher still uses the real shared inspector.
+        if command[0] == "apksigner":
+            output = "Signer #1 certificate SHA-256 digest: " + SIGNER
+        elif command[2] == "badging":
+            output = "package: name='dev.orange.hotel' versionCode='59' versionName='17.0.29'"
+        else:
+            distribution = "hotel" if Path(command[3]).read_bytes().startswith(b"hotel") else "personal-test"
+            output = ('  E: manifest\n    E: application\n      E: meta-data\n'
+                      '        A: android:name(0x01010003)="dev.orange.hotel.DISTRIBUTION"\n'
+                      f'        A: android:value(0x01010024)="{distribution}"\n')
+        return CompletedProcess(command, 0, stdout=output)
+
+    monkeypatch.setattr("android.release_identity.subprocess.run", run)
     return tmp_path
 
 
@@ -106,10 +135,10 @@ def test_github_rejects_ambiguous_drafts():
         api.release(TAG)
 
 
-def test_latest_is_switched_only_after_both_server_digests_are_verified(candidate):
+def test_latest_is_switched_only_after_all_four_server_digests_are_verified(candidate):
     api = FakeGitHub()
     publisher(api).publish(candidate)
-    assert api.calls == ["read", "create_draft", "upload:" + APK, "upload:" + MANIFEST, "read", "publish_latest"]
+    assert api.calls == ["read", "create_draft", *["upload:" + name for name in ASSETS], "read", "publish_latest"]
     assert not api.value["draft"]
     assert publisher(api).already_published()
 
@@ -137,6 +166,7 @@ def test_draft_resume_never_replaces_different_artifact_bytes(candidate):
     replacement = b"a different rebuild of the same version"
     (candidate / APK).write_bytes(replacement)
     (candidate / MANIFEST).write_bytes(metadata(replacement))
+    (candidate / "verification-personal-test.json").write_text(json.dumps(proof(replacement, "personal-test")))
     before = list(api.calls)
     with pytest.raises(PublicationError, match="never replaced"):
         publisher(api).publish(candidate)
@@ -243,3 +273,162 @@ def test_redirects_never_forward_token_to_a_cdn_or_allow_cleartext():
     assert redirect.get_header("Authorization") is None
     with pytest.raises(PublicationError):
         SafeRedirect().redirect_request(request, None, 302, "Found", {}, "http://example.invalid/file")
+
+
+@pytest.mark.parametrize("name", [HOTEL_APK, HOTEL_MANIFEST, "verification-personal-test.json",
+                                "verification-hotel.json"])
+def test_missing_artifact_or_private_evidence_cannot_expose_existing_draft(candidate, name):
+    api = FakeGitHub()
+    api.create_draft(TAG, COMMIT)
+    (candidate / name).unlink()
+    before = list(api.calls)
+    with pytest.raises(PublicationError):
+        publisher(api).publish(candidate)
+    assert api.calls == before
+    assert api.value["draft"]
+
+
+@pytest.mark.parametrize("distribution", ["personal-test", "hotel"])
+@pytest.mark.parametrize("field,value", [
+    ("schema", True), ("commit", "c" * 40), ("apk_sha256", "0" * 64),
+    ("package_name", "other.package"), ("version_code", 58), ("version_code", True),
+    ("signer_sha256", "c" * 64), ("signer_sha256", "B" * 64), ("distribution", "unknown"),
+    ("ui_ready", False), ("bridge", False), ("mic_off", False),
+    ("retained_preferences", False), ("retained_voice_key", 1), ("extra", "private data"),
+])
+def test_stale_mismatched_or_incomplete_proof_leaves_draft_hidden(candidate, distribution, field, value):
+    path = candidate / f"verification-{distribution}.json"
+    evidence = json.loads(path.read_bytes())
+    evidence[field] = value
+    path.write_text(json.dumps(evidence))
+    api = FakeGitHub()
+    api.create_draft(TAG, COMMIT)
+    with pytest.raises(PublicationError, match="proof"):
+        publisher(api).publish(candidate)
+    assert api.value["draft"]
+    assert not any(call.startswith("upload:") for call in api.calls)
+    assert "publish_latest" not in api.calls
+
+
+def test_cross_distribution_proof_cannot_authorize_other_apk(candidate):
+    (candidate / "verification-hotel.json").write_bytes((candidate / "verification-personal-test.json").read_bytes())
+    api = FakeGitHub()
+    with pytest.raises(PublicationError, match="proof"):
+        publisher(api).publish(candidate)
+    assert not api.calls
+
+
+@pytest.mark.parametrize("field,value", [
+    ("distribution", None), ("distribution", "personal-test"), ("version_code", 60),
+    ("sha256", "0" * 64), ("url", f"https://github.com/{REPOSITORY}/releases/download/{TAG}/{APK}"),
+])
+def test_invalid_hotel_metadata_cannot_use_valid_testing_pair(candidate, field, value):
+    path = candidate / HOTEL_MANIFEST
+    manifest = json.loads(path.read_bytes())
+    if value is None:
+        del manifest[field]
+    else:
+        manifest[field] = value
+    path.write_text(json.dumps(manifest))
+    api = FakeGitHub()
+    with pytest.raises(PublicationError):
+        publisher(api).publish(candidate)
+    assert not api.calls
+
+
+def test_metadata_and_proof_cannot_relabel_actual_testing_apk_as_hotel(candidate):
+    apk = (candidate / APK).read_bytes()
+    (candidate / HOTEL_APK).write_bytes(apk)
+    (candidate / HOTEL_MANIFEST).write_bytes(metadata(apk, "hotel"))
+    (candidate / "verification-hotel.json").write_text(json.dumps(proof(apk, "hotel")))
+    api = FakeGitHub()
+    with pytest.raises(PublicationError, match="actual signed APK"):
+        publisher(api).publish(candidate)
+    assert not api.calls
+
+
+def test_apksigner_failure_prevents_any_publication(candidate, monkeypatch):
+    def run(command, **kwargs):
+        raise CalledProcessError(1, command)
+
+    monkeypatch.setattr("android.release_identity.subprocess.run", run)
+    api = FakeGitHub()
+    with pytest.raises(PublicationError):
+        publisher(api).publish(candidate)
+    assert not api.calls
+
+
+def test_hotel_upload_interruption_resumes_without_replacing_personal_pair(candidate):
+    api = FakeGitHub()
+    api.fail_upload = HOTEL_MANIFEST
+    with pytest.raises(OSError):
+        publisher(api).publish(candidate)
+    assert api.value["draft"]
+    assert set(api.contents) == {APK, MANIFEST, HOTEL_APK}
+    api.fail_upload = None
+    publisher(api).publish(candidate)
+    for name in (APK, MANIFEST, HOTEL_APK):
+        assert api.calls.count("upload:" + name) == 1
+    assert api.calls.count("publish_latest") == 1
+    assert set(api.contents) == set(ASSETS)  # Private proof is never uploaded.
+
+
+@pytest.mark.parametrize("change", ["historical", "distribution", "code", "url", "empty", "stale"])
+def test_remote_hotel_pair_is_required_and_bound_to_its_exact_metadata(candidate, change):
+    api = FakeGitHub()
+    publisher(api).publish(candidate)
+    if change == "historical":
+        api.value["assets"] = [item for item in api.value["assets"] if item["name"] in (APK, MANIFEST)]
+    elif change == "empty":
+        next(item for item in api.value["assets"] if item["name"] == HOTEL_APK)["size"] = 0
+    elif change == "stale":
+        next(item for item in api.value["assets"] if item["name"] == HOTEL_APK)["digest"] = "sha256:" + "0" * 64
+    else:
+        manifest = json.loads(api.contents[HOTEL_MANIFEST])
+        if change == "distribution":
+            manifest["distribution"] = "personal-test"
+        elif change == "code":
+            manifest["version_code"] = 60
+        else:
+            manifest["url"] = f"https://github.com/{REPOSITORY}/releases/download/{TAG}/{APK}"
+        data = json.dumps(manifest).encode()
+        api.contents[HOTEL_MANIFEST] = data
+        next(item for item in api.value["assets"] if item["name"] == HOTEL_MANIFEST).update(
+            size=len(data), digest="sha256:" + digest(data))
+    with pytest.raises(PublicationError):
+        publisher(api).already_published()
+
+
+@pytest.mark.parametrize("field", ["schema", "commit", "apk_sha256", "package_name", "version_code",
+                                 "signer_sha256", "distribution", "ui_ready", "bridge", "mic_off",
+                                 "retained_preferences", "retained_voice_key"])
+def test_private_proof_requires_every_exact_schema_field(candidate, field):
+    path = candidate / "verification-hotel.json"
+    evidence = json.loads(path.read_bytes())
+    del evidence[field]
+    path.write_text(json.dumps(evidence))
+    api = FakeGitHub()
+    with pytest.raises(PublicationError, match="proof"):
+        publisher(api).publish(candidate)
+    assert not api.calls
+
+
+def test_each_valid_individual_proof_still_requires_one_shared_signer(candidate, monkeypatch):
+    from android import release_identity
+
+    real_run = release_identity.subprocess.run
+
+    def run(command, **kwargs):
+        if command[0] == "apksigner" and Path(command[-1]).name == HOTEL_APK:
+            return CompletedProcess(command, 0, stdout="Signer #1 certificate SHA-256 digest: " + "c" * 64)
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(release_identity.subprocess, "run", run)
+    path = candidate / "verification-hotel.json"
+    evidence = json.loads(path.read_bytes())
+    evidence["signer_sha256"] = "c" * 64
+    path.write_text(json.dumps(evidence))
+    api = FakeGitHub()
+    with pytest.raises(PublicationError, match="signing identity"):
+        publisher(api).publish(candidate)
+    assert not api.calls
