@@ -50,8 +50,22 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   receive({ type: 'reception_info', audio_available: true, local_audio_state: 'unknown' });
   assert(doc.body.textContent.includes('Mic state unknown'), 'Recreated UI preserves unresolved microphone ownership');
   receive({ type: 'reception_info', audio_available: true, local_audio_state: 'off' });
-  const begin = () => {
+  const begin = (verifySelection = false) => {
     click('[data-action="translation"]');
+    assert(messages.at(-1).action === 'prepare_translation', 'Language screen prepares configuration before Start');
+    if (verifySelection) {
+      const starts = messages.filter(message => message.action === 'start').length;
+      for (const [side, value] of [['language', 'en'], ['staff_language', 'fr'], ['language', 'ko'], ['staff_language', 'es']]) {
+        const picker = doc.querySelector(`[data-language-side="${side}"]`);
+        picker.value = value;
+        picker.dispatchEvent(new win.Event('change', { bubbles: true }));
+        const prepared = messages.at(-1);
+        assert(prepared.action === 'prepare_translation' &&
+          prepared.language === doc.querySelector('#language').value &&
+          prepared.staff_language === doc.querySelector('#staff_language').value, 'Picker changes prepare the exact selected pair');
+        assert(messages.filter(message => message.action === 'start').length === starts && !doc.querySelector('.voice-ball'), 'Preparation does not start capture');
+      }
+    }
     click('[data-action="start"]');
     const session_id = messages.filter(message => message.action === 'start').at(-1).session_id;
     const scope = { session_id, generation: 1 };
@@ -150,7 +164,7 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
     receive({ type: 'visibility', visible: false });
     receive({ ...scope, type: 'audio_state', state: 'off' });
     receive({ type: 'language_preferences', language: guest, staff_language: staff });
-    scope = begin();
+    scope = begin(guest === 'ko');
     report('staff1', staff, 'Same original', 'Paired translation');
     report('staff2', staff, 'Same original', 'Paired translation');
     report('staff3', staff, 'Same original', 'Paired translation');

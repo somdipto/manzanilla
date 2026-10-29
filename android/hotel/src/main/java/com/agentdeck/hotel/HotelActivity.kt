@@ -524,6 +524,9 @@ class HotelActivity : Activity() {
                     pushState()
                 }
             }
+            "prepare_translation" -> if (foreground && !destroyed && owner.current == null) {
+                fish.prepare(message.optString("language"), message.optString("staff_language"))
+            }
             "bell" -> ringBell()
             "settings" -> openStaffSetup()
             "voice_setup" -> openStaffSetup(voiceOnly = true)
@@ -692,6 +695,7 @@ class HotelActivity : Activity() {
     }
     override fun onPause() {
         foreground = false
+        if (fishProvider.isInitialized()) fish.cancelPreparation()
         ui.removeCallbacks(updatePoll)
         ui.removeCallbacks(hotelPoll)
         cancelHotelProbe()

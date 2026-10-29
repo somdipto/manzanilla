@@ -11,6 +11,14 @@ def test_native_and_managed_caption_tool_contracts_match():
     assert managed == native
     assert managed['tool_type'] == 'client'
     assert managed['expects_response'] is False
+    assert 'execution_mode' not in managed
     assert [argument['name'] for argument in managed['arguments']] == ['source_language', 'original', 'translation']
     assert not managed.get('url')
     assert not managed.get('headers')
+
+
+def test_legacy_managed_caption_tool_uses_client_fire_and_forget_contract():
+    legacy = json.loads((ROOT / 'cloud/fish_caption_tool_v1.json').read_text())
+    assert legacy['tool_type'] == 'client'
+    assert legacy['expects_response'] is False
+    assert 'execution_mode' not in legacy
