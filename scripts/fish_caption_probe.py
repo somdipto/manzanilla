@@ -34,7 +34,7 @@ def request(method, path, key, body=None):
 def sanitized_validation(payload):
     # Never print provider input, arbitrary bodies, or exception text.
     allowed = {"body", "name", "tool_type", "description", "arguments", "expects_response",
-               "execution_mode", "value_error", "type_error", "string", "type", "missing"}
+               "execution_mode", "url", "method", "value_error", "type_error", "string", "type", "missing"}
     entries = payload if isinstance(payload, list) else payload.get("detail", []) if isinstance(payload, dict) else []
     if not isinstance(entries, list):
         entries = []
@@ -51,10 +51,10 @@ def sanitized_validation(payload):
     # Classify fixed vocabulary only; never emit the server's text.
     messages = []
     if isinstance(payload, dict):
-        messages.extend(payload.get(k, "") for k in ("message", "reason"))
+        messages.extend(payload.get(k, "") for k in ("message", "reason", "detail"))
     messages.extend(item.get("msg", "") for item in entries if isinstance(item, dict))
     text = " ".join(value.lower() for value in messages if isinstance(value, str))
-    for term in ("execution_mode", "client", "webhook", "fire_and_forget", "duplicate", "name", "arguments", "description"):
+    for term in ("execution_mode", "client", "webhook", "fire_and_forget", "duplicate", "name", "arguments", "description", "url", "method", "required"):
         if term in text:
             print("validation mentions " + term)
 
