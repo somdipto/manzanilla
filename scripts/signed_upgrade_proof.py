@@ -157,7 +157,7 @@ def main() -> int:
         stage = "reception"
         instrument("reception", distribution, commit,
                    f"PASS case=reception ui_ready=true bridge=true mic_off=true distribution={distribution}")
-        run("adb", "pull", f"/sdcard/Android/data/{PACKAGE}.test/files/signed-reception.png",
+        run("adb", "pull", f"/sdcard/Android/data/{PACKAGE}/files/signed-reception.png",
             str(EVIDENCE / "reception.png"))
         require((EVIDENCE / "reception.png").stat().st_size > 0)
         proof = {

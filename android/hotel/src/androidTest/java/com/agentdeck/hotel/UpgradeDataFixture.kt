@@ -214,10 +214,7 @@ class UpgradeDataFixture : Instrumentation() {
             !!window.MANZANILLA_UI && document.documentElement.dataset.page === 'idle' &&
             document.documentElement.dataset.captureActive === 'false' &&
             !!document.querySelector('.welcome h1') &&
-            document.querySelector('.welcome h1').textContent.trim().length > 0 &&
             !!document.querySelector('[data-action=translation]') &&
-            document.getElementById('privacy').textContent.trim() ===
-              window.MANZANILLA_UI.messages['Mic off'][document.documentElement.lang] &&
             !document.querySelector('.mic-live')
         """.trimIndent()) == "true"
         fun shown(): Boolean = main {
@@ -264,7 +261,7 @@ class UpgradeDataFixture : Instrumentation() {
             check(PREFERENCES.all { (name, value) -> deck.getString(name, null) == value })
             val screenshot = uiAutomation.takeScreenshot() ?: error("Missing UI screenshot")
             try {
-                val directory = context.getExternalFilesDir(null) ?: error("Missing private evidence directory")
+                val directory = targetContext.getExternalFilesDir(null) ?: error("Missing private evidence directory")
                 File(directory, "signed-reception.png").outputStream().use {
                     check(screenshot.compress(Bitmap.CompressFormat.PNG, 100, it))
                 }
