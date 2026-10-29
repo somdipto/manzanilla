@@ -1,23 +1,42 @@
 # Voice configuration update: 17.0.20
 
-Conversation-first update. The direct Fish route remains in this version; no backend or pairing is required for an existing standalone install.
+Historical conversation-first configuration record. This version used direct Fish without backend enrollment. It is not a current install, qualification or credential-rotation instruction; follow [the current distribution contract](ENVIRONMENT.md).
 
-## Changes
+## Changes recorded at the time
 
-- Hash the full Android agent configuration and refresh cached Fish configuration (revision 9), so old expressive=false agents are no longer reused.
-- Explicit Fish S2.1 Pro synthesis with expressive delivery. Prompts request clear, natural interpretation without added filler, laughter, or commentary.
-- Reduce Fish response wait from 450 ms to its documented 300 ms minimum. This is 150 ms less configured waiting, not a measured end-to-end improvement. Fish can wait longer when speech seems incomplete.
-- Use the staff-selected language across Fish's documented 52-language allowlist, rather than silently falling back to English outside seven languages.
-- Keep Scribe v2 Realtime recognition, multilingual input, interruption, and speculation disabled. Speculation previously coincided with duplicate-response recovery; it is not safe to enable without acoustic regression testing.
-- Keep managed configuration aligned, including localized guest greetings, for a future deployment. This release does not deploy that backend.
+- Full Android agent configuration was hashed and cached configuration moved
+  to revision 9, avoiding reuse of the earlier expressive=false identity.
+- Fish S2.1 Pro and expressive delivery were selected. The prompt requested
+  natural interpretation without filler, laughter or commentary; this was
+  configuration, not human naturalness qualification.
+- Response wait moved from 450 ms to 300 ms: 150 ms less configured waiting,
+  not a measured audible improvement. Fish could still extend an incomplete turn.
+- Staff language selection used the 52-code allowlist instead of a seven-code
+  English fallback. That did not qualify all 52 languages acoustically.
+- Scribe v2 Realtime and multilingual input/interruption were retained;
+  speculation was disabled after duplicate-response recovery. Later versions
+  changed settings, so this is not current speculation or recognizer advice.
+- Managed configuration was aligned for a future deployment; no backend was
+  deployed by this update.
 
 ## Security limit
 
-The standalone public APK still contains the provider credential. It is extractable. This is a temporary known risk, not a secure production design. Do not rotate it after this update: this version still needs that credential. Rotation belongs after a keyless backend release is deployed and devices have migrated.
+This historical standalone APK contained an extractable provider credential,
+not secure production credential storage. The former instruction to delay
+rotation until a keyless deployment is withdrawn. The known public 17.0.37
+personal-testing APK also exposes a disposable Fish key; its account owner
+must rotate/revoke it after testing. A key-free hotel build cannot revoke old
+copies. Follow [current signing and publication guidance](ENVIRONMENT.md#signing-and-publication).
 
-## Acceptance on the tablet
+## Qualification boundary
 
-Update to 17.0.20, end any existing conversation, then start a new one. Compare end-of-speech to first audible translation, naturalness, language switching, interruption, and exact numbers/names in both directions. Local tests cannot prove actual speech quality, hotel acoustics, provider entitlement, or real-device latency. No physical-device acceptance is claimed.
+Do not install this historical version as the current candidate. Follow
+[TEST-PLAN.md](TEST-PLAN.md#voice-repair-reproduction-unreleased) with the exact
+current artifact, held-out inputs, repeated trials, both directions,
+common-clock capture and bilingual review. No physical acoustic/provider
+acceptance was claimed by these local checks. Current hardware, entitlement,
+remaining aggregate budget and human-review gates remain blocked as described
+in [the pilot prerequisites](PILOT-DEPLOYMENT.md).
 
 ## Sources
 
@@ -25,7 +44,7 @@ Update to 17.0.20, end any existing conversation, then start a new one. Compare 
 - https://docs.fish.audio/agents/build/configuration
 - https://docs.fish.audio/agents/deploy/authenticated-sessions
 
-## Local validation and review
+## Historical local validation, not current qualification
 
 - Full Python suite: 167 passed (one existing AnyIO deprecation warning).
 - Android unit suite: 54 passed, zero failures.

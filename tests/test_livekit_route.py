@@ -23,6 +23,7 @@ def livekit_env(tmp_path, monkeypatch):
     store.save_hotel(Hotel(id='a', name='Synthetic').model_dump())
     monkeypatch.setattr(server, 'store', store)
     monkeypatch.setenv('VOICE_ROUTE', 'livekit')
+    monkeypatch.setenv('ALLOW_UNQUALIFIED_LIVEKIT', '1')
     monkeypatch.setenv('LIVEKIT_URL', 'wss://voice.example.test')
     monkeypatch.setenv('LIVEKIT_API_KEY', 'testkey')
     monkeypatch.setenv('LIVEKIT_API_SECRET', 'testsecret')
@@ -62,24 +63,102 @@ def test_mint_matches_hosted_response_shape(livekit_env):
     assert metadata == {'guest_language': 'es', 'staff_language': 'en'}
 
 
-def test_end_deletes_the_room_and_settles(livekit_env):
+@pytest.mark.parametrize('opt_in', [None, '0', 'true', '01', ' 1', '1 '])
+@pytest.mark.parametrize('request_id', [None, 'rejected-new-request'])
+def test_new_livekit_request_requires_exact_opt_in_before_any_reservation_or_token(
+        livekit_env, monkeypatch, opt_in, request_id):
+    store, headers, deleted = livekit_env
+    monkeypatch.delenv('ALLOW_UNQUALIFIED_LIVEKIT')
+    if opt_in is not None:
+        monkeypatch.setenv('ALLOW_UNQUALIFIED_LIVEKIT', opt_in)
+    request = {**REQUEST, **({'request_id': request_id} if request_id else {})}
+    def unexpected_creation(*args, **kwargs):
+        pytest.fail('Disabled LiveKit must not reserve a lease or mint a token')
+    with monkeypatch.context() as blocked:
+        blocked.setattr(store, 'reserve_fish', unexpected_creation)
+        blocked.setattr(route, 'token', unexpected_creation)
+        with TestClient(server.app) as client:
+            response = client.post('/api/device/fish-session', json=request, headers=headers)
+    assert response.status_code == 503
+    assert response.json() == {'detail': route.UNAVAILABLE}
+    assert response.headers['X-Manzanilla-Voice-Failure'] == 'configuration:unconfigured:0'
+    assert response.headers['X-Manzanilla-Session-Creation'] == 'not-created'
+    assert store.rows('SELECT * FROM fish_sessions') == [] and deleted == []
+    # Rejection consumed neither a write identity nor reserved daily seconds.
+    monkeypatch.setenv('ALLOW_UNQUALIFIED_LIVEKIT', '1')
+    accepted = TestClient(server.app).post('/api/device/fish-session', json=request, headers=headers)
+    assert accepted.status_code == 200
+    assert store.rows('SELECT route,status,reserved_seconds FROM fish_sessions') == [
+        {'route': 'livekit', 'status': 'live', 'reserved_seconds': 600}]
+
+
+@pytest.mark.parametrize('status', ['creating', 'live', 'uncertain', 'ending', 'revoked', 'ended', 'expired'])
+def test_opt_in_withdrawal_preserves_every_recorded_request_and_its_replay_contract(
+        livekit_env, monkeypatch, status):
+    store, headers, deleted = livekit_env
+    client = TestClient(server.app)
+    request = {**REQUEST, 'request_id': 'recorded-request'}
+    assert client.post('/api/device/fish-session', json=request, headers=headers).status_code == 200
+    store.run('UPDATE fish_sessions SET status=?', (status,))
+    recorded = store.rows('SELECT * FROM fish_sessions')
+    monkeypatch.delenv('ALLOW_UNQUALIFIED_LIVEKIT')
+    def unexpected_token(*args, **kwargs):
+        pytest.fail('A recorded request must not mint another token')
+    monkeypatch.setattr(route, 'token', unexpected_token)
+    replay = client.post('/api/device/fish-session', json=request, headers=headers)
+    assert replay.status_code == 409
+    assert replay.json() == {'detail': 'Interpreter session already outstanding'}
+    assert replay.headers['X-Manzanilla-Voice-Failure'] == 'admission:conflict:0'
+    assert 'X-Manzanilla-Session-Creation' not in replay.headers
+    new = client.post('/api/device/fish-session', json={**REQUEST, 'request_id': 'different-request'}, headers=headers)
+    assert new.status_code == 503
+    assert new.headers['X-Manzanilla-Session-Creation'] == 'not-created'
+    assert store.rows('SELECT * FROM fish_sessions') == recorded and deleted == []
+
+
+@pytest.mark.parametrize('hotel_id', ['a', 'b'])
+def test_another_callers_recorded_request_cannot_bypass_livekit_opt_in(livekit_env, monkeypatch, hotel_id):
+    store, headers, deleted = livekit_env
+    client = TestClient(server.app)
+    request = {**REQUEST, 'request_id': 'shared-client-request-id'}
+    assert client.post('/api/device/fish-session', json=request, headers=headers).status_code == 200
+    recorded = store.rows('SELECT * FROM fish_sessions')
+    if hotel_id != 'a':
+        store.save_hotel(Hotel(id=hotel_id, name='Other synthetic hotel').model_dump())
+    other = store.issue(hotel_id, 'device')
+    monkeypatch.delenv('ALLOW_UNQUALIFIED_LIVEKIT')
+    response = client.post('/api/device/fish-session', json=request,
+                           headers={'Authorization': 'Bearer ' + other['token']})
+    assert response.status_code == 503
+    assert response.headers['X-Manzanilla-Session-Creation'] == 'not-created'
+    assert store.rows('SELECT * FROM fish_sessions') == recorded and deleted == []
+
+
+def test_disabled_livekit_keeps_authentication_and_language_failures(livekit_env, monkeypatch):
+    store, headers, _ = livekit_env
+    monkeypatch.delenv('ALLOW_UNQUALIFIED_LIVEKIT')
+    client = TestClient(server.app)
+    unauthorized = client.post('/api/device/fish-session', json=REQUEST)
+    assert unauthorized.status_code == 401
+    assert unauthorized.headers['X-Manzanilla-Session-Creation'] == 'not-created'
+    invalid_pair = client.post('/api/device/fish-session', json={**REQUEST, 'staff_language': 'es'}, headers=headers)
+    assert invalid_pair.status_code == 422
+    assert invalid_pair.headers['X-Manzanilla-Voice-Failure'] == 'configuration:contract:0'
+    assert invalid_pair.headers['X-Manzanilla-Session-Creation'] == 'not-created'
+    assert store.rows('SELECT * FROM fish_sessions') == []
+
+
+def test_end_deletes_the_room_and_settles_after_opt_in_withdrawal(livekit_env, monkeypatch):
     store, headers, deleted = livekit_env
     client = TestClient(server.app)
     minted = client.post('/api/device/fish-session', json=REQUEST, headers=headers).json()
+    monkeypatch.delenv('ALLOW_UNQUALIFIED_LIVEKIT')
     response = client.post('/api/device/fish-session/' + minted['session_id'] + '/end', headers=headers)
     assert response.status_code == 200
     assert response.json() == {'status': 'ended', 'session_id': minted['session_id']}
     assert deleted == [minted['session_id']]
     assert store.rows('SELECT status FROM fish_sessions WHERE session_id=?',
                       (minted['session_id'],))[0]['status'] == 'ended'
-
-
-def test_fish_route_remains_default(monkeypatch, tmp_path):
-    monkeypatch.delenv('VOICE_ROUTE', raising=False)
-    import cloud.app as app_module
-    import inspect
-    source = inspect.getsource(app_module.fish_session)
-    assert "os.getenv('VOICE_ROUTE','fish')" in source
 
 
 def test_missing_server_config_refuses_cleanly(livekit_env, monkeypatch):
@@ -104,6 +183,7 @@ def test_lost_response_cleanup_is_owned_and_uses_stored_route_after_switch(livek
     minted = client.post('/api/device/fish-session', json=request, headers=headers).json()
     # Simulate a backend configuration flip and a client that never saw the response.
     monkeypatch.setenv('VOICE_ROUTE', 'fish')
+    monkeypatch.delenv('ALLOW_UNQUALIFIED_LIVEKIT')
     other = store.issue('a', 'device')
     url = '/api/device/fish-session-requests/lost-livekit-response/end'
     assert client.post(url, headers={'Authorization': 'Bearer ' + other['token']}).status_code == 503
@@ -122,6 +202,7 @@ def test_revocation_deletes_livekit_room_and_failure_remains_retryable(livekit_e
     monkeypatch.setenv('ORANGE_ADMIN_TOKEN', 'x' * 40)
     client = TestClient(server.app)
     minted = client.post('/api/device/fish-session', json=REQUEST, headers=headers).json()
+    monkeypatch.delenv('ALLOW_UNQUALIFIED_LIVEKIT')
     device = store.auth(server.bearer(headers['Authorization']), 'device')
     attempts = []
     async def failing_delete(http_base, key, secret, room):
@@ -181,6 +262,7 @@ def test_duplicate_preflight_does_not_claim_original_session_was_not_created(liv
     other = client.post('/api/device/fish-session', json={**REQUEST, 'request_id': 'new-id'}, headers=headers)
     assert other.status_code == 409 and other.headers['X-Manzanilla-Session-Creation'] == 'not-created'
     monkeypatch.delenv('LIVEKIT_API_SECRET')
+    monkeypatch.delenv('ALLOW_UNQUALIFIED_LIVEKIT')
     duplicate = client.post('/api/device/fish-session', json=request, headers=headers)
     assert duplicate.status_code == 503
     assert 'X-Manzanilla-Session-Creation' not in duplicate.headers

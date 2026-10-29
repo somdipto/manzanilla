@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'voice-worker'))
 from livekit import api, rtc
 import voice_worker.session as worker
@@ -139,9 +140,12 @@ async def run(url):
             return
         async def consume():
             stream = rtc.AudioStream(track, sample_rate=48000, num_channels=1)
-            async for frame in stream:
-                if any(bytes(frame.frame.data)):
-                    received_audio.set()
+            try:
+                async for frame in stream:
+                    if any(bytes(frame.frame.data)):
+                        received_audio.set()
+            finally:
+                await stream.aclose()
         task = asyncio.create_task(consume())
         background.add(task)
         task.add_done_callback(background.discard)
@@ -189,19 +193,25 @@ async def run(url):
         first_turn = next(t for e,t,v in trace.events if e == 'first_audio_published' and v.get('turn') == 1)
         assert interrupted <= flushed <= first_turn
         assert SyntheticASR.instance.frames > 0 and SyntheticASR.instance.injected
-        print(json.dumps({'result': 'PASS', 'server': 'local LiveKit 1.13.10',
+        result = {'result': 'PASS', 'server': 'local LiveKit 1.13.10',
             'providers': 'synthetic fakes; zero paid calls', 'device_audio_frames_received_by_worker': SyntheticASR.instance.frames,
             'device_received_agent_audio': received_audio.is_set(), 'interruption_flushed': True,
             'device_received_matching_caption': True,
             'interrupt_event_to_local_flush_ms': round((flushed - interrupted) * 1000, 2),
-            'scope': 'transport and ordering only; not acoustic latency, ASR accuracy or naturalness'}))
+            'scope': 'transport and ordering only; not acoustic latency, ASR accuracy or naturalness'}
     finally:
-        await room.disconnect()
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
-        for pending in list(background):
-            pending.cancel()
-        await asyncio.gather(*list(background), return_exceptions=True)
+        pending = [task, *background]
+        for item in pending:
+            item.cancel()
+        stopped = await asyncio.gather(*pending, return_exceptions=True)
+        try:
+            await source.aclose()
+        finally:
+            await room.disconnect()
+        for outcome in stopped:
+            if isinstance(outcome, BaseException) and not isinstance(outcome, asyncio.CancelledError):
+                raise outcome
+    print(json.dumps(result))
 
 
 def main():

@@ -4,6 +4,36 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.45 qualification-gates candidate (S8)
+
+Version 17.0.45/code75. Fish remains the default; LiveKit is explicit evaluation,
+not a substitute for unavailable provider or physical acceptance.
+
+- **Passed:** 728 Python cases, 17 Node cases, catalogue generation/check and ten
+  Chromium151 scenarios with the existing selected-locale qualification notice
+  visible. A deleted host browser cache was restored into task-owned storage.
+- **Passed:** actual isolated HTTPS API across backend restarts with opt-in
+  absent, enabled and withdrawn. New rejection creates no reservation; one
+  admitted request remains recorded, replay is not falsely labelled not-created,
+  and end/cleanup still completes against the actual local room service.
+- **Passed:** zero-paid synthetic transport with the actual LiveKit1.13.10 server
+  built from official tag `e5655ac20267fa5005dccaf3f0e3bfc3ea688c07`.
+  Device audio reached the worker during its greeting; interrupted playback
+  flushed before replacement audio, and the matching caption reached the client.
+  This is local transport/ordering, not acoustic latency, accuracy or naturalness.
+- The CLI initially lacked the repository import path. It now uses the existing
+  script-root convention. Owned RTC streams/sources close before disconnect;
+  the rerun has no FFI teardown assertions and reports PASS only after cleanup.
+  The 36 worker tests pass. The known short dev-key warning is intentional in
+  this isolated evaluation; it is not a production credential configuration.
+- Private `work/voice-acceptance/qualification.json` initializes 159 route/pair
+  records covering all52 offered codes plus English/Arabic, all `not_tested`,
+  with no device, artifact digest or manufactured capture evidence.
+- **Blocked:** matching physical tablet/captures, bilingual review, actual
+  designated hotel staff and approved vendor test environments, live provider
+  qualification and verified remaining aggregate $4 allowance. No paid call,
+  acoustic-improvement claim, release or deployment was made.
+
 ## 17.0.41 readiness/distribution candidate (S4)
 
 Version 17.0.41/code71, stacked on S3. The canonical catalogue has 410 messages

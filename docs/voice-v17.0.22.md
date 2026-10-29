@@ -1,8 +1,8 @@
 # Voice configuration update: 17.0.22
 
-Conversation-first update. The direct Fish route remains in this version; no backend or pairing is required for an existing standalone install.
+Historical conversation-first configuration record, not current behavior or installation guidance. This version used direct Fish without enrollment. Its alternating-side and arrival-order caption rules were later removed: current repair turns use explicit language evidence and unclear language stays neutral. Follow [the current artifact and qualification contract](../README.md).
 
-## Changes
+## Changes recorded at the time (superseded caption rules)
 
 - Live-translation bubbles follow chat convention: the guest's speech sits on the left, the receptionist's on the right, and each translation renders as a plain line at the bottom of the speaker's own bubble. There is no "AI" tag, provider label, or "Assistant output" text anywhere in translation mode.
 - Speaker labels come only from the turn layout, not from guesses. With one shared microphone the device cannot know who spoke, so unlabeled human turns alternate sides after each translated turn (first turn: guest). The Unspecified/Guest/Receptionist pills and the native forced-speaker path are removed: speaker attribution is never hardcoded or manually pinned.
@@ -12,21 +12,32 @@ Conversation-first update. The direct Fish route remains in this version; no bac
 
 ## Security limit
 
-The standalone public APK still contains the provider credential. It is extractable. This is a temporary known risk, not a secure production design. Do not rotate it after this update: this version still needs that credential. Rotation belongs after a keyless backend release is deployed and devices have migrated.
+This historical standalone APK contained an extractable provider credential,
+not secure production credential storage. The former instruction to defer
+rotation until a keyless deployment is withdrawn. The known public 17.0.37
+personal-testing APK also exposes a disposable Fish key; its account owner
+must rotate/revoke it after testing. A key-free hotel artifact cannot revoke
+previous copies. See [current credential guidance](ENVIRONMENT.md#signing-and-publication).
 
-## Acceptance on the tablet
+## Qualification boundary
 
-Update to 17.0.22, end any existing conversation, then start a new one. Check: bubbles alternate sides plausibly during a two-person exchange; translations appear at the bottom of the speaker's bubble with no AI labeling; a run of speech in one language stays one bubble and is answered in the other language even when the previous utterance was in the same language (speak two guest sentences in a row); the mic button turns red while capturing and mutes/unmutes on tap; muted speech produces no captions. Local tests cannot prove actual speech quality, hotel acoustics, provider behavior, or real-device latency. No physical-device acceptance is claimed.
+The former instruction to install 17.0.22 and accept plausible side alternation
+is withdrawn. Do not qualify current caption ownership by turn order. Use the
+exact current artifact and [the acoustic protocol](TEST-PLAN.md#voice-repair-reproduction-unreleased):
+held-out inputs, repetitions, both directions, common-clock captures and human
+meaning/naturalness review. Local caption/mute checks are not physical audio,
+provider entitlement or bilingual accuracy proof. Current external hardware,
+budget and staff gates remain blocked; see [pilot prerequisites](PILOT-DEPLOYMENT.md).
 
-## Known limits
+## Historical limits of 17.0.22
 
-- A mute tap during the first seconds of connection, before the audio room exists, is dropped without feedback; tap again once the session is live.
-- Per-utterance language identification is prompt-level. The provider's `voice.speaking_language` still sets one output language per session; the prompt's override is verified only by real speech on the tablet.
+- During that version's initial connection, mute taps before room creation were dropped without feedback. This historical limitation is not an instruction to accept that behavior now.
+- Per-utterance language identification was prompt-level. The configured output language and prompt alone did not establish correct live bilingual speech on the tablet.
 - Turn sides for unlabeled speech alternate by order, not by who actually spoke. A turn misattributed by the provider still lands on the wrong side.
 
-## Local validation and review
+## Historical local validation, not current qualification
 
 - Full Python suite: 241 passed (Python 3.12; 3.10 lacks asyncio.timeout used by the cloud route).
 - Browser fixture (tests/reception_caption_fixture.js) run in a real Chromium against the shipped assets: all assertions passed, covering turn merge, side alternation, greeting placement, HTML escaping, finality, absence of AI labels and speaker pills, mic mute toggle, mic-level-only updates, scrolling, full re-render relinking, and stale-session reset (601 caption updates replayed in about 274 ms).
 - Android unit suite and debug APK build: pending toolchain in the development environment (JDK 17 and Android SDK unavailable); see the ship notes for the CI build path.
-- No mock screenshots were produced as device proof; the tablet owner runs acceptance via the APK.
+- No mock screenshots were produced as device proof, and no physical acceptance result was recorded by this note.

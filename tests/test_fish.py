@@ -17,6 +17,8 @@ def fish_api(tmp_path,monkeypatch):
     store=Store(str(tmp_path/'fish.db'));store.save_hotel(Hotel(id='a',name='Synthetic').model_dump())
     monkeypatch.setattr(server,'store',store)
     monkeypatch.setattr(fish,'provision_lock',asyncio.Lock())
+    monkeypatch.setenv('VOICE_ROUTE','fish')
+    monkeypatch.delenv('ALLOW_UNQUALIFIED_LIVEKIT',raising=False)
     monkeypatch.setenv('FISH_API_KEY','SERVER-ONLY-TEST-KEY')
     monkeypatch.setenv('FISH_VOICE_ID','synthetic-voice')
     monkeypatch.setenv('FISH_HOTEL_DAILY_SECONDS','1800')
@@ -115,6 +117,19 @@ def test_managed_fish_create_publish_and_mint_returns_only_transport(fish_api):
     rows=store.rows('SELECT * FROM fish_sessions')
     assert len(rows)==2 and all(row['status']=='ended' and row['reserved_seconds']==600 for row in rows)
     assert 'short-lived-join-token' not in json.dumps(rows)
+
+
+@pytest.mark.parametrize('opt_in', [None, '0'])
+def test_default_hosted_fish_does_not_require_livekit_opt_in(fish_api, monkeypatch, opt_in):
+    store,client,headers,_,calls,_=fish_api
+    monkeypatch.delenv('VOICE_ROUTE')
+    if opt_in is not None:
+        monkeypatch.setenv('ALLOW_UNQUALIFIED_LIVEKIT',opt_in)
+    response=client.post('/api/device/fish-session',headers=headers,json=REQUEST)
+    assert response.status_code==200
+    assert response.json()['token']=='short-lived-join-token'
+    assert store.rows('SELECT route,status FROM fish_sessions')==[{'route':'fish','status':'live'}]
+    assert [path for path,_ in calls][-1]=='/v1/agent/sessions'
 
 
 def test_fish_device_auth_and_interpreter_only_boundary(fish_api):

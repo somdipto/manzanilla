@@ -1,12 +1,16 @@
-# Self-hosted voice route (issue #8): LiveKit server + interpreter worker.
-# Deploy alongside the existing backend service; see docs/selfhosted-voice-route.md.
+# EVALUATION ONLY: one LiveKit server + one owning interpreter worker.
+# Run alongside exactly one backend process with its existing SQLite ledger.
+# Backend new-room opt-in: VOICE_ROUTE=livekit and ALLOW_UNQUALIFIED_LIVEKIT=1.
+# Not a production recipe with swapped secrets; see docs/selfhosted-voice-route.md.
+# Reject deployments requiring multiple owners or strict immediate token revocation.
+# Provider calls cost money: establish remaining authorization before starting.
 # Real API keys come from your secret store - never commit them.
 services:
   livekit:
     image: livekit/livekit-server:v1.13.10
     # 1.13.x verified; participant attributes are the agent-state channel and
     # 1.9.x silently drops them.
-    command: ["--dev"]   # dev keys for local evaluation only; use --config with real keys in production
+    command: ["--dev"]   # local evaluation only; not production credentials or isolation
     ports:
       - "7880:7880"      # signaling (ws/wss via your TLS proxy)
       - "7881:7881"      # RTC over TCP
@@ -17,7 +21,7 @@ services:
       dockerfile: infra/Dockerfile.voice-worker
     environment:
       LIVEKIT_URL: ws://livekit:7880
-      LIVEKIT_API_KEY: devkey       # replace with your real key pair in production
+      LIVEKIT_API_KEY: devkey       # local evaluation pair, never expose this server publicly
       LIVEKIT_API_SECRET: secret
       FISH_API_KEY: ${FISH_API_KEY:?set in your secret store}
       FISH_VOICE_ID: ${FISH_VOICE_ID:?}
