@@ -8,6 +8,16 @@ const report = (id, language, original = 'Repeated phrase', text = 'Translation'
 });
 const caption = (id, text, extra = {}) => ({ type: 'caption', utterance_id: id, side: 'human', field: 'original', operation: 'replace', final: false, text, ...extra });
 
+test('X Y Y X X follows selected languages while an uncertain third-language transcript stays neutral', () => {
+  const ledger = new LanguageTurns();
+  for (const [index, language] of ['en', 'gu', 'gu', 'en', 'en', 'und'].entries()) {
+    ledger.accept(report(String(index), language, language === 'en' ? 'I need a room.' : 'મને એક રૂમ જોઈએ છે.'), 'en', 'gu');
+  }
+  assert.deepEqual(ledger.turns.map(t => t.side), ['guest', 'staff', 'staff', 'guest', 'guest', null]);
+  assert.equal(ledger.turns[1].original, 'મને એક રૂમ જોઈએ છે.');
+  assert.equal(ledger.turns[5].text, '');
+});
+
 test('all 2652 ordered picker pairs map both languages by selection, including repeats', () => {
   const source = fs.readFileSync('android/hotel/src/main/java/com/agentdeck/hotel/DeskLanguages.kt', 'utf8');
   const codes = [...source.match(/val codes: List<String> = listOf\(([\s\S]*?)\)/)[1].matchAll(/"([a-z]{2})"/g)].map(m => m[1]);
@@ -15,8 +25,13 @@ test('all 2652 ordered picker pairs map both languages by selection, including r
   for (const guest of codes) for (const staff of codes) {
     if (guest === staff) continue;
     const ledger = new LanguageTurns();
-    for (const [id, language] of [['s1', staff], ['s2', staff], ['s3', staff], ['u1', 'und'], ['g1', guest], ['g2', guest], ['g3', guest], ['u2', 'und']]) ledger.accept(report(id, language), guest, staff);
+    for (const [id, language] of [['s1', staff], ['s2', staff], ['s3', staff], ['u1', 'und'], ['g1', guest], ['g2', guest], ['g3', guest], ['u2', 'und']]) {
+      const event = report(id, language);
+      if (language === 'und') event.text = ' \t\n';
+      ledger.accept(event, guest, staff);
+    }
     assert.deepEqual(ledger.turns.map(t => t.side), ['staff', 'staff', 'staff', null, 'guest', 'guest', 'guest', null], `${guest}/${staff}`);
+    assert.ok(ledger.turns.filter(t => t.sourceLanguage === 'und').every(t => t.text === ''), `${guest}/${staff}: unclear translation is empty`);
   }
 });
 
@@ -134,6 +149,7 @@ test('invalid report fields and a translation with unknown direction cannot crea
   for (const event of [
     { ...report('a', 'und'), text: 'Guessed translation' },
     { ...report('b', 'de'), text: '' },
+    { ...report('blank', 'de'), text: ' \t\n' },
     { ...report('c', 'de'), original: 204 },
     { ...report('d', 'de'), original: '   ' }
   ]) assert.deepEqual(ledger.accept(event, 'fr', 'de'), []);

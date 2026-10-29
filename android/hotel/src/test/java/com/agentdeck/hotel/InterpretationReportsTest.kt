@@ -14,11 +14,12 @@ class InterpretationReportsTest {
         for (guest in DeskLanguages.codes) for (staff in DeskLanguages.codes) {
             if (guest == staff) continue
             val reports = InterpretationReports(guest, staff)
-            for ((id, language) in listOf("one" to staff, "two" to staff, "three" to guest, "four" to guest, "five" to "und")) {
-                val event = reports.accept(call(id, language))!!
+            for ((id, language) in listOf("one" to staff, "two" to staff, "three" to "und", "four" to guest, "five" to guest, "six" to "und")) {
+                val event = reports.accept(call(id, language, translation = if (language == "und") " \n\t " else "Translation"))!!
                 assertEquals(language, event.getString("source_language"))
                 assertEquals("model", event.getString("language_attribution"))
                 assertEquals("fish:report:$id", event.getString("utterance_id"))
+                assertEquals(if (language == "und") "" else "Translation", event.getString("text"))
             }
         }
     }
