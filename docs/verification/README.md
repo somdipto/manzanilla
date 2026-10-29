@@ -16,6 +16,9 @@ shipped page and bridge to actual intercepted configuration provisioning, with
 no pre-Start session or media. Calling the transport helper alone does not prove
 that path. Emulator background checks select only a system HOME handler and
 retain bounded case evidence, not raw logcat.
+Credential lookup may occur during optional preparation. Permission checks
+observe actual transport/microphone transitions and retryable release, not an
+incidental number of credential reads.
 
 The seven reviewable candidates are resequenced to17.0.40–17.0.46/code70–76;
 S7 and S8 remain one final PR. Earlier evidence below retains the actual
