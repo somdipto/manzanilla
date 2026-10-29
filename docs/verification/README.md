@@ -21,7 +21,10 @@ observe actual transport/microphone transitions and retryable release, not an
 incidental number of credential reads.
 Chooser dispatch waits for actual native foreground/window focus within its
 existing deadline. Failed transitions retain only bounded lifecycle flags;
-fixtures never manufacture a resume or loosen production authorization.
+the chooser fixture does not manufacture a resume or loosen authorization.
+Framework lifecycle exceptions in isolated native QA emit only exception type
+and a bounded application source location before normal crash handling continues.
+Exception messages, Intent extras and raw logcat are not retained.
 
 The seven reviewable candidates are resequenced to17.0.40–17.0.46/code70–76;
 S7 and S8 remain one final PR. Earlier evidence below retains the actual
