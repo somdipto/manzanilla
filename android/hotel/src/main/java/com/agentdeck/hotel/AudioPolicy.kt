@@ -8,7 +8,7 @@ object AudioPolicy {
     const val LIVE_AUDIO_ENABLED = true
     const val BLOCK_REASON = "Live translation is unavailable. Ask staff to check the audio credential in Settings."
 
-    /** Local setup readiness only; it does not establish provider access. */
+    /** Local readiness only. Returned source IDs are localized by the native message producer. */
     fun blockReason(backendConfigured: Boolean, directKey: SecretStore.Status, bundledKeyAvailable: Boolean,
                     directFishSelected: Boolean = false): String {
         if (!LIVE_AUDIO_ENABLED) return BLOCK_REASON

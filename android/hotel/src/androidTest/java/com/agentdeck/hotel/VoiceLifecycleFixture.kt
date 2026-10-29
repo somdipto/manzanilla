@@ -47,6 +47,9 @@ class VoiceLifecycleFixture : Instrumentation() {
             result.putString("stream", "PASS case=$case late=$late status=$status\n")
             finish(-1, result)
         } catch (e: Throwable) {
+            // Never print exception messages: a provider body, Intent extra or
+            // installer capability can be embedded in them. Source locations
+            // are enough to diagnose a failed check on the isolated fixture.
             val failure = e.cause ?: e
             val installer = case.startsWith("installer") || case.startsWith("update")
             val frame = if (installer) null else failure.stackTrace.firstOrNull {

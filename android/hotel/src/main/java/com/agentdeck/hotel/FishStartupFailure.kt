@@ -95,7 +95,8 @@ class FishStartupFailure private constructor(
         }
 
         /** Classify types only. The bounded cause walk also handles wrapped TLS/network failures. */
-        fun describe(stage: Stage, error: Throwable, managed: Boolean): Notice {
+        fun describe(stage: Stage, error: Throwable, managed: Boolean,
+                     text: (String, Map<String, String>) -> String): Notice {
             val causes = ArrayList<Throwable>()
             var cursor: Throwable? = error
             repeat(8) {
@@ -114,7 +115,7 @@ class FishStartupFailure private constructor(
                     causes.any { it is IllegalArgumentException || it is IllegalStateException } -> Category.CONFIGURATION
                     else -> Category.UNKNOWN
                 })
-            val service = if (managed) "hotel translation service" else "translation service"
+            val service = text(if (managed) "hotel translation service" else "translation service", emptyMap())
             val upstream = managed && failure.stage !in setOf(Stage.MANAGED_SESSION, Stage.ADMISSION, Stage.CONFIGURATION)
             val message = when (failure.category) {
                 Category.AUTHENTICATION -> when {
@@ -134,19 +135,20 @@ class FishStartupFailure private constructor(
                     else -> "Required translation setup is missing. Ask staff to check for an app update or repair translation setup."
                 }
                 Category.CONFLICT -> "Translation setup conflicts with the current service state. Ask staff to check for an unfinished conversation."
-                Category.UNAVAILABLE -> "The $service is temporarily unavailable. Try again shortly or ask staff to check service status."
-                Category.DNS -> "The $service address could not be reached. Check internet access or ask staff to check the service address."
-                Category.TLS -> "A secure connection to the $service could not be established. Ask staff to check the device date and service certificate."
-                Category.TIMEOUT -> "The $service did not respond in time. Check internet access and try again shortly."
-                Category.NETWORK -> "The connection to the $service was interrupted. Check internet access and try again shortly."
-                Category.RESPONSE -> "The $service returned an incomplete response. Ask staff to check the service and app versions."
+                Category.UNAVAILABLE -> "The {service} is temporarily unavailable. Try again shortly or ask staff to check service status."
+                Category.DNS -> "The {service} address could not be reached. Check internet access or ask staff to check the service address."
+                Category.TLS -> "A secure connection to the {service} could not be established. Ask staff to check the device date and service certificate."
+                Category.TIMEOUT -> "The {service} did not respond in time. Check internet access and try again shortly."
+                Category.NETWORK -> "The connection to the {service} was interrupted. Check internet access and try again shortly."
+                Category.RESPONSE -> "The {service} returned an incomplete response. Ask staff to check the service and app versions."
                 Category.UNCONFIGURED -> "Translation is not configured on the hotel service. Ask staff to configure translation access on that service."
                 Category.BUDGET -> "The hotel's translation allowance has been reached. Ask staff to check the hotel's translation limits."
                 Category.HTTP, Category.UNKNOWN -> "Translation could not start. Ask staff to check service access using the reference below."
             }
             val reference = "TR-${failure.stage.code}-${failure.category.code}" +
                 (failure.httpStatus?.let { "-HTTP$it" } ?: "")
-            return Notice("$message Reference: $reference", reference)
+            val localized = text(message, if (message.contains("{service}")) mapOf("service" to service) else emptyMap())
+            return Notice(text("{message} Reference: {reference}", mapOf("message" to localized, "reference" to reference)), reference)
         }
     }
 }

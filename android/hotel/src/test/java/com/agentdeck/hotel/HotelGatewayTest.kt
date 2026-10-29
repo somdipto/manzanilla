@@ -83,7 +83,8 @@ class HotelGatewayTest {
     private fun newGateway(base: String) = HotelGateway(base, "fixture-only-device-credential", { actual, event ->
         assertEquals(lease, actual)
         events.add(event)
-    }, { _, _ -> fail("A note must never open the dialer") }, OkHttpClient.Builder()
+    }, { _, _ -> fail("A note must never open the dialer") },
+        { _, message, values -> values.entries.fold(message) { result, entry -> result.replace("{${entry.key}}", entry.value) } }, OkHttpClient.Builder()
         .sslSocketFactory(tls.socketFactory, trust).connectTimeout(2, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.SECONDS).build())
 

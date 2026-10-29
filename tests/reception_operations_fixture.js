@@ -16,7 +16,7 @@ export async function runReceptionOperationsFixture(assetBase = new URL('../andr
   await loaded;
   const win = frame.contentWindow, doc = frame.contentDocument, messages = [];
   win.ManzaniaNative = { postMessage:value => messages.push(JSON.parse(value)) };
-  for (const file of ['language-turns.js','reception.js']) {
+  for (const file of ['locales.js','language-turns.js','reception.js']) {
     const script = doc.createElement('script');
     script.src = new URL(file, assetBase).href;
     const ready = new Promise((resolve,reject) => { script.onload = resolve; script.onerror = reject; });
@@ -34,6 +34,7 @@ export async function runReceptionOperationsFixture(assetBase = new URL('../andr
     target.dispatchEvent(new win.Event('input', { bubbles:true }));
   };
   const actionMessages = action => messages.filter(message => message.action === action);
+  win.manzania.receive({ type:'language_preferences', language:'en', staff_language:'es' });
   click('[data-action="request:message"]');
   click('[data-action="assist-go"]');
   const scope = { session_id:actionMessages('start').at(-1).session_id, generation:1 };
