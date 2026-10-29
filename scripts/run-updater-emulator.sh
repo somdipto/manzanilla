@@ -32,9 +32,11 @@ if [[ -n "${QA_BASE_APK:-}${QA_TEST_APK:-}$qa_candidate" ]]; then
     "$aapt" dump badging "$1" | python3 -c '
 import re, sys
 text = sys.stdin.read()
-match = re.search(r"^package: name=\x27([^\x27]+)\x27 versionCode=\x27([0-9]+)\x27 versionName=\x27([^\x27]+)\x27", text, re.M)
+match = re.search(r"^package: name=\x27([^\x27]+)\x27 versionCode=\x27([^\x27]*)\x27 versionName=\x27([^\x27]*)\x27", text, re.M)
 assert match and match[1] == sys.argv[1], "Unexpected QA package"
+assert sys.argv[1] == "dev.orange.hotel.test" or (match[2].isdigit() and match[3]), "QA app version is required"
 assert "application-debuggable" in text, "QA APK must be debuggable and run-as accessible"
+assert "android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" not in text, "Genuine QA must require Android user consent"
 print(match[2], match[3])
 ' "$2"
   }

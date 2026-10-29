@@ -158,14 +158,14 @@ jobs:
             printf '99.0.0\n' > android/VERSION
             printf '9900\n' > android/VERSION_CODE
           fi
-          bash android/gradlew -p android :hotel:assembleDebug :hotel:assembleDebugAndroidTest -Pdistribution=personal-test --no-daemon --max-workers=2
+          bash android/gradlew -p android :hotel:assembleDebug :hotel:assembleDebugAndroidTest -Pdistribution=personal-test -PinstallerConsentFixture --no-daemon --max-workers=2
           if [[ '${{ matrix.api }}' == 34 ]]; then
             mkdir -p "$RUNNER_TEMP/updater-qa"
             cp android/hotel/build/outputs/apk/debug/hotel-debug.apk "$RUNNER_TEMP/updater-qa/baseline.apk"
             cp android/hotel/build/outputs/apk/androidTest/debug/hotel-debug-androidTest.apk "$RUNNER_TEMP/updater-qa/fixture.apk"
             printf '99.0.1\n' > android/VERSION
             printf '9901\n' > android/VERSION_CODE
-            bash android/gradlew -p android :hotel:assembleDebug -Pdistribution=personal-test --no-daemon --max-workers=2
+            bash android/gradlew -p android :hotel:assembleDebug -Pdistribution=personal-test -PinstallerConsentFixture --no-daemon --max-workers=2
             cp android/hotel/build/outputs/apk/debug/hotel-debug.apk "$RUNNER_TEMP/updater-qa/candidate.apk"
             printf 'QA_BASE_APK=%s/updater-qa/baseline.apk\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
             printf 'QA_TEST_APK=%s/updater-qa/fixture.apk\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
