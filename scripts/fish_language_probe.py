@@ -130,6 +130,10 @@ async def check_turns(ticket, tool_name):
             passed &= report.get("original") == original
             print("synthetic_turn=" + str(index + 1) + " expected_language=" + language + " passed=" + str(passed).lower(), flush=True)
             if not passed:
+                # Only this fresh, isolated room receives these fixed synthetic phrases.
+                # Do not log arbitrary API responses, tickets, headers or exception text.
+                print("synthetic_caption=" + json.dumps({name: str(report.get(name, ""))[:500]
+                    for name in ("source_language", "original", "translation")}, ensure_ascii=True), flush=True)
                 raise RuntimeError("synthetic language routing failed")
         print("scope=text_input_only_no_microphone_no_acoustic_latency_claim", flush=True)
     finally:
