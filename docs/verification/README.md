@@ -10,6 +10,13 @@ The user published main `e19f711be274330905beec3ac7e31699f9149c82` as
 17.0.39/code69 while the repair stack was in progress. The feature branches
 preserve its immutable Fish preparation/cache, foreground cancellation,
 greeting-disabled startup and independent selected-language caption behavior.
+
+Warm preparation is not a session start. Its native regression traverses the
+shipped page and bridge to actual intercepted configuration provisioning, with
+no pre-Start session or media. Calling the transport helper alone does not prove
+that path. Emulator background checks select only a system HOME handler and
+retain bounded case evidence, not raw logcat.
+
 The seven reviewable candidates are resequenced to17.0.40–17.0.46/code70–76;
 S7 and S8 remain one final PR. Earlier evidence below retains the actual
 versions and source commits exercised; it is not silently relabelled.
