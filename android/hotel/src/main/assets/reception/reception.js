@@ -231,8 +231,8 @@
         return '<div class="status-line"><h2>'.concat(esc(uiText("Confirm request?")), '</h2><button class="back" data-action="back">').concat(icons.back).concat(esc(uiText("Back")), '</button></div><div class="draft" dir="auto">').concat(esc(((_a2 = state.draft) == null ? void 0 : _a2.message) || ""), "</div>").concat(fine(((_b2 = state.draft) == null ? void 0 : _b2.attempted) ? state.draft.approved === false ? uiText("No cancellation receipt yet. Retry to check the result.") : uiText("No receipt yet. Retry the same request to check its result.") : uiText("Confirm only if the details are correct.")), '<div class="button-row">').concat(action(((_c2 = state.draft) == null ? void 0 : _c2.attempted) ? "retry-draft" : "confirm", state.confirmed ? ((_d2 = state.draft) == null ? void 0 : _d2.approved) === false ? uiText("Cancelling…") : uiText("Sending…") : ((_e2 = state.draft) == null ? void 0 : _e2.attempted) ? uiText("Retry") : uiText("Confirm"), "primary", state.confirmed)).concat(state.operation ? action("edit-draft", uiText("Edit"), "secondary", state.confirmed || ((_f2 = state.draft) == null ? void 0 : _f2.attempted)) : "").concat(action("cancel-draft", uiText("Cancel"), "secondary", state.confirmed), "</div>");
       },
       saved: () => {
-        var _a2, _b2;
-        return "<h2>".concat(esc(uiText("Request receipt")), '</h2><section class="request-receipt"><p class="lead" dir="auto">').concat(esc(((_a2 = state.outcome) == null ? void 0 : _a2.text) || uiText("No receipt returned. Ask staff to check.")), "</p>").concat(((_b2 = state.outcome) == null ? void 0 : _b2.receipt) ? '<div class="receipt" dir="auto"><bdi>'.concat(esc(state.outcome.receipt), "</bdi></div>") : "", '</section><div class="button-row">').concat(action("continue", uiText("Continue"))).concat(action("stop", uiText("End"), "secondary"), "</div>");
+        var _a2, _b2, _c2;
+        return "<h2>".concat(esc(uiText("Request receipt")), '</h2><section class="request-receipt"><p class="lead" dir="auto">').concat(esc(((_a2 = state.outcome) == null ? void 0 : _a2.text) || uiText("No receipt returned. Ask staff to check.")), "</p>").concat(((_b2 = state.outcome) == null ? void 0 : _b2.receipt) ? '<div class="receipt" dir="auto"><bdi>'.concat(esc(state.outcome.receipt), "</bdi></div>") : "", '</section><div class="button-row">').concat(((_c2 = state.outcome) == null ? void 0 : _c2.helpAction) === "operator" ? action("receipt-help", uiText("Request help from reception")) : "").concat(action("continue", uiText("Continue"))).concat(action("stop", uiText("End"), "secondary"), "</div>");
       },
       error: () => '<div class="status-line"><h2>'.concat(esc(uiText("Conversation unavailable")), '</h2><button class="back" data-action="back">').concat(icons.back).concat(esc(uiText("Back")), '</button></div><div class="notice error">').concat(esc(state.error || uiText("Please ask reception for help.")), "</div>").concat(fine(state.audio === "off" ? uiText("Microphone off. Staff can check this device’s setup.") : uiText("Audio release is not confirmed. Ask reception for help before restarting.")), '<div class="button-row">').concat(action("retry", uiText("Try again"), "primary", state.audio !== "off")).concat(action("home", uiText("Back to home"), "secondary"), "</div>")
     };
@@ -445,7 +445,7 @@
     }, 5500);
   }
   function perform(name) {
-    var _a, _b;
+    var _a, _b, _c;
     activity();
     if (name.startsWith("request:")) {
       const request = name.split(":")[1];
@@ -527,8 +527,14 @@
       case "message":
         chooseShortcut("message");
         break;
+      case "receipt-help":
+        if (state.page !== "saved" || ((_b = state.outcome) == null ? void 0 : _b.helpAction) !== "operator" || !state.active || state.closed) return;
+        state.outcome = null;
+        page("active");
+        chooseShortcut("operator");
+        break;
       case "cancel-operation":
-        if (!((_b = state.operation) == null ? void 0 : _b.pending)) {
+        if (!((_c = state.operation) == null ? void 0 : _c.pending)) {
           state.operation = null;
           page("active");
         }
@@ -690,7 +696,7 @@
     }
   }
   function receive(event) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     if (typeof event === "string") {
       try {
         event = JSON.parse(event);
@@ -857,7 +863,7 @@
     if (type === "operation_result") {
       const text = String(event.text || "");
       if (["confirmation_required", "needs_confirmation", "fields_required"].includes(event.status)) return;
-      if (["unavailable", "error", "pending"].includes(event.status) && (state.operation || state.draft)) {
+      if (["unavailable", "error", "pending"].includes(event.status) && ((_b = event.result) == null ? void 0 : _b.help_action) !== "operator" && (state.operation || state.draft)) {
         state.confirmed = false;
         if (state.operation) state.operation.pending = false;
         addNotice(text || uiText("No receipt was received. Retry or ask reception to check."), event.status);
@@ -868,8 +874,8 @@
         addNotice(text, event.status);
         return;
       }
-      const receipt = ((_b = event.result) == null ? void 0 : _b.item_id) || ((_c = event.result) == null ? void 0 : _c.request_id) || ((_d = event.result) == null ? void 0 : _d.escalation_id);
-      state.outcome = { text: text || uiText("No receipt returned. Ask staff to check."), receipt: typeof receipt === "string" ? uiText("Receipt: {id}", { id: receipt }) : "" };
+      const receipt = ((_c = event.result) == null ? void 0 : _c.item_id) || ((_d = event.result) == null ? void 0 : _d.request_id) || ((_e = event.result) == null ? void 0 : _e.escalation_id);
+      state.outcome = { text: text || uiText("No receipt returned. Ask staff to check."), receipt: typeof receipt === "string" ? uiText("Receipt: {id}", { id: receipt }) : "", helpAction: ((_f = event.result) == null ? void 0 : _f.help_action) === "operator" ? "operator" : "" };
       state.draft = null;
       state.confirmed = false;
       state.operation = null;
@@ -901,7 +907,7 @@
       return;
     }
     if (phase === "confirming") {
-      if (typeof event.draft_id !== "string" || !event.draft_id || ((_e = state.draft) == null ? void 0 : _e.draft_id) === event.draft_id) return;
+      if (typeof event.draft_id !== "string" || !event.draft_id || ((_g = state.draft) == null ? void 0 : _g.draft_id) === event.draft_id) return;
       state.draft = { draft_id: event.draft_id, guest_name: String(event.guest_name || ""), room_reference: String(event.room_reference || ""), message: String(event.message || "") };
       state.confirmed = false;
       if (state.operation) state.operation.pending = false;
@@ -914,7 +920,7 @@
       syncMic();
       return;
     }
-    if (state.page === "confirming" && ((_f = state.draft) == null ? void 0 : _f.draft_id.startsWith("voice:")) && state.confirmed && phase === "listening") {
+    if (state.page === "confirming" && ((_h = state.draft) == null ? void 0 : _h.draft_id.startsWith("voice:")) && state.confirmed && phase === "listening") {
       state.draft = null;
       state.confirmed = false;
       state.page = "active";

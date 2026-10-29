@@ -100,11 +100,21 @@ export async function runReceptionOperationsFixture(assetBase = new URL('../andr
   assert(actionMessages('confirm').at(-1).approved === false && actionMessages('confirm').at(-1).draft_id === 'operation:note-3', 'Retrying a lost cancellation never approves the note');
   receive({ type:'operation_result',status:'cancelled',text:'Cancelled. Nothing was sent.' });
   assert(doc.querySelector('.request-receipt').textContent.includes('Cancelled'), 'Cancellation displays its actual result');
+  click('[data-action="continue"]'); click('[data-action="question"]');
+  const beforeHelp = actionMessages('operator').length;
+  receive({ type:'operation_result',status:'unavailable',text:'No approved hotel information is available.',
+    result:{status:'unavailable',matches:{},help_action:'operator'} });
+  assert(doc.querySelector('.request-receipt').textContent.includes('No approved hotel information'), 'Unavailable information is a truthful receipt, not an uncertain write');
+  assert(!doc.querySelector('[data-action="retry-draft"]') && !doc.querySelector('.receipt'), 'Missing approval never invents a write receipt or uncertain confirmation');
+  assert(actionMessages('operator').length === beforeHelp, 'A missing answer does not automatically submit a help request');
+  click('[data-action="receipt-help"]');
+  assert(actionMessages('operator').length === beforeHelp + 1, 'Only explicit reception help invokes the existing operator action');
+  receive({ type:'operation_result',status:'unavailable',text:'Reception cannot connect a call.',result:{connected:false} });
   click('[data-action="continue"]'); click('[data-action="message"]'); form();
   input('original_request','Private unsent note');
   receive({ type:'reception_event',phase:'stopped' });
   receive({ type:'operation_result',status:'saved',text:'Stale receipt must not appear',result:{item_id:'stale'} });
   assert(!doc.body.textContent.includes('Private unsent note') && !doc.body.textContent.includes('Stale receipt'), 'Session end clears the note and fences late results');
   assert(actionMessages('start').every(message => message.mode === 'reception'), 'Notes never start a voice session');
-  return { passed:true, checks:24, fixture:'synthetic browser/native bridge', frame };
+  return { passed:true, checks:28, fixture:'synthetic browser/native bridge; not backend or tablet proof', frame };
 }

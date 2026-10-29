@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from cloud.db import Store
 from cloud.models import Hotel
+from cloud.hotel_answers import source_hash
 import cloud.app as server
 import cloud.fish as fish
 import cloud.realtime as realtime
@@ -19,6 +20,7 @@ def audio_gate(tmp_path,monkeypatch):
     monkeypatch.setenv('FISH_API_KEY','OFFLINE-TEST-KEY')
     monkeypatch.setenv('FISH_VOICE_ID','offline-voice')
     monkeypatch.setenv('GEMINI_API_KEY','OFFLINE-TEST-KEY')
+    monkeypatch.setenv('ORANGE_ADMIN_TOKEN','x'*40)
     calls=[]
     def forbidden(*args,**kwargs):
         calls.append((args,kwargs))
@@ -71,13 +73,19 @@ def test_staff_led_operations_remain_operational(audio_gate):
     hotel=store.hotel('a')
     hotel['checkin_instructions']='Ask reception for arrival assistance.'
     store.save_hotel(hotel)
+    approved_body='Solicite ayuda a recepción para la llegada.'
+    reviewed=client.post('/api/hotels/a/content/approve',headers={'Authorization':'Bearer '+'x'*40},json={
+        'kind':'arrival','content_key':'','language':'es',
+        'source_hash':source_hash('arrival','',hotel['checkin_instructions']),
+        'title':'Guía de llegada','body':approved_body})
+    assert reviewed.status_code==200
     assert missing['status']=='needs_arguments'
     draft=client.post('/api/device/operations/'+sid+'/action',headers=headers,json={
         'action':'message','call_id':'message','arguments':{'original_request':'Synthetic staff-led request'}}).json()
     assert draft['status']=='confirmation_required' and not store.rows('SELECT * FROM items')
     guide=client.post('/api/device/operations/'+sid+'/action',headers=headers,json={
         'action':'checkin','call_id':'guide','arguments':{}}).json()
-    assert guide['status']=='ok' and guide['result']['instructions']==hotel['checkin_instructions']
+    assert guide['status']=='ok' and guide['result']['instructions']=='Guía de llegada\n'+approved_body
     assert guide['result']['guidance_only'] is True and guide['result']['checkin_completed'] is False
     response=client.post('/api/device/operations/'+sid+'/confirm',headers=headers,json={
         'confirmation_id':draft['confirmation_id'],'accepted':True}).json()
