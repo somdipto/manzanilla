@@ -23,8 +23,7 @@ case "$home" in
 esac
 [[ "$home" == */* ]]
 adb shell cmd package set-home-activity "$home"
-adb logcat -c
-trap 'adb logcat -d > "$evidence/logcat.txt"; adb shell locksettings clear --old 2468 > /dev/null 2>&1 || true' EXIT
+trap 'adb shell locksettings clear --old 2468 > /dev/null 2>&1 || true' EXIT
 run_fixture() {
   local fixture="$1"
   local label="${2:-$1}"

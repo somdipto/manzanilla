@@ -28,10 +28,12 @@ human language-review approval; translation presence is not acoustic qualificati
 - **Passed:** actual microphone grant on disposable API34/WebView113 with host
   OpenGL. The pending lease survived consent, the empty injected Fish resolver
   ran exactly once, and the session released without a provider call.
-- **Not passed:** the first CI Android10 suite reached the background case but
-  timed out waiting for release. The runner now resolves a system-only HOME
-  activity instead of assuming a launcher package or permitting a HOME chooser.
-  Final full-suite results are a separate gate.
+- **Passed:** CI Android10 `reception-bridge`, `reception-truth` and microphone
+  grant, denial and real-background cancellation in run40849414970. Resolving a
+  system-only HOME fixed the earlier background-fixture precondition. That run
+  stopped at an incidental English substring assertion in the localized startup
+  fixture; it was deleted, retaining terminal cleanup, ownership and credential-
+  redaction checks. Final full-suite results remain a separate gate.
 - On this Intel Mac, emulator37.2 SwiftShader produced a System UI ANR over the
   real permission dialog and an invalid color-buffer error. `-gpu host -feature
   -Vulkan` yielded the grant pass. A later full-suite attempt while Gradle was
@@ -41,7 +43,7 @@ human language-review approval; translation presence is not acoustic qualificati
   locales. Permission fixtures seed only synthetic local readiness, retain an
   empty provider resolver, dismiss only Android's known fullscreen tutorial and
   assert a recoverable error rather than incidental English wording. Temporary
-  diagnostic logging and screenshot capture were removed.
+  diagnostic logging, screenshot capture and raw logcat collection were removed.
 
 The macOS fixture used a dedicated loopback-only Chromium/Playwright context and a
 temporary TLS identity. Production TLS, Android CSP and network restrictions were
