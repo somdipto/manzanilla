@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -14,10 +15,12 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.security.KeyStore
@@ -221,6 +224,110 @@ class UpgradeDataFixture : Instrumentation() {
             activity.hasWindowFocus() && browser.isShown && browser.width > 0 && browser.height > 0 &&
                 page.childCount == 1 && field(page, "ready") == true
         }
+        // Home has no entrance animation. Its aurora runs forever, so waiting for
+        // all animation to stop would never settle. Inspect the actual localized
+        // text/layout, then fence WebView rasterization and the native window draw.
+        val homeInk = """
+            (function () {
+              if (document.documentElement.lang !== 'fr' ||
+                  (document.fonts && document.fonts.status !== 'loaded')) return null;
+              if (document.getAnimations && document.getAnimations().some(function (animation) {
+                return animation.playState === 'running' && animation.effect &&
+                  animation.effect.getTiming().iterations !== Infinity;
+              })) return null;
+              var marks = [];
+              var labels = [
+                ['.welcome h1', 'Welcome.'],
+                ['label[for=guest-locale]', 'Language'],
+                ['[data-action=translation] > span:not(.orb)', 'Live translation']
+              ];
+              for (var i = 0; i < labels.length; i++) {
+                var element = document.querySelector(labels[i][0]);
+                if (!element || element.textContent !== window.MANZANILLA_UI.messages[labels[i][1]].fr)
+                  return null;
+                for (var parent = element; parent; parent = parent.parentElement) {
+                  var style = getComputedStyle(parent);
+                  if (style.display === 'none' || style.visibility !== 'visible' ||
+                      Number(style.opacity) < 1) return null;
+                }
+                var range = document.createRange();
+                range.selectNodeContents(element);
+                var rects = range.getClientRects();
+                if (!rects.length) return null;
+                var color = getComputedStyle(element).color.match(/[\d.]+/g).slice(0, 3).map(Number);
+                for (var j = 0; j < rects.length; j++) {
+                  var rect = rects[j];
+                  if (rect.width <= 0 || rect.height <= 0 || rect.left < 0 || rect.top < 0 ||
+                      rect.right > innerWidth || rect.bottom > innerHeight) return null;
+                  var hit = document.elementFromPoint((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2);
+                  if (hit !== element && !element.contains(hit)) return null;
+                  marks.push({rect:[rect.left, rect.top, rect.right, rect.bottom], color:color});
+                }
+              }
+              if (document.querySelector('#guest-locale').value !== 'fr') return null;
+              return {width:innerWidth, height:innerHeight, marks:marks};
+            })()
+        """.trimIndent()
+        fun committedDraw() {
+            val completed = CountDownLatch(1)
+            main {
+                browser.postVisualStateCallback(1L, object : WebView.VisualStateCallback() {
+                    override fun onComplete(requestId: Long) {
+                        if (Build.VERSION.SDK_INT >= 29 && browser.isHardwareAccelerated) {
+                            browser.viewTreeObserver.registerFrameCommitCallback { completed.countDown() }
+                        } else {
+                            val observer = browser.viewTreeObserver
+                            observer.addOnDrawListener(object : ViewTreeObserver.OnDrawListener {
+                                override fun onDraw() {
+                                    browser.post {
+                                        if (observer.isAlive) observer.removeOnDrawListener(this)
+                                        completed.countDown()
+                                    }
+                                }
+                            })
+                        }
+                        browser.invalidate()
+                    }
+                })
+            }
+            check(completed.await((deadline - System.nanoTime()).coerceAtLeast(0), TimeUnit.NANOSECONDS))
+        }
+        fun paintedText(screenshot: Bitmap, layout: JSONObject): Boolean {
+            val origin = main { IntArray(2).also(browser::getLocationOnScreen) }
+            val scale = main { browser.width.toDouble() / layout.getDouble("width") }
+            val marks = layout.getJSONArray("marks")
+            for (index in 0 until marks.length()) {
+                val mark = marks.getJSONObject(index)
+                val rect = mark.getJSONArray("rect")
+                val color = mark.getJSONArray("color")
+                val left = origin[0] + rect.getDouble(0) * scale
+                val top = (origin[1] + rect.getDouble(1) * scale).toInt()
+                val right = origin[0] + rect.getDouble(2) * scale
+                val bottom = (origin[1] + rect.getDouble(3) * scale).toInt()
+                if (left < 0 || top < 0 || right > screenshot.width || bottom > screenshot.height) return false
+                // Each quarter of each text line needs both glyph ink and its
+                // surrounding negative space. Blank/stale layers and solid bars
+                // cannot pass merely by being nonempty or the expected color.
+                for (part in 0 until 4) {
+                    val start = (left + (right - left) * part / 4).toInt()
+                    val end = (left + (right - left) * (part + 1) / 4).toInt()
+                    var ink = 0
+                    var background = 0
+                    val pixels = (end - start) * (bottom - top)
+                    if (pixels <= 0) return false
+                    for (y in top until bottom) for (x in start until end) {
+                        val pixel = screenshot.getPixel(x, y)
+                        val distance = maxOf(kotlin.math.abs(Color.red(pixel) - color.getInt(0)),
+                            kotlin.math.abs(Color.green(pixel) - color.getInt(1)),
+                            kotlin.math.abs(Color.blue(pixel) - color.getInt(2)))
+                        if (distance <= 48) ink++
+                        if (distance >= 96) background++
+                    }
+                    if (ink < pixels * .01 || background < pixels * .10) return false
+                }
+            }
+            return true
+        }
         try {
             await { renderedHome() && shown() && nativeOff() }
             if (missingScript) {
@@ -258,6 +365,10 @@ class UpgradeDataFixture : Instrumentation() {
                 activity.onBackPressed()
             }
             await { renderedHome() && shown() && nativeOff() }
+            await { evaluate(homeInk) != "null" }
+            val layout = evaluate(homeInk)
+            check(layout != "null")
+            committedDraw()
             check(PREFERENCES.all { (name, value) -> deck.getString(name, null) == value })
             val screenshot = uiAutomation.takeScreenshot() ?: error("Missing UI screenshot")
             try {
@@ -265,6 +376,8 @@ class UpgradeDataFixture : Instrumentation() {
                 File(directory, "signed-reception.png").outputStream().use {
                     check(screenshot.compress(Bitmap.CompressFormat.PNG, 100, it))
                 }
+                check(renderedHome() && shown() && nativeOff() && evaluate(homeInk) == layout)
+                check(paintedText(screenshot, JSONObject(layout)))
             } finally { screenshot.recycle() }
         } finally {
             main { activity.finish() }

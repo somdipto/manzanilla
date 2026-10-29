@@ -116,8 +116,8 @@ jobs:
         env:
           ANDROID_SERIAL: emulator-5554
         with:
-          api-level: 29
-          target: default
+          api-level: 34
+          target: google_apis
           arch: x86_64
           emulator-port: 5554
           avd-name: signed-upgrade-${{ matrix.distribution }}
