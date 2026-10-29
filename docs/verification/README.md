@@ -25,6 +25,23 @@ human language-review approval; translation presence is not acoustic qualificati
   timezone as labelled UTC, switched Spanish/Arabic RTL and retained token,
   hotel and dirty form. Private screenshots: `/tmp/manzanilla-s2-admin-fixture/`.
   This is not combined physical-tablet/backend or designated hotel-staff acceptance.
+- **Passed:** actual microphone grant on disposable API34/WebView113 with host
+  OpenGL. The pending lease survived consent, the empty injected Fish resolver
+  ran exactly once, and the session released without a provider call.
+- **Not passed:** the first CI Android10 suite reached the background case but
+  timed out waiting for release. The runner now resolves a system-only HOME
+  activity instead of assuming a launcher package or permitting a HOME chooser.
+  Final full-suite results are a separate gate.
+- On this Intel Mac, emulator37.2 SwiftShader produced a System UI ANR over the
+  real permission dialog and an invalid color-buffer error. `-gpu host -feature
+  -Vulkan` yielded the grant pass. A later full-suite attempt while Gradle was
+  running failed to attach its first process; that attempt is not a pass. Run
+  heavy builds and native UI checks separately on this host.
+- Follow-up catalogue data preserves the proper name Orange across all52
+  locales. Permission fixtures seed only synthetic local readiness, retain an
+  empty provider resolver, dismiss only Android's known fullscreen tutorial and
+  assert a recoverable error rather than incidental English wording. Temporary
+  diagnostic logging and screenshot capture were removed.
 
 The macOS fixture used a dedicated loopback-only Chromium/Playwright context and a
 temporary TLS identity. Production TLS, Android CSP and network restrictions were
