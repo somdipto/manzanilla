@@ -1,0 +1,16 @@
+name: Synthetic Fish caption diagnostic
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  caption-probe:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'test/fish-caption-diagnostic'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe synthetic client-tool payloads
+        env:
+          FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
+        run: python3 scripts/fish_caption_probe.py
