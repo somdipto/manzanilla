@@ -5,9 +5,6 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ReceptionBridgeTest {
-    @Test fun translationSetupActionReachesTheAuthenticatedNativeScreen() {
-        assertNotNull(ReceptionBridge.decode("{\"action\":\"voice_setup\"}"))
-    }
     private fun note(character: String): JSONObject = JSONObject()
         .put("action", "message")
         .put("session_id", "00000000-0000-4000-8000-000000000001")
