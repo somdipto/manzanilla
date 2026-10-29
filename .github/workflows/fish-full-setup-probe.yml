@@ -1,0 +1,29 @@
+name: Synthetic Fish full setup diagnostic
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  full-setup:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'test/fish-caption-diagnostic'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '17'}
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
+      - name: Generate provider request bodies from production FishPlan
+        env:
+          FISH_PLAN_OUTPUT: ${{ runner.temp }}/fish-plan.json
+        run: |
+          set -euo pipefail
+          cp scripts/FishPlanProviderFixture.kt android/hotel/src/test/java/com/agentdeck/hotel/
+          cd android
+          bash gradlew :hotel:testDebugUnitTest --tests com.agentdeck.hotel.FishPlanProviderFixture --no-daemon
+      - name: Verify an isolated synthetic provider session and clean up
+        env:
+          FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
+        run: python3 scripts/fish_full_setup_probe.py "$RUNNER_TEMP/fish-plan.json"
