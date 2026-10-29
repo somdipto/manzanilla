@@ -33,6 +33,9 @@ class VoiceLifecycleFixture : Instrumentation() {
                 "microphone-permission-background" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "background")
                 "translation-startup" -> FishStartupFixture.verify(this)
                 "update-delivery" -> UpdaterFixture.verify(this)
+                "installer-callbacks" -> UpdaterFixture.verifyCallbacks(this)
+                "installer-consent" -> UpdaterFixture.verifyConsent(this)
+                "installer-consent-retained" -> UpdaterFixture.verifyConsentRetained(this)
                 "pending-end" -> pendingEnd(late, status)
                 "failed-start" -> failedStart(uncertainAudio = false)
                 "failed-start-uncertain" -> failedStart(uncertainAudio = true)
@@ -46,7 +49,9 @@ class VoiceLifecycleFixture : Instrumentation() {
             result.putString("stream", "PASS case=$case late=$late status=$status\n")
             finish(-1, result)
         } catch (e: Throwable) {
-            result.putString("stream", "FAIL: ${e.javaClass.simpleName}: ${e.message}\n")
+            val detail = if (case.startsWith("installer-") || case == "update-delivery")
+                "installer fixture assertion failed; no capability diagnostics emitted" else e.message
+            result.putString("stream", "FAIL: ${e.javaClass.simpleName}: $detail\n")
             finish(0, result)
         }
     }

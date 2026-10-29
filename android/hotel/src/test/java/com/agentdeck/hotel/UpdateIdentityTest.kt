@@ -104,4 +104,39 @@ class UpdateIdentityTest {
             fail("A cannot be relabelled B")
         } catch (_: IllegalArgumentException) { }
     }
+
+    @Test fun installerCallbacksRequireCurrentCapabilitySessionOwnershipAndPhase() {
+        val uri = UpdateInstallerSecurity.newCallbackUri()
+        assertTrue(uri.matches(Regex("manzanilla-update://callback/[0-9a-f]{64}")))
+        val next = UpdateInstallerSecurity.newCallbackUri()
+        assertNotEquals(uri, next)
+        fun accepts(expected: String? = uri, actual: String? = uri, session: Int = 41,
+                    reported: Int = 41, owned: Boolean = true, phase: String = "installing") =
+            UpdateInstallerSecurity.acceptsCallback(expected, actual, session, reported, owned, phase)
+        assertTrue(accepts())
+        assertTrue(accepts(phase = "confirming"))
+        assertFalse(accepts(actual = null))
+        assertFalse(accepts(actual = "manzanilla-update://callback/"))
+        assertFalse(accepts(actual = next))
+        assertFalse(accepts(expected = next)) // A previous attempt's callback is not reusable.
+        assertFalse(accepts(expected = null)) // Terminal cleanup/process death destroys authority.
+        assertFalse(accepts(actual = uri + "?nonce=ignored"))
+        assertFalse(accepts(actual = uri + "#ignored"))
+        assertFalse(accepts(actual = uri.replace("callback/", "other/")))
+        assertFalse(accepts(actual = uri.uppercase()))
+        assertFalse(accepts(session = -1, reported = -1))
+        assertFalse(accepts(reported = -1))
+        assertFalse(accepts(reported = 42))
+        assertFalse(accepts(owned = false))
+        for (phase in listOf("idle", "ready", "validating", "permission", "installed"))
+            assertFalse(accepts(phase = phase))
+    }
+
+    @Test fun installerSuccessRequiresTheActuallyInstalledCandidateNotJustAnAuthenticatedStatus() {
+        assertTrue(UpdateInstallerSecurity.installedCandidate(a, apkA))
+        assertFalse(UpdateInstallerSecurity.installedCandidate(a, installed))
+        assertFalse(UpdateInstallerSecurity.installedCandidate(a, apkA.copy(packageName = "other.package")))
+        assertFalse(UpdateInstallerSecurity.installedCandidate(a, apkA.copy(versionName = "17.0.6")))
+        assertFalse(UpdateInstallerSecurity.installedCandidate(a, apkA.copy(versionCode = 36)))
+    }
 }
