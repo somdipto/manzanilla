@@ -25,6 +25,20 @@ for all 52 interface locales; human translation review remains unavailable.
 - **Passed:** Android JVM, debug/instrumentation assembly and lint with JDK17,
   SDK34 and empty provider fields. The pinned code70 debug APK SHA256 is
   `350d18b0c8ed568c1b655606027fc6399fec894fd302ac09572a42f1ec7eb216`.
+- **Passed:** actual isolated HTTPS admin interaction manually approved English
+  breakfast, exact Spanish breakfast and Spanish `desayuno` renderings. Missing
+  draft-provider configuration preserved manual edits; Spanish/Arabic RTL review
+  retained the selected rendering. Private screenshots remain in
+  `/tmp/manzanilla-s3-https-fixture-20261029/`.
+- **Passed:** the shipped native `HotelGateway` on isolated API34 used that real
+  HTTPS backend with a temporary-CA/custom-client fixture, leaving production TLS
+  unchanged. Punctuated English, two exact approved Spanish answers, unknown
+  policy and unapproved Arabic behaved as required. Three operation leases
+  settled, with zero staff items or dial handoffs. `hotel-answers-smoke` reported
+  named PASS and instrumentation code -1; its throwaway source was removed.
+- This is native-client/backend communication, not a combined tablet UI test.
+  That optional gate still needs a device-trusted isolated test origin; human
+  bilingual review, actual Gemini access and physical/acoustic gates remain open.
 
 Information reads are scoped to their call ID, so a genuinely new question can
 see a later approval. Replaying the same ID never charges another model call.
