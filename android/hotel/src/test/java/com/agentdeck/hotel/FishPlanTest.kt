@@ -9,6 +9,10 @@ class FishPlanTest {
         val expected = JSONObject("""{"name":"caption","expects_response":false,"arguments":[{"name":"source_language","description":"Selected code"}]}""")
         val actual = JSONObject(expected.toString()).put("tool_id", "provider-id")
         assertTrue(FishPlan.captionToolMatches(expected, actual))
+        // Existing provider tools may still return legacy extra fields. The
+        // request omits the webhook-only execution_mode; extras are harmless.
+        actual.put("execution_mode", "fire_and_forget")
+        assertTrue(FishPlan.captionToolMatches(expected, actual))
         actual.put("expects_response", true)
         assertFalse(FishPlan.captionToolMatches(expected, actual))
         actual.put("expects_response", false).getJSONArray("arguments").getJSONObject(0).put("name", "hotel_action")
