@@ -22,6 +22,12 @@ Candidate 17.0.38/code68. No release, deployment or paid provider call.
   stale generation. All inline levels become zero, accessible labels agree and
   transcript nodes/scroll survive. A separate actual-page visual inspection at
   837×471 shows a neutral unclear caption and a non-illuminated muted control.
+- **Passed:** actual packaged native `reception-bridge`, `reception-truth` and
+  `translation-startup` on disposable API34/WebView113 emulator-5580. Each named
+  PASS includes `INSTRUMENTATION_CODE: -1`. The truth fixture now emits listening
+  before testing normal microphone-off; a still-connecting session correctly has
+  the separate connecting/microphone-off label. Failed fixture attempts are retained
+  in the execution record; no failed attempt was counted as a pass.
 - **Renderer observation only:** one pinned-baseline 120-report replay measured
   160.7ms; one candidate replay measured 84.9ms on this host under different
   background load. These are descriptive DOM timings, not a controlled performance
@@ -32,6 +38,12 @@ Commands: `npm run build:reception`, `npm run check:reception`,
 `.venv/bin/python tests/run_reception_browser.py`, and
 `bash gradlew :hotel:testDebugUnitTest :hotel:assembleDebug
 :hotel:assembleDebugAndroidTest :hotel:lintDebug --no-daemon --max-workers=2`.
+Native command: `ANDROID_SERIAL=emulator-5580 adb shell am instrument -w -r
+-e case reception-truth dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture`.
+The pinned production app is from commit `e5a71da`; later test-only changes improve
+bounded diagnostics and correctly distinguish connecting from listening scenarios.
+No microphone, live provider, physical tablet or audible-latency result is claimed.
+
 
 ## 17.0.31 full-duplex and delivery candidate
 

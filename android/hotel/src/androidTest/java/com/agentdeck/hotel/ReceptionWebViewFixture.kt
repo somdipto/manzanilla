@@ -189,6 +189,7 @@ internal object ReceptionWebViewFixture {
                 }
                 check(evaluate("document.querySelector('.voice-ball').dataset.hearing") == "\"false\"")
                 check(evaluate("document.querySelector('.voice-ball').getAttribute('aria-label')") == "\"Connecting · microphone off\"")
+                push(JSONObject().put("type", "reception_event").put("phase", "listening"))
                 for ((index, language) in listOf("en", "und", "fr", "und").withIndex()) {
                     push(JSONObject().put("type", "interpretation").put("utterance_id", "truth-$index")
                         .put("source_language", language).put("language_attribution", "model")
