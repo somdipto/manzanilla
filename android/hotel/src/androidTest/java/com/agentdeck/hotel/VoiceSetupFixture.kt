@@ -331,11 +331,19 @@ internal object VoiceSetupFixture {
             val closing = activity
             if (closing != null) {
                 test.runOnMainSync { closing.finish() }
+                test.waitForIdleSync()
                 val destroyedBy = System.nanoTime() + TimeUnit.SECONDS.toNanos(4)
                 var destroyed = false
                 while (!destroyed) {
                     test.runOnMainSync { destroyed = closing.isDestroyed }
-                    check(destroyed || System.nanoTime() < destroyedBy) { "Cleanup Activity destruction did not settle" }
+                    check(destroyed || System.nanoTime() < destroyedBy) {
+                        var state = ""
+                        test.runOnMainSync {
+                            state = "finishing=${closing.isFinishing} destroyed=${closing.isDestroyed} focus=${closing.hasWindowFocus()}"
+                        }
+                        test.sendStatus(0, android.os.Bundle().apply { putString("stream", "HOTEL_CLEANUP_DESTROY $state") })
+                        "Cleanup Activity destruction did not settle"
+                    }
                     if (!destroyed) Thread.sleep(20)
                 }
             }
