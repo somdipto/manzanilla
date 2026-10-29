@@ -21,7 +21,10 @@ observe actual transport/microphone transitions and retryable release, not an
 incidental number of credential reads.
 Chooser dispatch waits for actual native foreground/window focus within its
 existing deadline. Failed transitions retain only bounded lifecycle flags;
-fixtures never manufacture a resume or loosen production authorization.
+the chooser fixture does not manufacture a resume or loosen authorization.
+Framework lifecycle exceptions in isolated native QA emit only exception type
+and a bounded application source location before normal crash handling continues.
+Exception messages, Intent extras and raw logcat are not retained.
 
 The seven reviewable candidates are resequenced to17.0.40–17.0.46/code70–76;
 S7 and S8 remain one final PR. Earlier evidence below retains the actual
@@ -29,6 +32,46 @@ versions and source commits exercised; it is not silently relabelled.
 Final original-signer upgrade/visible-Reception proof must bind the new head,
 not the already-passed17.0.45 artifact. No release, deployment, additional
 provider probe, PR merge or live-data mutation is authorized by this integration.
+
+## 17.0.42 staff fulfilment candidate (S5)
+
+Version 17.0.42/code72, stacked on S4. Staff lifecycle metadata is separate from
+immutable execution receipts; guest status contains no payload or private note.
+
+- **Passed:** 638 Python cases, 17 Node cases and catalogue generation/check.
+  Coverage includes transactional configuration CAS, claim races, ownership,
+  idempotent transitions, legacy resolution, revocation and exact session privacy.
+- **Passed:** ten Chromium151 scenarios including actual temporary backend/staff
+  interactions: blank creation, labelled dictionary-preserving settings, dirty
+  configuration conflict, acknowledgement/resolution, retained private outcomes,
+  scoped/hidden single-flight refresh, RTL and immutable guest receipts.
+- The delayed-overview regression initially lost a successful acknowledgement
+  through a detached row reference. Applying the result to the current item by
+  ID preserves the newer version; the actual browser scenario now passes.
+  Ownership denial refreshes the row without granting the denied actor access.
+- A held configuration save reproduced a disabled new-hotel form after a scope
+  switch. Scope reset now releases its own busy state; a late old response cannot
+  clear a newer save. The real-backend browser regression passes both boundaries.
+- Successful acknowledgement/resolution consumes only its submitted draft.
+  Resolved private outcomes no longer appear twice; conflicting edits remain
+  available for review. The browser suite passes with clean fixture teardown.
+- The browser fixture installs its context-wide clock once, before any page
+  timers. Refresh waits observe actual overview output, including an in-flight
+  visibility refresh whose response headers already arrived; they do not require
+  an extra HTTP response. The ten real-backend Chromium scenarios pass with
+  these synchronization corrections.
+- **Passed:** personal-test JVM, debug/instrumentation assembly and lint with
+  JDK17/SDK34 and empty provider fields.
+- **Passed:** actual API34 `reception-request-tracking` through the shipped
+  WebView, bridge and Activity with synthetic HTTP interception, named PASS/-1.
+- **Passed:** real native `HotelGateway` plus actual staff browser against a
+  temporary-CA isolated HTTPS backend: one original-preserving request, open →
+  acknowledged → resolved, private outcome excluded from guest frames, and one
+  operation session ended without polling recreating it. The private smoke
+  reports named PASS/-1; its throwaway source was removed after proof.
+- Private screenshot: `/tmp/manzanilla-s5-https-fixture-20261029/staff-resolved.png`.
+  These are native-client/backend and separate native-UI proofs, not combined
+  tablet/backend, designated hotel-staff, provider or external booking acceptance.
 
 ## 17.0.41 readiness/distribution candidate (S4)
 

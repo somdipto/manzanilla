@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright
 import httpx
 from reception_startup_fixture import run_localized_fixture, run_startup_fixture
+from staff_dashboard_fixture import run_staff_dashboard_fixture
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -66,6 +67,8 @@ def run_approved_content_fixture(browser):
                             raise AssertionError("Isolated approved-content backend did not start")
                         time.sleep(.05)
                     admin={"Authorization":"Bearer "+environment["ORANGE_ADMIN_TOKEN"]}
+                    staff_result=run_staff_dashboard_fixture(
+                        browser,api,origin,admin,environment["ORANGE_ADMIN_TOKEN"])
                     original="  07:00–10:00 <b>exact source, not HTML</b>\n  "
                     hotel={"id":"browser-property","name":"Isolated review property",
                            "default_language":"es","supported_languages":["es","en","ar"],
@@ -127,6 +130,7 @@ def run_approved_content_fixture(browser):
                     assert approved_body in answer["text"]
                     # Mutating the real property behind the form makes its reviewed
                     # hash stale; approval must conflict instead of replacing it.
+                    hotel=api.get("/api/hotels/browser-property/overview",headers=admin).json()["hotel"]
                     hotel["knowledge"]["breakfast"]="08:00–11:00 changed source"
                     assert api.put("/api/hotels/browser-property",headers=admin,json=hotel).status_code==200
                     page.locator("#content-body").fill("An obsolete review must not be saved.")
@@ -150,6 +154,7 @@ def run_approved_content_fixture(browser):
                             "code => MANZANILLA_UI.messages['Approved hotel answers'][code]",code)
                     assert not errors, errors
                     return {"fixture":"approved-content-admin","passed":True,"locales":52,
+                            "staff_fulfilment":staff_result,
                             "scope":"real isolated HTTP backend and admin browser; no provider, native, tablet or human translation qualification"}
             finally:
                 if context: context.close()

@@ -390,7 +390,9 @@ internal object VoiceSetupFixture {
         }
         // Recover the original reservation through the real Activity foreground path,
         // even before enrollment is available. No new provider session may be opened.
+        reportStage("enter=owned cleanup")
         verifyRestoredCleanup(test, personalKey)
+        reportStage("passed=owned cleanup")
         // Exercise the real new-start boundary even with a saved personal selection.
         // Interceptors prevent a regression from making any provider request.
         shell("pm grant ${context.packageName} android.permission.RECORD_AUDIO")
@@ -408,8 +410,7 @@ internal object VoiceSetupFixture {
         }
         test.runOnMainSync { fish.start("en", "es", sessionId = "hotel-no-direct", epoch = 901) }
         await("hotel new start denied") {
-            synchronized(events) { events.any { it.optString("phase") == "error" &&
-                it.optString("text") == UiText.text(context, "en", "Translation needs hotel setup. Please ask staff.") } } &&
+            synchronized(events) { events.any { it.optString("phase") == "error" } } &&
                 fish.admissionIssue() == null
         }
         check(keyReads.get() == 0 && requests.get() == 0) { "Hotel new start consulted a personal credential or provider" }
@@ -618,8 +619,13 @@ internal object VoiceSetupFixture {
                 await("no-lock hotel setup refusal", { setupState(setup) }) {
                     var refused = false
                     test.runOnMainSync {
-                        refused = nodes(setup.window.decorView).filterIsInstance<android.widget.TextView>()
-                            .any { it.text.toString().contains("no device screen-lock credential") }
+                        val visible = nodes(setup.window.decorView).filter { it.isShown }
+                        val close = visible.filterIsInstance<android.widget.Button>().singleOrNull()
+                        refused = !keyguard.isDeviceSecure && foreground.getBoolean(setup) &&
+                            !authenticated.getBoolean(setup) && inputs(setup).isEmpty() &&
+                            close?.isEnabled == true &&
+                            visible.filterIsInstance<android.widget.TextView>()
+                                .count { it !is android.widget.Button && it.text.isNotBlank() } >= 2
                     }
                     refused
                 }

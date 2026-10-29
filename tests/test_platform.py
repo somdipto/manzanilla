@@ -394,3 +394,84 @@ def test_heartbeat_preserves_protocol_rejection_and_requires_live_device_credent
     assert client.post('/api/device/heartbeat',json=payload).status_code==401
     db.run('DELETE FROM credentials WHERE id=?',(dev['id'],))
     assert client.post('/api/device/heartbeat',headers=headers,json=payload).status_code==401
+
+
+def test_hotel_configuration_cas_preserves_winner_and_requires_admin(platform):
+    db,client=platform
+    admin={'Authorization':'Bearer '+'x'*40}
+    original=db.hotel('a')
+    change={**original,'name':'Reviewed hotel name','services':{'spa':'Exact spa policy','untouched':'Keep me'},
+            'knowledge':{**original['knowledge'],'quiet hours':'22:00–07:00'}}
+    saved=client.put('/api/hotels/a',headers=admin,json=change)
+    assert saved.status_code==200 and saved.json()['config_version']==original['config_version']+1
+    stale=client.put('/api/hotels/a',headers=admin,json={**original,'name':'Stale overwrite'})
+    assert stale.status_code==409 and stale.json()['config_version']==saved.json()['config_version']
+    assert db.hotel('a')==saved.json()
+    unversioned={key:value for key,value in original.items() if key!='config_version'}
+    assert client.put('/api/hotels/a',headers=admin,json=unversioned).status_code==409
+    staff=db.issue('a','staff')
+    assert client.put('/api/hotels/a',headers={'Authorization':'Bearer '+staff['token']},
+                      json=saved.json()).status_code==401
+    assert client.put('/api/hotels/a',json=saved.json()).status_code==401
+    assert db.hotel('a')==saved.json()
+    reviewed={**saved.json(),'name':'Second review'}
+    assert client.put('/api/hotels/a',headers=admin,json=reviewed).json()['config_version']==3
+    assert db.hotel('a')['services']==change['services'] and db.hotel('a')['knowledge']==change['knowledge']
+    created=client.put('/api/hotels/new',headers=admin,json={'id':'new','name':'New property','config_version':999})
+    assert created.status_code==200 and created.json()['config_version']==1
+    principal=client.get('/api/hotels/a/overview',headers=admin).json()['principal']
+    assert principal=={'role':'admin','id':'admin','hotel':'a'}
+
+
+def test_hotel_configuration_cas_is_shared_across_database_owners(platform):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from cloud.db import HotelVersionConflict
+    db,_=platform
+    external=Store(db.db.execute('PRAGMA database_list').fetchone()[2])
+    snapshot=db.hotel('a')
+    barrier=Barrier(2)
+    def save(pair):
+        owner,name=pair
+        barrier.wait(timeout=5)
+        try: return owner.save_hotel({**snapshot,'name':name})
+        except HotelVersionConflict as conflict: return conflict.version
+    try:
+        with ThreadPoolExecutor(2) as pool:
+            results=list(pool.map(save,[(db,'One'),(external,'Two')]))
+        winners=[result for result in results if isinstance(result,dict)]
+        conflicts=[result for result in results if isinstance(result,int)]
+        assert len(winners)==1 and conflicts==[snapshot['config_version']+1]
+        assert db.hotel('a')==winners[0] and external.hotel('a')==winners[0]
+    finally:
+        external.db.close()
+
+
+def test_item_metadata_migration_keeps_historical_unknowns_and_is_restart_safe(tmp_path):
+    import sqlite3
+    path=tmp_path/'legacy-items.db'
+    connection=sqlite3.connect(path)
+    connection.executescript("""
+        CREATE TABLE hotels(id TEXT PRIMARY KEY,config TEXT NOT NULL);
+        CREATE TABLE items(id TEXT PRIMARY KEY,hotel TEXT NOT NULL REFERENCES hotels(id),
+            session TEXT NOT NULL,kind TEXT,created REAL,payload TEXT,status TEXT DEFAULT 'open');
+    """)
+    connection.execute('INSERT INTO hotels VALUES(?,?)',('old',json.dumps(Hotel(id='old',name='Historical').model_dump())))
+    for status in ('open','resolved'):
+        connection.execute('INSERT INTO items VALUES(?,?,?,?,?,?,?)',
+                           (status,'old','expired-history','note',123.0,json.dumps({'original_request':'Exact '+status}),status))
+    connection.commit()
+    connection.close()
+    for _ in range(2):
+        db=Store(str(path))
+        try:
+            rows=db.rows('SELECT * FROM items ORDER BY id')
+            assert {row['status'] for row in rows}=={'open','resolved'}
+            for row in rows:
+                assert row['state_version']==0
+                assert all(row[field] is None for field in (
+                    'acknowledged_at','acknowledged_by','responsible_name','resolved_at','resolution_note','last_transition_hash'))
+                assert row['session']=='expired-history' and row['created']==123.0
+                assert json.loads(row['payload'])['original_request']=='Exact '+row['status']
+        finally:
+            db.db.close()

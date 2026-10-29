@@ -19,6 +19,17 @@ import java.util.concurrent.atomic.AtomicInteger
 class VoiceLifecycleFixture : Instrumentation() {
     private var args: Bundle? = null
     override fun onCreate(arguments: Bundle?) { args = arguments; super.onCreate(arguments); start() }
+    override fun onException(obj: Any?, error: Throwable): Boolean {
+        val failure = generateSequence(error) { it.cause }.take(4).last()
+        val frame = failure.stackTrace.firstOrNull { it.className.startsWith("com.agentdeck.") }
+        val location = frame?.let {
+            " at=${it.className.substringAfterLast('.').take(100)}:${it.fileName?.take(80)}:${it.lineNumber}"
+        }.orEmpty()
+        sendStatus(0, Bundle().apply {
+            putString("stream", "UNCAUGHT ${failure.javaClass.simpleName.take(80)}$location\n")
+        })
+        return super.onException(obj, error)
+    }
     override fun onStart() {
         val result = Bundle()
         val late = args?.getString("late") == "1"
@@ -28,6 +39,7 @@ class VoiceLifecycleFixture : Instrumentation() {
             when (case) {
                 "reception-bridge" -> ReceptionWebViewFixture.verify(this)
                 "reception-truth" -> ReceptionWebViewFixture.verify(this, truth = true)
+                "reception-request-tracking" -> RequestTrackingFixture.verify(this)
                 "voice-setup" -> VoiceSetupFixture.verify(this)
                 "hotel-setup-gates" -> VoiceSetupFixture.verifyHotel(this)
                 "hotel-readiness" -> HotelReadinessFixture.verify(this)

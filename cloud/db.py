@@ -1,6 +1,11 @@
 import hashlib, json, secrets, sqlite3, threading, time, uuid
 from pathlib import Path
 
+class HotelVersionConflict(Exception):
+    def __init__(self, version):
+        self.version = version
+
+
 class Store:
     def __init__(self, path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -48,6 +53,16 @@ class Store:
             if 'route' not in columns:
                 self.db.execute("ALTER TABLE fish_sessions ADD COLUMN route TEXT NOT NULL DEFAULT 'fish'")
                 self.db.execute("UPDATE fish_sessions SET route='livekit' WHERE substr(session_id,1,5)='manz-'")
+            columns = {row['name'] for row in self.db.execute('PRAGMA table_info(items)')}
+            metadata = {
+                'acknowledged_at':'REAL', 'acknowledged_by':'TEXT',
+                'responsible_name':'TEXT', 'resolved_at':'REAL',
+                'resolution_note':'TEXT', 'last_transition_hash':'TEXT',
+                'state_version':'INTEGER NOT NULL DEFAULT 0',
+            }
+            for name, definition in metadata.items():
+                if name not in columns:
+                    self.db.execute(f'ALTER TABLE items ADD COLUMN {name} {definition}')
             self.db.commit()
         except BaseException:
             self.db.rollback()
@@ -66,11 +81,16 @@ class Store:
         if not rows: raise KeyError('hotel not found')
         return json.loads(rows[0]['config'])
     def save_hotel(self, hotel):
-        with self.lock:
-            old = self.rows('SELECT config FROM hotels WHERE id=?', (hotel['id'],))
+        with self.lock, self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            old = self.db.execute('SELECT config FROM hotels WHERE id=?', (hotel['id'],)).fetchone()
+            current = json.loads(old['config']) if old else None
+            if current and current['config_version'] != hotel.get('config_version'):
+                raise HotelVersionConflict(current['config_version'])
             hotel = dict(hotel)
-            hotel['config_version'] = json.loads(old[0]['config'])['config_version'] + 1 if old else 1
-            self.run('INSERT INTO hotels VALUES(?,?) ON CONFLICT(id) DO UPDATE SET config=excluded.config', (hotel['id'], json.dumps(hotel)))
+            hotel['config_version'] = current['config_version'] + 1 if current else 1
+            self.db.execute('INSERT INTO hotels VALUES(?,?) ON CONFLICT(id) DO UPDATE SET config=excluded.config',
+                            (hotel['id'], json.dumps(hotel)))
         return hotel
     def issue(self, hid, role, name=None):
         self.hotel(hid)
