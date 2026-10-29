@@ -383,7 +383,10 @@ internal object UpdaterFixture {
             if (root != null) {
                 try {
                     val packageName = root.packageName?.toString()
-                    val info = packageName?.let { base.packageManager.getApplicationInfo(it, 0) }
+                    val info = packageName?.let {
+                        try { base.packageManager.getApplicationInfo(it, 0) }
+                        catch (_: PackageManager.NameNotFoundException) { null }
+                    }
                     val system = info != null && info.enabled && info.flags and
                         (android.content.pm.ApplicationInfo.FLAG_SYSTEM or android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
                     if (!clicked && system) clicked = clickConsent(test, root)
