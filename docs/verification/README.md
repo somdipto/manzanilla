@@ -4,6 +4,31 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.43 installer-capability candidate (S6)
+
+Version17.0.43/code73. Callback identity is private per attempt and never logged.
+
+- **Passed:** actual disposable API26/29/32/34 callback execution in
+  [run40888340045](https://github.com/somdipto/manzanilla/actions/runs/40888340045).
+  API31+ also exercises the actual delivery/session-ownership boundary.
+- **Passed:** API34 actual Updater dispatch and trusted Android positive consent,
+  followed by exact installed candidate bytes, package/code, disposable signer
+  and a fresh retained preferences/file/encrypted-key check, named PASS/-1.
+  The in-place QA transition is99.0.0/code9900 →99.0.1/code9901.
+- Replacement terminated its instrumentation process. That is not acceptance:
+  the host independently verified the candidate and the fresh retained-data run.
+  No candidate was installed through adb as the update under test.
+- The first local attempt legally updated silently and was not counted as
+  genuine consent. A private debug-only manifest overlay omits unattended-update
+  permission to require the real Android prompt; production permission/policy
+  remains unchanged. Unknown foreground windows never authorize a click.
+- Instrumentation APKs legitimately lack app version fields. Their package,
+  debuggability and signer are checked separately; application identity remains
+  strict. Incidental permission/parameter-copy assertions were removed.
+- These synthetic disposable-signer checks do not certify physical OEM behavior
+  or replace the original-signer, actual packaged-Reception release gates.
+  No provider session, live-device mutation, publication or deployment occurred.
+
 ## 17.0.42 staff fulfilment candidate (S5)
 
 Version 17.0.42/code72, stacked on S4. Staff lifecycle metadata is separate from
