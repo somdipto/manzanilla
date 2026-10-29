@@ -255,13 +255,16 @@ class InterpreterSession:
                     event.set()
             await event.wait()
         stream = rtc.AudioStream(tracks[0], sample_rate=16000, num_channels=1)
-        async for frame_event in stream:
-            if self.ended.is_set():
-                break
-            await self.asr.send_audio(bytes(frame_event.frame.data))
-        if not self.ended.is_set():
-            # Do not leave a seemingly active conversation with no microphone.
-            raise RuntimeError('Microphone audio stream ended')
+        try:
+            async for frame_event in stream:
+                if self.ended.is_set():
+                    break
+                await self.asr.send_audio(bytes(frame_event.frame.data))
+            if not self.ended.is_set():
+                # Do not leave a seemingly active conversation with no microphone.
+                raise RuntimeError('Microphone audio stream ended')
+        finally:
+            await stream.aclose()
 
     async def _turn_loop(self):
         while not self.ended.is_set():
@@ -488,6 +491,9 @@ class InterpreterSession:
         self.ended.set()
         if self.asr:
             await self.asr.close()
+        if self.source:
+            await self.source.aclose()
+            self.source = None
         try:
             await self.room.disconnect()
         except Exception:

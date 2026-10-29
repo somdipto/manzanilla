@@ -7,6 +7,9 @@ val distribution = (project.findProperty("distribution") as String?) ?: "persona
 require(distribution in setOf("personal-test", "hotel")) {
     "distribution must be personal-test or hotel"
 }
+val fishKey = System.getenv("FISH_API_KEY")?.takeIf { it.isNotBlank() }
+    ?: (project.findProperty("FISH_API_KEY") as String?).orEmpty()
+val metadataAsset = if (distribution == "hotel") "hotel-release-metadata.json" else "release-metadata.json"
 android {
     namespace = "com.agentdeck.hotel"
     compileSdk = 34
@@ -32,11 +35,12 @@ android {
         versionCode = rootProject.file("VERSION_CODE").readText().trim().toInt().also {
             require(it > 34) { "Release candidates must supersede published code 34" }
         }
-        buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://github.com/somdipto/manzanilla/releases/latest/download/release-metadata.json"))
+        buildConfigField("String", "FEED_URL", javaString(project.findProperty("feedUrl") as String? ?: "https://github.com/somdipto/manzanilla/releases/latest/download/$metadataAsset"))
         buildConfigField("String", "LEGACY_FEED_URL", javaString(project.findProperty("legacyFeedUrl") as String? ?: "https://api.github.com/repos/somdipto/manzanilla/releases/latest"))
         buildConfigField("String", "DISTRIBUTION", javaString(distribution))
-        buildConfigField("String", "FISH_API_KEY", javaString(if (distribution == "personal-test") injected("FISH_API_KEY") else ""))
-        buildConfigField("String", "FISH_VOICE_ID", javaString(if (distribution == "personal-test") injected("FISH_VOICE_ID") else ""))
+        buildConfigField("String", "FISH_API_KEY", javaString(if (distribution == "personal-test") fishKey else ""))
+        buildConfigField("String", "FISH_VOICE_ID", javaString(injected("FISH_VOICE_ID")))
+        manifestPlaceholders["distribution"] = distribution
         manifestPlaceholders["cleartext"] = if (project.hasProperty("feedUrl") || project.hasProperty("legacyFeedUrl")) "true" else "false"
         versionName = rootProject.file("VERSION").readText().trim()
     }
@@ -82,5 +86,12 @@ dependencies {
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     doFirst {
         classpath = files(classpath.files.filter { !it.path.endsWith("android.jar") })
+    }
+}
+gradle.taskGraph.whenReady {
+    if (distribution == "personal-test" && allTasks.any {
+            it.project == project && it.name in setOf("generateReleaseBuildConfig", "assembleRelease", "bundleRelease")
+        }) {
+        require(fishKey.isNotBlank()) { "personal-test release requires an injected disposable FISH_API_KEY" }
     }
 }

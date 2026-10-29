@@ -7,10 +7,10 @@ import org.junit.Test
 class UpdateIdentityTest {
     private val goodDigest = UpdateRequest.hash("intact signed APK fixture".toByteArray())
     private val a = UpdateRequest("v17.0.5", "https://github.com/example/hotel/releases/download/v17.0.5/app.apk",
-        "dev.orange.hotel", "17.0.5", 35, goodDigest)
+        "dev.orange.hotel", "17.0.5", 35, goodDigest, "personal-test")
     private val b = UpdateRequest("v17.0.6", "https://github.com/example/hotel/releases/download/v17.0.6/app.apk",
-        "dev.orange.hotel", "17.0.6", 36, goodDigest)
-    private val installed = ApkIdentity("dev.orange.hotel", "17.0.4", 34, setOf("trusted signing certificate"))
+        "dev.orange.hotel", "17.0.6", 36, goodDigest, "personal-test")
+    private val installed = ApkIdentity("dev.orange.hotel", "17.0.4", 34, setOf("trusted signing certificate"), "personal-test")
     private val apkA = installed.copy(versionName = "17.0.5", versionCode = 35)
 
     @Test fun resumedDownloadStaysAWhenLatestFeedAdvancesToB() {
@@ -92,6 +92,7 @@ class UpdateIdentityTest {
         assertNotEquals(a.key, a.copy(url = a.url.replace("app.apk", "replacement.apk")).key)
         assertNotEquals(a.key, a.copy(sha256 = UpdateRequest.hash("different".toByteArray())).key)
         assertEquals(a, UpdateRequest.fromJson(a.json()))
+        assertNotEquals(a.key, a.copy(distribution = "hotel").key)
     }
 
     @Test fun legacyPersistenceCannotBecomeAnUnverifiedRequest() {
@@ -102,6 +103,50 @@ class UpdateIdentityTest {
         try {
             a.copy(tag = "v17.0.6")
             fail("A cannot be relabelled B")
+        } catch (_: IllegalArgumentException) { }
+    }
+
+    @Test fun distributionCannotBeChangedByCachedRequestsArchivesOrInstallerResults() {
+        val hotel = a.copy(distribution = "hotel")
+        val hotelApk = apkA.copy(distribution = "hotel")
+        val hotelInstalled = installed.copy(distribution = "hotel")
+        assertNotNull(a.rejects(hotelApk, installed, goodDigest))
+        assertNotNull(hotel.rejects(hotelApk, installed, goodDigest))
+        assertNotNull(a.rejects(apkA, hotelInstalled, goodDigest))
+        assertNull(hotel.rejects(hotelApk, hotelInstalled, goodDigest))
+        assertFalse(UpdateInstallerSecurity.installedCandidate(a, hotelApk))
+        assertFalse(UpdateInstallerSecurity.installedCandidate(hotel, apkA))
+        assertEquals(hotel, UpdateRequest.fromJson(hotel.json()))
+        assertNotEquals(a.key, hotel.key)
+    }
+
+    @Test fun onlyHistoricalInstalledManifestMayOmitDistribution() {
+        assertEquals("personal-test", UpdateDistribution.fromManifest(null, historical = true))
+        for (historical in listOf(false, true)) {
+            for (value in listOf("personal-test", "hotel"))
+                assertEquals(value, UpdateDistribution.fromManifest(value, historical))
+            for (value in listOf("", "HOTEL", "unknown", 1)) {
+                try {
+                    UpdateDistribution.fromManifest(value, historical)
+                    fail("Invalid manifest distribution was accepted")
+                } catch (_: IllegalArgumentException) { }
+            }
+        }
+        try {
+            UpdateDistribution.fromManifest(null, historical = false)
+            fail("A new archive without distribution was accepted")
+        } catch (_: IllegalArgumentException) { }
+        for (document in listOf(a.json().apply { remove("distribution") },
+                a.json().put("distribution", "unknown"))) {
+            try {
+                UpdateRequest.fromJson(document)
+                fail("Missing or invalid persisted distribution was accepted")
+            } catch (_: org.json.JSONException) { }
+            catch (_: IllegalArgumentException) { }
+        }
+        try {
+            apkA.copy(distribution = "")
+            fail("An archive identity without distribution was accepted")
         } catch (_: IllegalArgumentException) { }
     }
 

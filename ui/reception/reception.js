@@ -284,6 +284,7 @@
     captionNodes.clear();
     content.innerHTML = (html[state.page] || html.idle)();
     if (['idle','languages','translation_languages'].includes(state.page)) content.insertAdjacentHTML('beforeend', fine(uiText('Interface translations have not been reviewed by a human.')));
+    if (state.page === 'translation_languages') content.insertAdjacentHTML('beforeend', fine(uiText('Speech support depends on the provider and tablet. Staff qualification is required.')));
     content.querySelectorAll('[data-caption-key]').forEach(node => captionNodes.set(node.dataset.captionKey, node));
     const turnNodes = new Map([...content.querySelectorAll("[data-turn-id]")].map(node => [node.dataset.turnId, node]));
     state.turns.forEach(turn => {

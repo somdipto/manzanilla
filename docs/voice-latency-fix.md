@@ -1,13 +1,15 @@
-# Voice latency investigation and fix: 17.0.25 candidate
+# Voice latency investigation: historical 17.0.25 candidate
 
-Investigated on 2026-10-21 from latest `main`, commit
+Investigated on 2026-10-21 from `main` commit
 `8b7c006b53598f275b73c171a6d44b5f646f923d` (17.0.24/code 54).
-The candidate is 17.0.25/code 55, Fish configuration revision 12.
+The historical candidate was 17.0.25/code 55, Fish configuration revision 12;
+these are not current installation or provisioning instructions.
 
-The implementation removes documented sources of delay and opening speech loss.
-It does **not** establish that a tablet now meets the acoustic latency target.
-No Fish credential, real session trace or attached reception tablet is available
-in the verification environment. No provider call was started and no production agent was edited.
+The implementation changed settings associated with provider finalization and
+opening speech handling. It did **not** measure removal of tablet delay or
+prove that the acoustic target was met. The investigation had no Fish
+credential, real session trace or attached reception tablet. No provider call
+was started and no production agent was edited.
 
 ## Findings
 
@@ -57,11 +59,12 @@ the documented **nested** `overrides.asr.model` session field, so changing a pai
 does not mutate a shared published agent or select a second paid session.
 Chinese and every other picker language remain selectable.
 
-This change trades recognizer choice for the documented finalization speed on
-eligible pairs. It does **not** prove equal bilingual transcription accuracy.
-Before production acceptance, check accented speech, names, negation, numbers,
-dates and currency in each deployed pair. If a pair regresses, route it back to
-Scribe and increment the configuration revision for consistent rollout.
+This historical routing change followed documented provider finalization
+figures on eligible pairs, not matched tablet measurements. It proves neither
+equal bilingual accuracy nor an acoustic improvement. Qualification must check
+accented speech, names, negation, numbers, dates and currency in each intended
+pair. Browser or transport checks alone do not authorize a recognizer change;
+any proposed rerouting needs a separate evidence-backed decision.
 
 ## What stays in the pipeline
 
@@ -83,20 +86,30 @@ to the managed agent's voice schema. Moving to Flash Lite or a custom streaming
 LLM is a separate quality/latency experiment, not a verified fix in this patch.
 Preview recognition models are not enabled without published coverage/entitlement.
 
-## Reproduction and measurements
+## Current reproduction boundary
 
-Use an isolated test device/property, synthetic utterances and the existing
-[acoustic protocol](voice-latency-plan.md) and [acceptance targets](TEST-PLAN.md).
-That older plan's no-implementation scope described its original planning task;
-the current request authorizes this implementation. Its evidence boundaries
-and quality checks still apply.
+Use the current exact signed candidate and [artifact/distribution contract](ENVIRONMENT.md#signing-and-publication),
+not the old revision-12 candidate above. A debug artifact is key-free and must
+not replace the user's signed installation. Updating source does not install
+an APK or deploy a backend. Preserve current Gemini/Fish models, selected
+voice, recognizer routing, speculation and endpointing during qualification.
 
-1. Install the candidate through the existing signed release process.
-   A debug build has no embedded provider key and does not replace the installed
-   production app's signature. Updating source alone does not update a tablet.
-2. End the previous conversation and start a new one. Confirm revision 12 and
-   the requested pair/model. Both app and backend must be updated for managed
-   devices; updating only an APK cannot alter a previously deployed backend.
+Before any paid call, establish remaining authorization within the original
+aggregate $4 allowance and a conservative cost reservation. Neither is
+available for this repair, so live provider and physical acceptance are
+blocked. The isolated matching tablet/capture, current provider entitlement
+and bilingual review are also missing. No provider substitution or renewed
+allowance is authorized.
+
+When those prerequisites are actually satisfied, use an isolated property,
+the exact artifact and the [acoustic protocol](TEST-PLAN.md#voice-repair-reproduction-unreleased):
+
+1. Pin the hosted baseline and candidate identities/configurations. Keep the
+   same hardware, network, language pair and voice; no comparable baseline
+   means no measured improvement claim.
+2. End the prior conversation before starting the controlled candidate trial;
+   record its actual revision and requested pair/model rather than forcing
+   historical revision 12. Managed APK and backend identities are distinct.
 3. Capture monotonic diagnostics without guest speech or credentials:
 
    ```sh
@@ -120,18 +133,24 @@ and quality checks still apply.
    and calls timestamp differences `record_gap_ms`. It never fabricates ASR,
    LLM, TTS or speech latency from those records. The current public message
    schema contains no such spans; a `tool_result.latency_ms` is tool execution.
-5. Run matched old/new synthetic recordings in both directions on the same
-   hardware/network/voice. Use `tools/voice_latency.py` to score end-of-input
-   speech to first **audible correct translation** on a single recorder clock.
-   Include pauses, greeting overlap, interruptions, repeats and error recovery.
-   Retain failures in the denominator. Compare pair-specific quality and p50/p95
-   against Day <1.2 s/<2 s, plus the existing quality/echo/retry gates.
+5. Capture measured input and speaker output on one calibrated recorder clock;
+   score end-of-speech to first **correct audible translation**. Synthesized
+   provider input in a standalone pipeline bench is not a physical baseline.
+   Retain at least 100 distinct held-out hotel utterances per intended pair,
+   repetitions and both directions, bilingual meaning/naturalness review,
+   critical-entity denominators and every scheduled failure/timeout.
+   Include startup/greeting overlap, long-synthesis interruption, repeated
+   speech, unclear words, names/room numbers/negation/prices/dates,
+   mute/unmute/rapid stop-start, network loss, expired initial token, reconnect
+   and credential revocation. Self-hosted evaluation additionally requires
+   refreshed-token and room-replay tests.
 
-If the acoustic result still misses the target, use the RTC loss/jitter/buffer
-observations and ask Fish for correlated ASR-final, LLM-first-token and
-TTS-first-audio spans on that exact session. A history timestamp gap cannot
-select which model to replace. Paid acceptance remains subject to the existing
-verified spending allowance; no paid tests ran for this candidate.
+Compare absolute results against the full Day quality, echo, retry and latency
+gates in TEST-PLAN, not just successful-only p50/p95. If a measured result
+misses a target, use RTC diagnostics and request correlated provider spans
+for that exact session before attributing a bottleneck. A history timestamp
+gap, tool latency or configuration ceiling cannot select a model to replace.
+No paid acceptance run or measured improvement is established here.
 
 ## Verification
 

@@ -7,23 +7,29 @@ import java.net.URI
  * APK signing/package/version verification still runs on the downloaded archive.
  */
 object UpdateFeed {
-    fun parse(document: JSONObject, fetch: (String) -> JSONObject): UpdateRequest? {
+    fun parse(document: JSONObject, expectedDistribution: String, fetch: (String) -> JSONObject): UpdateRequest? {
+        require(UpdateDistribution.valid(expectedDistribution)) { "Invalid expected distribution" }
         if (document.optBoolean("draft") || document.optBoolean("prerelease")) return null
-        if (document.has("schema")) return pinned(UpdateRequest.fromJson(document))
+        if (document.has("schema")) return pinned(UpdateRequest.fromJson(document), expectedDistribution)
 
         val tag = document.getString("tag_name")
         // Historical CI tags are not installable versions.
         if (!tag.startsWith("v") || !ReleaseVersion.valid(tag)) return null
         val assets = document.getJSONArray("assets")
         val entries = (0 until assets.length()).map { assets.getJSONObject(it) }
-        val manifest = entries.singleOrNull { it.optString("name") == "release-metadata.json" }
+        val metadataName = if (expectedDistribution == "hotel") "hotel-release-metadata.json" else "release-metadata.json"
+        val apkName = if (expectedDistribution == "hotel") "Manzanilla-Hotel.apk" else "Manzanilla-Reception.apk"
+        val manifest = entries.singleOrNull { it.optString("name") == metadataName }
             ?: error("Release metadata asset is missing or ambiguous")
         val manifestUrl = manifest.getString("browser_download_url")
-        https(manifestUrl)
+        val manifestUri = https(manifestUrl)
+        require(manifestUri.path.endsWith("/releases/download/$tag/$metadataName") &&
+            manifestUri.path == manifestUri.normalize().path) { "Release metadata URL mismatch" }
         val request = UpdateRequest.fromJson(fetch(manifestUrl))
         require(request.tag == tag) { "Release tag/metadata mismatch" }
+        require(request.distribution == expectedDistribution) { "Release distribution mismatch" }
         val apk = entries.singleOrNull {
-            it.optString("browser_download_url") == request.url && it.optString("name").endsWith(".apk")
+            it.optString("browser_download_url") == request.url && it.optString("name") == apkName
         } ?: error("Release APK/metadata mismatch")
         val rawDigest = apk.opt("digest")
         val digest = if (rawDigest == null || rawDigest == JSONObject.NULL || rawDigest == "") null else {
@@ -35,15 +41,17 @@ object UpdateFeed {
         if (request.sha256 != null && digest != null) {
             require(request.sha256 == digest) { "Release digests disagree" }
         }
-        return pinned(request.copy(sha256 = digest ?: request.sha256))
+        return pinned(request.copy(sha256 = digest ?: request.sha256), expectedDistribution)
     }
 
-    private fun pinned(request: UpdateRequest): UpdateRequest {
+    private fun pinned(request: UpdateRequest, expectedDistribution: String): UpdateRequest {
+        require(request.distribution == expectedDistribution) { "Release distribution mismatch" }
         require(request.sha256 != null) { "Release metadata must include an APK digest" }
         val uri = https(request.url)
         val path = uri.path.orEmpty()
+        val apkName = if (expectedDistribution == "hotel") "Manzanilla-Hotel.apk" else "Manzanilla-Reception.apk"
         require(path == uri.normalize().path &&
-            Regex(".*/releases/download/${Regex.escape(request.tag)}/[^/]+\\.apk").matches(path)) {
+            path.endsWith("/releases/download/${request.tag}/$apkName")) {
             "APK URL is not pinned to its release"
         }
         return request

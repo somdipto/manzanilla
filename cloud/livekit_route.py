@@ -87,10 +87,18 @@ async def mint(store, dev, value):
             raise HTTPException(422, 'Choose two different interpreter languages',
                                 headers=failure_headers('configuration', 'contract'))
         url, http_base, key, secret = config()
+        reservation = request_lease(dev, value.request_id) if value.request_id else None
+        prior = store.rows('SELECT id FROM fish_sessions WHERE id=? AND device=? AND hotel=?',
+                           (reservation, dev['id'], dev['hotel'])) if reservation else []
+        # Withdrawing evaluation consent blocks only new reservations. A recorded
+        # request keeps its existing conflict/recovery contract and cleanup route.
+        if not prior and os.getenv('ALLOW_UNQUALIFIED_LIVEKIT') != '1':
+            raise HTTPException(503, UNAVAILABLE,
+                                headers=failure_headers('configuration', 'unconfigured'))
         try:
             ident = store.reserve_fish(dev, MAX_DURATION, duration_cap('FISH_HOTEL_DAILY_SECONDS', 1800),
                                        duration_cap('FISH_ACCOUNT_DAILY_SECONDS', 3600), 60, JOIN_TOKEN_SECONDS,
-                                       reservation=request_lease(dev, value.request_id) if value.request_id else None,
+                                       reservation=reservation,
                                        route='livekit', session_id_for=room_name)
         except PermissionError:
             raise HTTPException(401, 'Unauthorized device', headers=failure_headers('admission', 'unauthorized')) from None

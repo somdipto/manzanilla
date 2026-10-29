@@ -3,6 +3,7 @@
 The response confirms only that the account may list agent sessions; it does not
 prove agent creation, speech entitlement, billing, or audio quality.
 """
+import argparse
 import http.client
 import os
 import secrets
@@ -37,8 +38,18 @@ def check(key, connection_factory=http.client.HTTPSConnection):
                 pass
 
 
-def main():
-    result, status = check(os.environ.get("FISH_API_KEY", ""))
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--distribution", required=True, choices=("personal-test", "hotel"))
+    distribution = parser.parse_args(argv).distribution
+    key = os.environ.get("FISH_API_KEY", "")
+    if distribution == "hotel":
+        if key.strip():
+            print("Hotel construction must not receive a Fish credential.", file=sys.stderr)
+            return 1
+        print("Hotel construction requires no Fish credential or provider check.")
+        return 0
+    result, status = check(key)
     if result == "accepted":
         print("Fish authentication check passed (HTTP %d); live voice is not verified." % status)
         return 0

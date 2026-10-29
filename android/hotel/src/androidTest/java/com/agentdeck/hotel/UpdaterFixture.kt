@@ -42,7 +42,7 @@ internal object UpdaterFixture {
         val ownership = Updater::class.java.getDeclaredField("ownership").apply { isAccessible = true }.get(updater) as UpdateOwnership
         val phase = Updater::class.java.getDeclaredField("phase").apply { isAccessible = true }
         val request = UpdateRequest("v99.0.0", "https://fixture.invalid/releases/download/v99.0.0/app.apk",
-            base.packageName, "99.0.0", 9999, UpdateRequest.hash("fixture-only".toByteArray()))
+            base.packageName, "99.0.0", 9999, UpdateRequest.hash("fixture-only".toByteArray()), BuildConfig.DISTRIBUTION)
         val before = base.packageManager.getPackageInfo(base.packageName, 0)
         val settings = context.getSharedPreferences("deck", Context.MODE_PRIVATE)
         val prefs = context.getSharedPreferences("upd", Context.MODE_PRIVATE)
@@ -167,7 +167,7 @@ internal object UpdaterFixture {
         val abandon = Updater::class.java.getDeclaredMethod("abandonInstall").apply { isAccessible = true }
         val installer = base.packageManager.packageInstaller
         val request = UpdateRequest("v99.0.0", "https://fixture.invalid/releases/download/v99.0.0/app.apk",
-            base.packageName, "99.0.0", 9999, UpdateRequest.hash("callback-fixture".toByteArray()))
+            base.packageName, "99.0.0", 9999, UpdateRequest.hash("callback-fixture".toByteArray()), BuildConfig.DISTRIBUTION)
         val cached = File(context.filesDir, "update-${request.key}.apk").apply { writeText("verified-download-sentinel") }
         var id = -1
         lateinit var attempt: UpdateAttempt
@@ -333,7 +333,7 @@ internal object UpdaterFixture {
         }
         val candidate = File(base.filesDir, "updater-qa-candidate.apk")
         check(candidate.isFile) { "Host must stage the QA candidate in private app files" }
-        val archive = base.packageManager.getPackageArchiveInfo(candidate.path, 0) ?: error("Invalid QA candidate")
+        val archive = base.packageManager.getPackageArchiveInfo(candidate.path, PackageManager.GET_META_DATA) ?: error("Invalid QA candidate")
         val installed = base.packageManager.getPackageInfo(base.packageName, 0)
         fun code(info: android.content.pm.PackageInfo): Long =
             if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
@@ -350,7 +350,8 @@ internal object UpdaterFixture {
         val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
         val name = archive.versionName ?: error("Missing QA version")
         val request = UpdateRequest("v$name", "https://fixture.invalid/releases/download/v$name/app.apk",
-            base.packageName, name, code(archive), hash)
+            base.packageName, name, code(archive), hash,
+            UpdateDistribution.fromManifest(archive.applicationInfo?.metaData?.get(UpdateDistribution.METADATA), historical = false))
         val marker = "qa-only-${UUID.randomUUID()}"
         val prefs = base.getSharedPreferences("updater-consent-fixture", Context.MODE_PRIVATE)
         val deck = base.getSharedPreferences("deck", Context.MODE_PRIVATE)

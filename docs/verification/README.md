@@ -19,6 +19,10 @@ retain bounded case evidence, not raw logcat.
 Credential lookup may occur during optional preparation. Permission checks
 observe actual transport/microphone transitions and retryable release, not an
 incidental number of credential reads.
+The separate original-signer UI/retention proof keeps the actual installed
+transport and saved credential but substitutes an empty runtime resolver.
+Chooser navigation therefore cannot provision an external provider; compiled
+personal/hotel key policy and read-only account access are verified separately.
 Chooser dispatch waits for actual native foreground/window focus within its
 existing deadline. Failed transitions retain only bounded lifecycle flags;
 the chooser fixture does not manufacture a resume or loosen authorization.
@@ -37,6 +41,36 @@ versions and source commits exercised; it is not silently relabelled.
 Final original-signer upgrade/visible-Reception proof must bind the new head,
 not the already-passed17.0.45 artifact. No release, deployment, additional
 provider probe, PR merge or live-data mutation is authorized by this integration.
+
+## 17.0.45 qualification-gates candidate (S8)
+
+Version 17.0.45/code75. Fish remains the default; LiveKit is explicit evaluation,
+not a substitute for unavailable provider or physical acceptance.
+
+- **Passed:** 764 integrated Python cases, 17 Node cases, catalogue generation/check and ten
+  Chromium151 scenarios with the existing selected-locale qualification notice
+  visible. A deleted host browser cache was restored into task-owned storage.
+- **Passed:** actual isolated HTTPS API across backend restarts with opt-in
+  absent, enabled and withdrawn. New rejection creates no reservation; one
+  admitted request remains recorded, replay is not falsely labelled not-created,
+  and end/cleanup still completes against the actual local room service.
+- **Passed:** zero-paid synthetic transport with the actual LiveKit1.13.10 server
+  built from official tag `e5655ac20267fa5005dccaf3f0e3bfc3ea688c07`.
+  Device audio reached the worker during its greeting; interrupted playback
+  flushed before replacement audio, and the matching caption reached the client.
+  This is local transport/ordering, not acoustic latency, accuracy or naturalness.
+- The CLI initially lacked the repository import path. It now uses the existing
+  script-root convention. Owned RTC streams/sources close before disconnect;
+  the rerun has no FFI teardown assertions and reports PASS only after cleanup.
+  The 36 worker tests pass. The known short dev-key warning is intentional in
+  this isolated evaluation; it is not a production credential configuration.
+- Private `work/voice-acceptance/qualification.json` initializes 159 route/pair
+  records covering all52 offered codes plus English/Arabic, all `not_tested`,
+  with no device, artifact digest or manufactured capture evidence.
+- **Blocked:** matching physical tablet/captures, bilingual review, actual
+  designated hotel staff and approved vendor test environments, live provider
+  qualification and verified remaining aggregate $4 allowance. No paid call,
+  acoustic-improvement claim, release or deployment was made.
 
 ## 17.0.43 installer-capability candidate (S6)
 
