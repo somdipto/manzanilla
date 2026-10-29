@@ -28,6 +28,6 @@ internal class InterpretationReports(private val guest: String, private val staf
         seen.add(id)
         return JSONObject().put("type", "interpretation").put("utterance_id", "fish:report:$id")
             .put("source_language", language).put("language_attribution", "model")
-            .put("original", original).put("text", translation)
+            .put("original", original).put("text", if (language == "und") "" else translation)
     }
 }

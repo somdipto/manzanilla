@@ -20,14 +20,10 @@
       return turn;
     }
     resolve(guest, staff, changed) {
-      let previous = null;
-      let scope = null;
       for (const turn of this.turns) {
         if (turn.kind !== 'human') continue;
-        if (scope !== turn.scope) { previous = null; scope = turn.scope; }
-        const side = sideFor(turn.sourceLanguage, guest, staff) || previous;
+        const side = sideFor(turn.sourceLanguage, guest, staff);
         if (turn.side !== side) { turn.side = side; changed.add(turn); }
-        previous = side;
       }
       return [...changed];
     }
@@ -45,7 +41,7 @@
         const existing = this.byId.get(id);
         if (existing?.reported) return []; // A tool call is one immutable utterance, including repeats.
         const turn = existing || this.add(id, 'human', scope);
-        Object.assign(turn, { original: event.original, text: event.text, sourceLanguage: language, reported: true, final: { original: true, text: true } });
+        Object.assign(turn, { original: event.original, text: language === 'und' ? '' : event.text, sourceLanguage: language, reported: true, final: { original: true, text: true } });
         changed.add(turn);
       } else if (event.type === 'caption') {
         if (!['human', 'guest', 'staff', 'assistant'].includes(event.side) || !['original', 'text'].includes(event.field) ||
