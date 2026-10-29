@@ -1,12 +1,12 @@
 name: Synthetic Fish language routing check
 on:
   pull_request:
-    types: [opened]
+    types: [labeled]
 permissions:
   contents: read
 jobs:
   full-setup:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/language-start-17-0-39'
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/language-start-17-0-39' && github.event.label.name == 'verify-fish-language'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -26,7 +26,7 @@ jobs:
           bash gradlew :hotel:testDebugUnitTest --tests com.agentdeck.hotel.FishPlanProviderFixture --no-daemon
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
-      - run: python3 -m pip install livekit==1.13.10
+      - run: python3 -m pip install livekit==1.2.0
       - name: Verify an isolated synthetic provider session and clean up
         env:
           FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
