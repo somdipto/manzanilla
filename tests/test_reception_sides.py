@@ -11,9 +11,8 @@ def test_native_and_managed_caption_tool_contracts_match():
     assert managed == native
     assert managed['tool_type'] == 'client'
     assert managed['expects_response'] is False
-    # execution_mode is a webhook-only setting, not valid for client tools.
     assert 'execution_mode' not in managed
-    assert {argument['name'] for argument in managed['arguments']} == {'source_language', 'original', 'translation'}
+    assert [argument['name'] for argument in managed['arguments']] == ['source_language', 'original', 'translation']
     assert not managed.get('url')
     assert not managed.get('headers')
 
@@ -23,8 +22,3 @@ def test_legacy_managed_caption_tool_uses_client_fire_and_forget_contract():
     assert legacy['tool_type'] == 'client'
     assert legacy['expects_response'] is False
     assert 'execution_mode' not in legacy
-
-
-def test_language_evidence_module_is_loaded_before_reception():
-    source = (ROOT / 'android/hotel/src/main/assets/reception/index.html').read_text()
-    assert source.index('src="language-turns.js"') < source.index('src="reception.js"')

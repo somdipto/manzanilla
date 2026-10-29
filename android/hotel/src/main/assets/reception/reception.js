@@ -160,17 +160,25 @@
   }
   const phaseLabel = () => ({ connecting: t().connect, ready: "Staff-led support", greeting: "Welcome", thinking: "Translating", speaking: t().speaking, listening: "Live", ending: "Stopping", stopped: "Stopped" })[state.phase] || t().reception;
   const sessionAudioText = () => ({ off: "Mic off", recording: "Mic on", muted: "Mic muted", stopping: "Releasing mic", unknown: "Mic state unknown · ask staff" })[state.audio];
+  const micLabel = () => ({ recording: "Mute the microphone", muted: "Unmute the microphone", off: state.phase === "connecting" ? "Connecting · microphone off" : "Microphone off", stopping: "Stopping · releasing microphone", unknown: "Microphone state unknown · ask staff" })[state.audio];
+  function resetMicLevels() {
+    if (state.audio !== "recording") {
+      state.micLevel = 0;
+      state.bands = [0, 0, 0];
+    }
+  }
   const sessionDock = () => {
     if (state.mode === "translation") {
       if (state.terminated) {
         const safe = !state.active && state.audio === "off";
         return '<div class="session-actions" data-stopped="true"><div class="session-control"><div class="session-control-copy"><strong>Conversation stopped</strong><span>'.concat(esc(sessionAudioText()), "</span></div></div>").concat(action("restart", "Try again", "primary", !safe), "</div>");
       }
-      const bands = state.micLevel > 0 ? state.bands || [state.micLevel, state.micLevel, state.micLevel] : [0, 0, 0];
+      resetMicLevels();
+      const bands = state.bands || [state.micLevel, state.micLevel, state.micLevel];
       const muted = state.audio === "muted";
-      const label = muted ? "Unmute the microphone" : "Mute the microphone";
+      const label = micLabel();
       const enabled = state.active && !state.closed && ["recording", "muted"].includes(state.audio);
-      return '<button type="button" class="voice-ball" data-action="mute" data-hearing="'.concat(state.audio === "recording", '" aria-pressed="').concat(muted, '" aria-label="').concat(label, '" ').concat(enabled ? "" : "disabled", ' style="--level:').concat(state.micLevel, ";--b0:").concat(bands[0], ";--b1:").concat(bands[1], ";--b2:").concat(bands[2], '">').concat(muted ? icons.micOff : icons.mic, "</button>");
+      return '<button type="button" class="voice-ball" data-action="mute" data-hearing="'.concat(state.audio === "recording", '" aria-pressed="').concat(muted, '" aria-label="').concat(label, '" ').concat(enabled ? "" : "disabled", ' style="--level:').concat(state.micLevel, ";--b0:").concat(bands[0], ";--b1:").concat(bands[1], ";--b2:").concat(bands[2], '">').concat(state.audio === "recording" ? icons.mic : icons.micOff, "</button>");
     }
     const stopped = state.closed || state.terminated;
     const restart = state.terminated && !state.active && state.audio === "off";
@@ -178,14 +186,17 @@
     return '<div class="session-actions" data-stopped="'.concat(stopped, '"><div class="session-control">').concat(indicator, '<div class="session-control-copy"><strong>').concat(esc(stopped ? state.phase === "ending" ? "Stopping…" : "Stopped" : phaseLabel()), "</strong><span>").concat(esc(sessionAudioText()), "</span></div></div>").concat(!stopped ? action("message", "Message staff", "secondary", ["connecting", "greeting"].includes(state.phase)) : "").concat(action(restart ? "restart" : "stop", restart ? "Restart" : stopped ? "Releasing…" : "Stop", "stop", stopped && !restart), "</div>");
   };
   function syncMic() {
+    resetMicLevels();
     const button = content.querySelector(".voice-ball");
     if (!button) return;
     const muted = state.audio === "muted";
     button.disabled = !state.active || state.closed || !["recording", "muted"].includes(state.audio);
     button.dataset.hearing = String(state.audio === "recording");
     button.setAttribute("aria-pressed", String(muted));
-    button.setAttribute("aria-label", muted ? "Unmute the microphone" : "Mute the microphone");
-    button.innerHTML = muted ? icons.micOff : icons.mic;
+    button.setAttribute("aria-label", micLabel());
+    button.style.setProperty("--level", String(state.micLevel));
+    (state.bands || [state.micLevel, state.micLevel, state.micLevel]).forEach((band, index) => button.style.setProperty("--b" + index, String(band)));
+    button.innerHTML = state.audio === "recording" ? icons.mic : icons.micOff;
   }
   function renderNotices() {
     const target = document.getElementById("notices");
@@ -247,12 +258,22 @@
     const focusedInput = (focusedElement == null ? void 0 : focusedElement.closest("#operation-form")) ? { name: focusedElement.name, start: focusedElement.selectionStart, end: focusedElement.selectionEnd } : null;
     const scrollTop = content.scrollTop;
     const scrolls = [...content.querySelectorAll(".session-scroll,.draft,.language-list")].map((element) => ({ top: element.scrollTop, follow: element.classList.contains("session-scroll") && element.scrollHeight - element.clientHeight - element.scrollTop < 60 }));
+    const retainedTurns = new Map(state.turns.filter((turn) => {
+      var _a2;
+      return (_a2 = turn.node) == null ? void 0 : _a2.isConnected;
+    }).map((turn) => [turn.id, turn.node]));
     captionNodes.clear();
     content.innerHTML = (html[state.page] || html.idle)();
     content.querySelectorAll("[data-caption-key]").forEach((node) => captionNodes.set(node.dataset.captionKey, node));
     const turnNodes = new Map([...content.querySelectorAll("[data-turn-id]")].map((node) => [node.dataset.turnId, node]));
     state.turns.forEach((turn) => {
-      turn.node = turnNodes.get(turn.id) || null;
+      const rendered = turnNodes.get(turn.id);
+      const retained = retainedTurns.get(turn.id);
+      if (rendered && retained) {
+        retained.className = rendered.className;
+        rendered.replaceWith(retained);
+        turn.node = retained;
+      } else turn.node = rendered || null;
     });
     content.scrollTop = scrollTop;
     [...content.querySelectorAll(".session-scroll,.draft,.language-list")].forEach((element, index) => {
@@ -753,7 +774,7 @@
       if (!["off", "recording", "stopping", "unknown", "muted"].includes(event.state)) return;
       if (state.closed && !["off", "unknown"].includes(event.state)) return;
       state.audio = event.state;
-      if (state.audio !== "recording") state.micLevel = 0;
+      resetMicLevels();
       if (!finishNavigation()) {
         if (state.page === "active" && state.mode === "translation" && !state.terminated) {
           const privacy = document.getElementById("privacy");

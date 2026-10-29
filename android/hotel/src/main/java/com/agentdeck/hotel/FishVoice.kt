@@ -609,16 +609,19 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
         val query = URLEncoder.encode(FishPlan.CAPTION_TOOL, "UTF-8")
         val listing = call(run, apiKey, "GET", "/v1/agent/tools?search=$query&page_size=100", null)
         val tools = listing.getJSONArray("tools")
+        if (listing.opt("has_more") != false)
+            throw FishStartupFailure.configuration(FishStartupFailure.Stage.CAPTION_LOOKUP)
+        var exactNameFound = false
         for (index in 0 until tools.length()) {
             val summary = tools.getJSONObject(index)
             if (summary.optString("name") != FishPlan.CAPTION_TOOL) continue
+            exactNameFound = true
             val id = summary.getString("tool_id")
             check(id.matches(Regex("[A-Za-z0-9_-]{1,200}")))
-            if (!FishPlan.captionToolMatches(definition, call(run, apiKey, "GET", "/v1/agent/tools/$id", null)))
-                throw FishStartupFailure.configuration(FishStartupFailure.Stage.CAPTION_READ)
-            return id
+            if (FishPlan.captionToolMatches(definition, call(run, apiKey, "GET", "/v1/agent/tools/$id", null)))
+                return id
         }
-        check(!listing.optBoolean("has_more")) { "Caption tool search is incomplete" }
+        if (exactNameFound) throw FishStartupFailure.configuration(FishStartupFailure.Stage.CAPTION_READ)
         return call(run, apiKey, "POST", "/v1/agent/tools", definition).getString("tool_id").also {
             check(it.matches(Regex("[A-Za-z0-9_-]{1,200}")))
         }

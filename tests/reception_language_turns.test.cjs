@@ -25,8 +25,13 @@ test('all 2652 ordered picker pairs map both languages by selection, including r
   for (const guest of codes) for (const staff of codes) {
     if (guest === staff) continue;
     const ledger = new LanguageTurns();
-    for (const [id, language] of [['s1', staff], ['s2', staff], ['s3', staff], ['u1', 'und'], ['g1', guest], ['g2', guest], ['g3', guest], ['u2', 'und']]) ledger.accept(report(id, language), guest, staff);
+    for (const [id, language] of [['s1', staff], ['s2', staff], ['s3', staff], ['u1', 'und'], ['g1', guest], ['g2', guest], ['g3', guest], ['u2', 'und']]) {
+      const event = report(id, language);
+      if (language === 'und') event.text = ' \t\n';
+      ledger.accept(event, guest, staff);
+    }
     assert.deepEqual(ledger.turns.map(t => t.side), ['staff', 'staff', 'staff', null, 'guest', 'guest', 'guest', null], `${guest}/${staff}`);
+    assert.ok(ledger.turns.filter(t => t.sourceLanguage === 'und').every(t => t.text === ''), `${guest}/${staff}: unclear translation is empty`);
   }
 });
 
@@ -144,6 +149,7 @@ test('invalid report fields and a translation with unknown direction cannot crea
   for (const event of [
     { ...report('a', 'und'), text: 'Guessed translation' },
     { ...report('b', 'de'), text: '' },
+    { ...report('blank', 'de'), text: ' \t\n' },
     { ...report('c', 'de'), original: 204 },
     { ...report('d', 'de'), original: '   ' }
   ]) assert.deepEqual(ledger.accept(event, 'fr', 'de'), []);

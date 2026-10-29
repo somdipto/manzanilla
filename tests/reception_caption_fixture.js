@@ -45,12 +45,27 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   receive({ type: 'reception_info', audio_available: true, local_audio_state: 'unknown' });
   assert(doc.body.textContent.includes('Mic state unknown'), 'Recreated UI preserves unresolved microphone ownership');
   receive({ type: 'reception_info', audio_available: true, local_audio_state: 'off' });
-  const begin = () => {
+  const begin = (verifySelection = false) => {
     click('[data-action="translation"]');
     assert(messages.at(-1).action === 'prepare_translation', 'Language screen prepares configuration before Start');
+    if (verifySelection) {
+      const starts = messages.filter(message => message.action === 'start').length;
+      for (const [side, value] of [['language', 'en'], ['staff_language', 'fr'], ['language', 'ko'], ['staff_language', 'es']]) {
+        const picker = doc.querySelector(`[data-language-side="${side}"]`);
+        picker.value = value;
+        picker.dispatchEvent(new win.Event('change', { bubbles: true }));
+        const prepared = messages.at(-1);
+        assert(prepared.action === 'prepare_translation' &&
+          prepared.language === doc.querySelector('#language').value &&
+          prepared.staff_language === doc.querySelector('#staff_language').value, 'Picker changes prepare the exact selected pair');
+        assert(messages.filter(message => message.action === 'start').length === starts && !doc.querySelector('.voice-ball'), 'Preparation does not start capture');
+      }
+    }
     click('[data-action="start"]');
     const session_id = messages.filter(message => message.action === 'start').at(-1).session_id;
     const scope = { session_id, generation: 1 };
+    assert(doc.querySelector('.voice-ball')?.getAttribute('aria-label') === 'Connecting · microphone off', 'Connecting is not a listening indication');
+    assert(doc.querySelector('.voice-ball')?.dataset.hearing === 'false', 'Connecting keeps capture off');
     receive({ ...scope, type: 'audio_state', state: 'recording' });
     receive({ ...scope, type: 'reception_event', phase: 'listening' });
     return scope;
@@ -71,13 +86,13 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   assert(bubbles()[1].querySelector('.translated').textContent === 'Yes, we have a double room.', 'Translation stays in its source bubble');
   report('staff-number1', 'und', '204');
   report('staff-number2', 'und', '204');
-  assert(bubbles().slice(-2).every(node => node.classList.contains('caption-pending')), 'Repeated unclear numbers remain neutral');
+  assert(bubbles().slice(-2).every(node => node.classList.contains('caption-pending')), 'Repeated unclear numbers stay neutral after reception');
   report('guest1', 'en', 'Where is the lift?', '¿Dónde está el ascensor?');
   report('guest2', 'en', 'Where is the lift?', '¿Dónde está el ascensor?');
   report('guest3', 'en', 'Where is the lift?', '¿Dónde está el ascensor?');
-  report('guest-name', 'und', 'Alex');
+  report('guest-name', 'und', 'Alex', ' \t\n');
   assert(bubbles().slice(-4, -1).every(node => node.classList.contains('caption-guest')), 'Guest repeats stay left');
-  assert(bubbles().at(-1).classList.contains('caption-pending'), 'An unclear name does not inherit the guest side');
+  assert(bubbles().at(-1).classList.contains('caption-pending') && !bubbles().at(-1).querySelector('.translated'), 'Unclear whitespace report has no speaker or translated section');
   const count = bubbles().length;
   report('guest1', 'es', 'A duplicate must not overwrite a record.');
   assert(bubbles().length === count && bubbles()[6].classList.contains('caption-guest'), 'Duplicate report cannot add or move bubbles');
@@ -100,6 +115,24 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   doc.querySelector('.voice-ball').click();
   receive({ ...scope, type: 'audio_state', state: 'recording' });
   receive({ ...scope, type: 'mic_level', level: 0.75, bands: [0.7, 0.5, 0.2] });
+  for (const [audio, label] of [['muted', 'Unmute the microphone'], ['off', 'Microphone off'], ['unknown', 'Microphone state unknown · ask staff']]) {
+    receive({ ...scope, type: 'audio_state', state: 'recording' });
+    receive({ ...scope, type: 'mic_level', level: 0.8, bands: [0.7, 0.5, 0.2] });
+    assert(doc.querySelector('.voice-ball').style.getPropertyValue('--level') === '0.8', 'Recording uses measured levels');
+    receive({ ...scope, type: 'audio_state', state: audio });
+    const checkStoppedMeter = () => {
+      const button = doc.querySelector('.voice-ball');
+      assert(['--level','--b0','--b1','--b2'].every(key => button.style.getPropertyValue(key) === '0'), `${audio} clears every animation input`);
+      assert(button.dataset.hearing === 'false' && button.getAttribute('aria-label') === label, `${audio} has truthful accessible capture state`);
+      assert(bubbles()[0] === first, `${audio} keeps existing transcript nodes`);
+    };
+    checkStoppedMeter();
+    receive({ type: 'connection', connected: true });
+    checkStoppedMeter();
+    receive({ ...scope, generation: 0, type: 'mic_level', level: 1, bands: [1, 1, 1] });
+    checkStoppedMeter();
+  }
+  receive({ ...scope, type: 'audio_state', state: 'recording' });
   assert(bubbles()[0] === first, 'Mic events do not rebuild captions');
   receive({ ...scope, type: 'input_activity' });
   assert(messages.at(-1).action === 'activity' && bubbles()[0] === first, 'Raw input keeps activity alive without placing a bubble');
@@ -126,7 +159,7 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
     receive({ type: 'visibility', visible: false });
     receive({ ...scope, type: 'audio_state', state: 'off' });
     receive({ type: 'language_preferences', language: guest, staff_language: staff });
-    scope = begin();
+    scope = begin(guest === 'ko');
     report('staff1', staff, 'Same original', 'Paired translation');
     report('staff2', staff, 'Same original', 'Paired translation');
     report('staff3', staff, 'Same original', 'Paired translation');
@@ -144,5 +177,5 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   const restarted = messages.filter(message => message.action === 'start').at(-1);
   assert(restarted.session_id !== originalSession && bubbles().length === 4, 'Retry starts a new session while retaining visible history');
   win.__lastScope = scope;
-  return { frame, replayMs, assertions: 'Model language, repeats, unknown neutrality, late language, finality, escaping, scrolling, session fencing, eight language orientations and physical positions' };
+  return { frame, replayMs, assertions: 'Model language, repeats, neutral unknowns, whitespace, capture levels, late language, finality, escaping, scrolling, session fencing, eight language orientations and physical positions' };
 }

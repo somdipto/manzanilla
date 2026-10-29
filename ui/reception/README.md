@@ -14,3 +14,13 @@ fixtures and the Node language ledger tests exercise the generated assets.
 The actual packaged HTML, CSP, native bridge and styles remain in
 `android/hotel/src/main/assets/reception`. A real Android WebView test is still
 required for touch behavior, rendering, permissions and lifecycle checks.
+
+Caption placement uses only the current utterance's selected-language evidence.
+Unclear (`und`) reports remain neutral after either speaker and store no translated
+text. A late language annotation can move only its own legacy caption. Repeated
+utterances retain distinct immutable IDs; explicit source references still pair
+translations, and session/generation fences reject stale events.
+
+Only recording uses microphone levels. Muted, off, stopping and unknown states
+clear the level and all three bands; connecting never displays a listening glow.
+Microphone and phase events update controls without replacing transcript nodes.

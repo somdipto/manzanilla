@@ -1,4 +1,5 @@
 import asyncio, hashlib, json
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
@@ -45,12 +46,14 @@ def fish_api(tmp_path,monkeypatch):
             query=request.url.params['search']
             return httpx.Response(200,json={'tools':[
                 {'tool_id':'synthetic-caption-tool'+('' if index==0 else '-'+str(index+1)), 'name':tool['name']}
-                for index,tool in enumerate(state.get('tools',[])) if tool['name']==query]})
+                for index,tool in enumerate(state.get('tools',[])) if query in tool['name']],
+                **state.get('tool_pagination',{'has_more':False})})
         if request.url.path.startswith('/v1/agent/tools/') and request.method=='GET':
             suffix=request.url.path.removeprefix('/v1/agent/tools/synthetic-caption-tool')
             index=int(suffix[1:])-1 if suffix else 0
             return httpx.Response(200,json=state.get('tool_definition',state['tools'][index]))
         if request.url.path=='/v1/agent/tools':
+            assert request.method=='POST'
             assert data in (fish.CAPTION_TOOL,fish.LEGACY_CAPTION_TOOL)
             if state.get('tool_status',201) != 201: return httpx.Response(state['tool_status'])
             state.setdefault('tools',[]).append(data)
@@ -516,6 +519,8 @@ def test_upgraded_clients_get_one_caption_tool_and_an_immutable_cached_agent(fis
         prompt=session['overrides']['system_prompt']
         assert 'guest language es' in prompt and 'receptionist language en' in prompt
         assert 'source_language' in prompt and 'und' in prompt
+        assert 'Translate only utterances with a clear selected source language' in prompt
+        assert 'report source_language und silently with an empty translation' in prompt
         assert 'BEFORE calling any tool' in prompt
         assert 'After emitting the translation, call manzanilla_publish_interpretation_v2' in prompt
         assert 'do not speak the translation a second time' in prompt
@@ -573,6 +578,181 @@ def test_modified_existing_caption_tool_is_not_silently_reused_or_overwritten(fi
     assert result.headers['X-Manzanilla-Session-Creation']=='not-created'
     assert [path for path,_ in calls]==['/v1/agent/tools','/v1/agent/tools/synthetic-caption-tool']
     assert state['agents']=={}
+
+
+def test_caption_lookup_creates_only_when_complete_search_has_no_exact_name(fish_api):
+    _,client,headers,_,calls,state=fish_api
+    near_match={**fish.CAPTION_TOOL,'name':fish.CAPTION_TOOL['name']+'-other'}
+    state['tools']=[near_match]
+    response=client.post('/api/device/fish-session',headers=headers,
+                         json={**REQUEST,'caption_protocol':'language-v2'})
+    assert response.status_code==200
+    assert [body for path,body in calls if path=='/v1/agent/tools']==[None,fish.CAPTION_TOOL]
+    assert not any(path.endswith('/tools/synthetic-caption-tool') for path,body in calls)
+    assert state['tools']==[near_match,fish.CAPTION_TOOL]
+    config=next(iter(state['agents'].values()))
+    assert config['tools']['tool_ids']==['synthetic-caption-tool-2']
+
+
+@pytest.mark.parametrize('contract',[fish.LEGACY_CAPTION_TOOL,fish.CAPTION_TOOL],ids=['v1','v2'])
+@pytest.mark.parametrize('mode',[None,'blocking','fire_and_forget'])
+def test_caption_matcher_accepts_client_readback_defaults(contract,mode):
+    expected=deepcopy(contract)
+    expected['execution_mode']='fire_and_forget'
+    actual=deepcopy(contract)
+    actual.update(tool_id='server-tool',created_at='2026-01-01',timeout_seconds=30)
+    for argument in actual['arguments']:
+        argument.update(type='string',required=True)
+    if mode is not None: actual['execution_mode']=mode
+    assert fish.caption_tool_matches(contract,actual)
+    assert fish.caption_tool_matches(expected,actual)
+
+
+@pytest.mark.parametrize('field,value',[
+    ('name','another-caption'),
+    ('tool_type','webhook'),
+    ('description','A changed caption policy'),
+    ('expects_response',True),
+    ('expects_response',0),
+    ('arguments',None),
+    ('arguments',{}),
+])
+def test_caption_matcher_rejects_changed_required_values(field,value):
+    actual=deepcopy(fish.CAPTION_TOOL)
+    actual[field]=value
+    assert not fish.caption_tool_matches(fish.CAPTION_TOOL,actual)
+
+
+@pytest.mark.parametrize('field',['name','tool_type','description','expects_response','arguments'])
+def test_caption_matcher_requires_fields_in_expected_and_readback(field):
+    incomplete=deepcopy(fish.CAPTION_TOOL)
+    del incomplete[field]
+    assert not fish.caption_tool_matches(fish.CAPTION_TOOL,incomplete)
+    assert not fish.caption_tool_matches(incomplete,fish.CAPTION_TOOL)
+
+
+@pytest.mark.parametrize('field,value',[
+    ('name',None),('tool_type',1),('description',{}),('expects_response',0),
+    ('arguments',[{'name':None,'description':'Invalid name'}]),
+    ('arguments',[{'name':'original','description':None}]),
+])
+def test_caption_matcher_rejects_identical_but_malformed_contracts(field,value):
+    malformed=deepcopy(fish.CAPTION_TOOL)
+    malformed[field]=value
+    assert not fish.caption_tool_matches(malformed,deepcopy(malformed))
+
+
+@pytest.mark.parametrize('change',[
+    'shorter','longer','reordered','name','description','missing-name','missing-description','not-object'
+])
+def test_caption_matcher_checks_the_full_ordered_legacy_arguments(change):
+    actual=deepcopy(fish.CAPTION_TOOL)
+    arguments=actual['arguments']
+    if change=='shorter': arguments.pop()
+    elif change=='longer': arguments.append({'name':'extra','description':'Unexpected argument'})
+    elif change=='reordered': arguments.reverse()
+    elif change=='name': arguments[1]['name']='different'
+    elif change=='description': arguments[1]['description']='Different transcription policy'
+    elif change=='missing-name': del arguments[1]['name']
+    elif change=='missing-description': del arguments[1]['description']
+    else: arguments[1]='original'
+    assert not fish.caption_tool_matches(fish.CAPTION_TOOL,actual)
+
+
+def test_caption_matcher_preserves_additional_expected_requirements():
+    expected=deepcopy(fish.CAPTION_TOOL)
+    expected['arguments'][0]['required']=True
+    actual=deepcopy(expected)
+    actual['arguments'][0]['required']=False
+    assert not fish.caption_tool_matches(expected,actual)
+    del actual['arguments'][0]['required']
+    assert not fish.caption_tool_matches(expected,actual)
+    expected['arguments'][0].pop('required')
+    expected['timeout_seconds']=5
+    assert not fish.caption_tool_matches(expected,actual)
+
+
+def test_caption_matcher_does_not_ignore_webhook_execution_mode():
+    expected={**fish.CAPTION_TOOL,'tool_type':'webhook','execution_mode':'fire_and_forget'}
+    assert fish.caption_tool_matches(expected,dict(expected))
+    assert not fish.caption_tool_matches(expected,{**expected,'execution_mode':'blocking'})
+    without_mode={key:value for key,value in expected.items() if key!='execution_mode'}
+    assert not fish.caption_tool_matches(expected,without_mode)
+    assert not fish.caption_tool_matches(without_mode,expected)
+
+
+@pytest.mark.parametrize('protocol,contract',[
+    ('language-v1',fish.LEGACY_CAPTION_TOOL),('language-v2',fish.CAPTION_TOOL)
+])
+@pytest.mark.parametrize('mode',[None,'blocking'])
+def test_caption_provisioning_reuses_compatible_server_defaults(fish_api,protocol,contract,mode):
+    _,client,headers,_,calls,state=fish_api
+    actual=deepcopy(contract)
+    actual.update(tool_id='synthetic-caption-tool',timeout_seconds=30)
+    for argument in actual['arguments']: argument.update(type='string',required=True)
+    if mode is not None: actual['execution_mode']=mode
+    state['tools']=[actual]
+    response=client.post('/api/device/fish-session',headers=headers,
+                         json={**REQUEST,'caption_protocol':protocol})
+    assert response.status_code==200
+    config=next(iter(state['agents'].values()))
+    assert config['tools']['tool_ids']==['synthetic-caption-tool']
+    assert [body for path,body in calls if path=='/v1/agent/tools']==[None]
+    assert state['tools']==[actual]
+
+
+@pytest.mark.parametrize('protocol,contract',[
+    ('language-v1',fish.LEGACY_CAPTION_TOOL),('language-v2',fish.CAPTION_TOOL)
+])
+def test_caption_lookup_searches_past_incompatible_exact_name_hits(fish_api,protocol,contract):
+    _,client,headers,_,calls,state=fish_api
+    incompatible={**deepcopy(contract),'expects_response':True}
+    compatible={**deepcopy(contract),'execution_mode':'blocking'}
+    state['tools']=[incompatible,compatible]
+    response=client.post('/api/device/fish-session',headers=headers,
+                         json={**REQUEST,'caption_protocol':protocol})
+    assert response.status_code==200
+    config=next(iter(state['agents'].values()))
+    assert config['tools']['tool_ids']==['synthetic-caption-tool-2']
+    assert [path for path,body in calls if path.startswith('/v1/agent/tools')]==[
+        '/v1/agent/tools','/v1/agent/tools/synthetic-caption-tool',
+        '/v1/agent/tools/synthetic-caption-tool-2']
+    assert state['tools']==[incompatible,compatible]
+
+
+def test_caption_lookup_rejects_all_incompatible_hits_without_creation(fish_api):
+    store,client,headers,_,calls,state=fish_api
+    changed=deepcopy(fish.CAPTION_TOOL)
+    changed['arguments'][2]['description']='A different translation policy'
+    state['tools']=[{**fish.CAPTION_TOOL,'expects_response':True},changed]
+    response=client.post('/api/device/fish-session',headers=headers,
+                         json={**REQUEST,'caption_protocol':'language-v2'})
+    assert response.status_code==503
+    assert response.headers[fish.VOICE_FAILURE_HEADER]=='tool_fetch:contract:0'
+    assert response.json()=={'detail':fish.UNAVAILABLE}
+    assert response.headers['X-Manzanilla-Session-Creation']=='not-created'
+    assert [path for path,body in calls]==[
+        '/v1/agent/tools','/v1/agent/tools/synthetic-caption-tool',
+        '/v1/agent/tools/synthetic-caption-tool-2']
+    assert state['agents']=={}
+    assert store.rows('SELECT status FROM fish_sessions')==[{'status':'ended'}]
+
+
+@pytest.mark.parametrize('pagination',[{'has_more':True},{'has_more':None},{'has_more':0},{}])
+@pytest.mark.parametrize('existing',[False,True])
+def test_incomplete_caption_lookup_neither_reuses_nor_creates(fish_api,pagination,existing):
+    store,client,headers,_,calls,state=fish_api
+    state['tool_pagination']=pagination
+    if existing: state['tools']=[fish.CAPTION_TOOL]
+    response=client.post('/api/device/fish-session',headers=headers,
+                         json={**REQUEST,'caption_protocol':'language-v2'})
+    assert response.status_code==503
+    assert response.headers[fish.VOICE_FAILURE_HEADER]=='tool_lookup:contract:0'
+    assert response.headers['X-Manzanilla-Session-Creation']=='not-created'
+    assert response.json()=={'detail':fish.UNAVAILABLE}
+    assert calls==[('/v1/agent/tools',None)]
+    assert state['agents']=={}
+    assert store.rows('SELECT status FROM fish_sessions')==[{'status':'ended'}]
 
 
 def test_language_changes_select_recognizer_per_session_without_republishing(fish_api,monkeypatch):
@@ -753,6 +933,9 @@ def test_caption_upgrade_keeps_old_clients_on_their_immutable_contract(fish_api)
     for index,policy in enumerate([fish.LEGACY_REPORT_POLICY,fish.REPORT_POLICY]):
         assert policy in agents[index]['prompt']['system_prompt']
         assert policy in sessions[index]['overrides']['system_prompt']
+        prompt=sessions[index]['overrides']['system_prompt']
+        assert 'Translate only utterances with a clear selected source language' in prompt
+        assert 'report source_language und silently with an empty translation' in prompt
     assert 'manzanilla_publish_interpretation_v2' not in sessions[0]['overrides']['system_prompt']
     assert 'manzanilla_publish_interpretation_v1' not in sessions[1]['overrides']['system_prompt']
     assert 'manzanilla_publish_interpretation' not in sessions[2]['overrides']['system_prompt']
@@ -790,7 +973,7 @@ def test_managed_startup_reference_reports_stage_and_status_without_provider_det
 ])
 @pytest.mark.parametrize('kind',['timeout','network'])
 def test_managed_startup_transport_reference_does_not_disclose_exception(fish_api,stage,path,method,kind):
-    _,client,headers,_,_,state=fish_api
+    _,client,headers,_,calls,state=fish_api
     state.update(failure_path=path,failure_method=method,failure_kind=kind)
     response=client.post('/api/device/fish-session',headers=headers,
                          json={**REQUEST,'caption_protocol':'language-v2'})
@@ -798,6 +981,9 @@ def test_managed_startup_transport_reference_does_not_disclose_exception(fish_ap
     assert response.headers[fish.VOICE_FAILURE_HEADER]==f'{stage}:{kind}:0'
     assert 'private token and guest text' not in response.text + str(response.headers)
     assert ('X-Manzanilla-Session-Creation' in response.headers)==(stage!='session_create')
+    if stage=='tool_lookup':
+        assert calls==[('/v1/agent/tools',None)]
+        assert state['agents']=={}
 
 
 def test_malformed_ticket_and_changed_caption_contract_have_distinct_references(fish_api):

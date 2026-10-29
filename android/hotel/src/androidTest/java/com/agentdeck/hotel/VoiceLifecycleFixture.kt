@@ -27,6 +27,7 @@ class VoiceLifecycleFixture : Instrumentation() {
         try {
             when (case) {
                 "reception-bridge" -> ReceptionWebViewFixture.verify(this)
+                "reception-truth" -> ReceptionWebViewFixture.verify(this, truth = true)
                 "voice-setup" -> VoiceSetupFixture.verify(this)
                 "microphone-permission" -> ReceptionWebViewFixture.verifyMicrophonePermission(this)
                 "microphone-permission-denied" -> ReceptionWebViewFixture.verifyMicrophonePermission(this, "deny")
@@ -46,7 +47,15 @@ class VoiceLifecycleFixture : Instrumentation() {
             result.putString("stream", "PASS case=$case late=$late status=$status\n")
             finish(-1, result)
         } catch (e: Throwable) {
-            result.putString("stream", "FAIL: ${e.javaClass.simpleName}: ${e.message}\n")
+            val failure = e.cause ?: e
+            val installer = case.startsWith("installer") || case.startsWith("update")
+            val frame = if (installer) null else failure.stackTrace.firstOrNull {
+                it.className.startsWith("com.agentdeck.")
+            }
+            val location = frame?.let {
+                " at=${it.className.substringAfterLast('.').take(100)}:${it.fileName?.take(80)}:${it.lineNumber}"
+            } ?: ""
+            result.putString("stream", "FAIL case=$case ${failure.javaClass.simpleName.take(80)}$location\n")
             finish(0, result)
         }
     }

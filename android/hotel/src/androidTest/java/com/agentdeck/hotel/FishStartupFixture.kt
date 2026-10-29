@@ -3,6 +3,9 @@ package com.agentdeck.hotel
 import android.app.Instrumentation
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
+import android.webkit.WebView
+import com.agentdeck.ui.ReceptionView
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -20,6 +23,8 @@ import java.io.Closeable
 import java.lang.reflect.InvocationTargetException
 import java.net.SocketTimeoutException
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /** Actual FishVoice provisioning and teardown, with every HTTP call intercepted before networking.
  * This fixture never joins LiveKit, requests microphone permission or uses a provider credential.
@@ -27,17 +32,19 @@ import java.util.concurrent.CopyOnWriteArrayList
 internal object FishStartupFixture {
     fun verify(instrumentation: Instrumentation) {
         check(BuildConfig.FISH_API_KEY.isBlank()) { "Use a key-free verification APK" }
+        verifyPagePreparation(instrumentation)
         Harness(instrumentation.targetContext, preparing = true).use { h ->
+            h.wire.existingTools(incompatible = true, mode = "blocking")
             h.prepare("fr", "de")
-            check(h.wire.agentCreates == 1 && h.wire.publishes == 1)
-            check(h.wire.sessionCalls == 0 && h.events.isEmpty()) { "preparation opened a conversation" }
+            check("GET /v1/agent/tools/incompatible-tool" in h.wire.requests)
+            check("GET /v1/agent/tools/fixture-tool" in h.wire.requests)
+            check("POST /v1/agent/tools" !in h.wire.requests) { "preparation duplicated a compatible client tool" }
+            check(h.wire.sessionCalls == 0 && h.events.isEmpty())
             h.noAudio()
             val beforeStart = h.wire.requests.size
             h.activate()
             h.direct(FishPlan.DEFAULT_VOICE)
-            check(h.wire.requests.drop(beforeStart) == listOf("POST /v1/agent/sessions")) {
-                "prepared Start repeated configuration requests"
-            }
+            check(h.wire.requests.drop(beforeStart) == listOf("POST /v1/agent/sessions"))
         }
         Harness(instrumentation.targetContext, preparing = true).use { h ->
             h.prepare("fr", "de")
@@ -60,6 +67,41 @@ internal object FishStartupFixture {
             check(h.wire.sessionCalls == 1)
             check(h.field("endRequest") != null)
             h.noAudio()
+        }
+        for (mode in listOf(null, "blocking", "fire_and_forget")) Harness(instrumentation.targetContext).use { h ->
+            h.wire.existingTools(incompatible = true, mode = mode)
+            h.direct()
+            check("GET /v1/agent/tools/incompatible-tool" in h.wire.requests)
+            check("GET /v1/agent/tools/fixture-tool" in h.wire.requests)
+            check("POST /v1/agent/tools" !in h.wire.requests) { "compatible client tool was duplicated" }
+            check(h.wire.agentCreates == 1 && h.wire.sessionCalls == 1)
+            h.noAudio()
+        }
+        Harness(instrumentation.targetContext).use { h ->
+            h.wire.existingTools(incompatible = true, compatible = false)
+            val error = h.failed { h.direct() }
+            check(error is FishStartupFailure && error.stage == FishStartupFailure.Stage.CAPTION_READ)
+            h.terminal(error, false)
+            check("POST /v1/agent/tools" !in h.wire.requests)
+            check(h.wire.agentCreates == 0 && h.wire.sessionCalls == 0)
+            check(h.events.last().getString("text").contains("TR-caption_read-configuration"))
+        }
+        for (compatible in listOf(false, true)) for (hasMore in listOf(null, true, "false")) {
+            Harness(instrumentation.targetContext).use { h ->
+                h.wire.existingTools(compatible = compatible)
+                h.wire.toolListing!!.put("has_more", hasMore)
+                val error = h.failed { h.direct() }
+                check(error is FishStartupFailure && error.stage == FishStartupFailure.Stage.CAPTION_LOOKUP)
+                h.terminal(error, false)
+                check("POST /v1/agent/tools" !in h.wire.requests)
+                check(h.wire.agentCreates == 0 && h.wire.sessionCalls == 0)
+            }
+        }
+        Harness(instrumentation.targetContext).use { h ->
+            h.wire.toolLookupTimeout = true
+            h.terminal(h.failed { h.direct() }, false)
+            check("POST /v1/agent/tools" !in h.wire.requests)
+            check(h.wire.agentCreates == 0 && h.wire.sessionCalls == 0)
         }
         val rejections = listOf(
             Triple("GET /v1/agent/agents", 401, FishStartupFailure.Stage.AGENT_LOOKUP),
@@ -139,6 +181,124 @@ internal object FishStartupFixture {
         }
     }
 
+    private fun verifyPagePreparation(instrumentation: Instrumentation) {
+        val context = instrumentation.targetContext
+        check(BuildConfig.DEBUG && !SecretStore(context, "fish").has() && HotelConnection(context).load() == null) {
+            "Use an isolated, unconfigured key-free debug APK"
+        }
+        val readiness = SecretStore(context, "fish")
+        val deck = context.getSharedPreferences("deck", Context.MODE_PRIVATE)
+        val savedGuest = deck.getString("reception_guest_language", null)
+        val savedStaff = deck.getString("reception_staff_language", null)
+        Harness(context, preparing = true).use { h ->
+            val activity = instrumentation.startActivitySync(Intent(context, HotelActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            lateinit var page: ReceptionView
+            lateinit var browser: WebView
+            val preparation = FishVoice::class.java.getDeclaredField("preparation").apply { isAccessible = true }
+            val owner = HotelActivity::class.java.getDeclaredField("owner").apply { isAccessible = true }
+            val pendingPermission = HotelActivity::class.java.getDeclaredField("pendingPermission").apply { isAccessible = true }
+            fun evaluate(script: String): String {
+                val completed = CountDownLatch(1)
+                var value = ""
+                instrumentation.runOnMainSync {
+                    browser.evaluateJavascript(script) { value = it; completed.countDown() }
+                }
+                check(completed.await(15, TimeUnit.SECONDS)) { "Preparation WebView callback timed out" }
+                return value
+            }
+            fun chooserFailure(stage: String): Nothing {
+                var state = ""
+                instrumentation.runOnMainSync {
+                    val foreground = HotelActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }.getBoolean(activity)
+                    state = "foreground=$foreground focus=${activity.hasWindowFocus()} finishing=${activity.isFinishing} " +
+                        "destroyed=${activity.isDestroyed} attached=${browser.isAttachedToWindow} shown=${browser.isShown}"
+                }
+                instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream", "PREPARATION_STAGE $stage $state") })
+                error("Shipped chooser did not settle")
+            }
+            fun choose(script: String) {
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+                var foreground = false
+                while (!foreground) {
+                    instrumentation.runOnMainSync {
+                        foreground = HotelActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }.getBoolean(activity) &&
+                            activity.hasWindowFocus() && !activity.isDestroyed && browser.isAttachedToWindow && browser.isShown
+                    }
+                    if (!foreground && System.nanoTime() >= deadline) chooserFailure("before-dispatch")
+                    if (!foreground) Thread.sleep(50)
+                }
+                var previous: Job? = null
+                instrumentation.runOnMainSync { previous = preparation.get(h.fish) as? Job }
+                evaluate(script)
+                var job: Job? = null
+                while (job == null || job === previous) {
+                    if (System.nanoTime() >= deadline) chooserFailure("await-preparation")
+                    instrumentation.runOnMainSync { job = preparation.get(h.fish) as? Job }
+                    if (job == null || job === previous) Thread.sleep(50)
+                }
+                runBlocking { withTimeout(5000) { checkNotNull(job).join() } }
+                instrumentation.runOnMainSync {
+                    check((owner.get(activity) as SessionOwner).current == null && pendingPermission.get(activity) == null) {
+                        "Language selection started a native conversation or requested microphone permission"
+                    }
+                    check(h.fish.localAudioState() == "off")
+                }
+                check(h.wire.sessionCalls == 0 && h.events.isEmpty()) { "Language selection opened a provider session or media" }
+                check(evaluate("document.documentElement.dataset.captureActive") == "\"false\"")
+                h.noAudio()
+            }
+            fun select(side: String, language: String) = choose(
+                "var picker = document.querySelector('[data-language-side=$side]');" +
+                    "picker.value = '$language'; picker.dispatchEvent(new Event('change', {bubbles:true}));")
+            try {
+                check(readiness.save("fixture-only-native-preparation-readiness"))
+                instrumentation.runOnMainSync {
+                    h.install(activity)
+                    page = HotelActivity::class.java.getDeclaredField("reception").apply { isAccessible = true }
+                        .get(activity) as ReceptionView
+                    browser = page.getChildAt(0) as WebView
+                }
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+                while (evaluate("typeof window.manzania === 'object' && document.documentElement.dataset.page === 'idle'") != "true") {
+                    check(System.nanoTime() < deadline) { "Shipped Reception did not initialize" }
+                    Thread.sleep(100)
+                }
+                instrumentation.runOnMainSync {
+                    HotelActivity::class.java.getDeclaredMethod("pushState").apply { isAccessible = true }.invoke(activity)
+                    page.push(JSONObject().put("type", "language_preferences").put("language", "fr").put("staff_language", "de"))
+                }
+                // Click the shipped page, leaving its JavascriptInterface, decoder and Activity handler intact.
+                choose("document.querySelector('[data-action=translation]').click()")
+                check(h.wire.agentCreates == 1 && h.wire.publishes == 1) { "Entering the chooser did not provision immutable configuration" }
+                val firstConfiguration = h.wire.requests.size
+                select("language", "en")
+                check(h.wire.requests.size == firstConfiguration) { "Changing only the guest repeated immutable configuration" }
+                select("staff_language", "es")
+                check(h.wire.agentCreates == 2 && h.wire.publishes == 2) { "Changing receptionist language did not prepare its configuration" }
+                val bothConfigurations = h.wire.requests.size
+                select("language", "fr")
+                select("staff_language", "de")
+                check(h.wire.requests.size == bothConfigurations) { "Returning to prepared languages repeated configuration" }
+                // Exercise real session creation without joining media or requesting microphone permission.
+                h.activate()
+                h.direct(BuildConfig.FISH_VOICE_ID.ifBlank { FishPlan.DEFAULT_VOICE })
+                check(h.wire.requests.drop(bothConfigurations) == listOf("POST /v1/agent/sessions")) {
+                    "Page-prepared Start repeated configuration requests"
+                }
+                h.noAudio()
+            } finally {
+                readiness.clear()
+                instrumentation.runOnMainSync { activity.finish() }
+                instrumentation.waitForIdleSync()
+                check(deck.edit().apply {
+                    if (savedGuest == null) remove("reception_guest_language") else putString("reception_guest_language", savedGuest)
+                    if (savedStaff == null) remove("reception_staff_language") else putString("reception_staff_language", savedStaff)
+                }.commit())
+            }
+        }
+    }
+
     private class Harness(base: Context, preparing: Boolean = false) : Closeable {
         private val context = object : ContextWrapper(base) {
             override fun getApplicationContext(): Context = this
@@ -155,7 +315,7 @@ internal object FishStartupFixture {
                 .remove("pending_end_credential_hash").remove("pending_recovery_url")
                 .remove("pending_recovery_lookup").commit()
         }
-        private val fish: FishVoice
+        val fish: FishVoice
         private val runClass = FishVoice::class.java.declaredClasses.single { it.simpleName == "Run" }
         private val owner = VoiceSession("fixture-startup", 61, "fr", "de", "translation", events::add)
         private val run: Any
@@ -171,6 +331,13 @@ internal object FishStartupFixture {
             run = runClass.declaredConstructors.single().apply { isAccessible = true }
                 .newInstance(fish, owner, "Synthetic greeting")
             if (!preparing) activate()
+        }
+
+        fun install(activity: android.app.Activity) {
+            val provider = HotelActivity::class.java.getDeclaredField("fishProvider").apply { isAccessible = true }
+            val previousProvider = provider.get(activity) as Lazy<*>
+            if (previousProvider.isInitialized()) (previousProvider.value as FishVoice).release()
+            provider.set(activity, lazy { fish })
         }
 
         fun activate() {
@@ -252,9 +419,30 @@ internal object FishStartupFixture {
         var malformedTicket = false
         var managedStatus = 200
         var managedFailure: String? = null
+        var toolLookupTimeout = false
+        var toolListing: JSONObject? = null
+        private val toolReadbacks = HashMap<String, JSONObject>()
         private var agentName = ""
         private var toolCreated = false
         private val definition = context.assets.open("fish-caption-tool.json").bufferedReader().use { JSONObject(it.readText()) }
+
+        fun existingTools(incompatible: Boolean = false, compatible: Boolean = true, mode: String? = null) {
+            val tools = JSONArray()
+            if (incompatible) {
+                tools.put(JSONObject().put("tool_id", "incompatible-tool").put("name", FishPlan.CAPTION_TOOL))
+                val changed = JSONObject(definition.toString())
+                changed.getJSONArray("arguments").getJSONObject(0).put("description", "Changed caption policy")
+                toolReadbacks["incompatible-tool"] = changed
+            }
+            if (compatible) {
+                tools.put(JSONObject().put("tool_id", "fixture-tool").put("name", FishPlan.CAPTION_TOOL))
+                val readback = JSONObject(definition.toString()).put("tool_id", "fixture-tool")
+                    .put("execution_mode", mode).put("timeout", 30)
+                readback.getJSONArray("arguments").getJSONObject(0).put("required", false)
+                toolReadbacks["fixture-tool"] = readback
+            }
+            toolListing = JSONObject().put("has_more", false).put("tools", tools)
+        }
 
         override fun intercept(chain: Interceptor.Chain): Response {
             val request = chain.request()
@@ -280,9 +468,13 @@ internal object FishStartupFixture {
                     if (agentCreates > 0) put(JSONObject().put("agent_id", "fixture-agent-$agentCreates")
                         .put("name", agentName).put("status", "published"))
                 }))
-                label == "GET /v1/agent/tools" -> reply(request, 200, JSONObject().put("has_more", false)
-                    .put("tools", JSONArray().apply { if (toolCreated) put(JSONObject().put("tool_id", "fixture-tool").put("name", FishPlan.CAPTION_TOOL)) }))
-                label == "GET /v1/agent/tools/fixture-tool" -> reply(request, 200, definition)
+                label == "GET /v1/agent/tools" -> {
+                    if (toolLookupTimeout) throw SocketTimeoutException("fixture-response-secret")
+                    reply(request, 200, toolListing ?: JSONObject().put("has_more", false)
+                        .put("tools", JSONArray().apply { if (toolCreated) put(JSONObject().put("tool_id", "fixture-tool").put("name", FishPlan.CAPTION_TOOL)) }))
+                }
+                label == "GET /v1/agent/tools/incompatible-tool" -> reply(request, 200, toolReadbacks.getValue("incompatible-tool"))
+                label == "GET /v1/agent/tools/fixture-tool" -> reply(request, 200, toolReadbacks["fixture-tool"] ?: definition)
                 label == "POST /v1/agent/tools" -> {
                     check(FishPlan.captionToolMatches(definition, body(request)))
                     toolCreated = true
