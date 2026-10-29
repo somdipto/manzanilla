@@ -9,7 +9,7 @@ for acoustic, Android ownership, update, quality and spending gates.
 Version 17.0.45/code75. Fish remains the default; LiveKit is explicit evaluation,
 not a substitute for unavailable provider or physical acceptance.
 
-- **Passed:** 728 Python cases, 17 Node cases, catalogue generation/check and ten
+- **Passed:** 764 integrated Python cases, 17 Node cases, catalogue generation/check and ten
   Chromium151 scenarios with the existing selected-locale qualification notice
   visible. A deleted host browser cache was restored into task-owned storage.
 - **Passed:** actual isolated HTTPS API across backend restarts with opt-in
