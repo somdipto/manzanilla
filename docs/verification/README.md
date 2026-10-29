@@ -59,13 +59,20 @@ for all 52 interface locales; human translation review remains unavailable.
 - **Passed:** Android JVM, debug/instrumentation assembly and lint with JDK17,
   SDK34 and empty provider fields. The pinned code70 debug APK SHA256 is
   `350d18b0c8ed568c1b655606027fc6399fec894fd302ac09572a42f1ec7eb216`.
-- **Passed:** actual isolated HTTPS admin visual smoke. Three explicit English/
-  Spanish approvals preserved exact originals;503 drafting retained manual text;
-  Spanish and Arabic RTL review panels retained the Spanish rendering. The
-  authenticated staff overview contained zero items. Private captures are in
-  `/tmp/manzanilla-s3-https-fixture-20261029/`. The first visual-script attempt
-  queried a nonexistent `/items` route; using the real `/overview` contract
-  passed. No failed attempt is counted as a pass.
+- **Passed:** actual isolated HTTPS admin interaction manually approved English
+  breakfast, exact Spanish breakfast and Spanish `desayuno` renderings. Missing
+  draft-provider configuration preserved manual edits; Spanish/Arabic RTL review
+  retained the selected rendering. Private screenshots remain in
+  `/tmp/manzanilla-s3-https-fixture-20261029/`.
+- **Passed:** the shipped native `HotelGateway` on isolated API34 used that real
+  HTTPS backend with a temporary-CA/custom-client fixture, leaving production TLS
+  unchanged. Punctuated English, two exact approved Spanish answers, unknown
+  policy and unapproved Arabic behaved as required. Three operation leases
+  settled, with zero staff items or dial handoffs. `hotel-answers-smoke` reported
+  named PASS and instrumentation code -1; its throwaway source was removed.
+- This is native-client/backend communication, not a combined tablet UI test.
+  That optional gate still needs a device-trusted isolated test origin; human
+  bilingual review, actual Gemini access and physical/acoustic gates remain open.
 
 Information reads are scoped to their call ID, so a genuinely new question can
 see a later approval. Replaying the same ID never charges another model call.
@@ -97,6 +104,31 @@ human language-review approval; translation presence is not acoustic qualificati
   timezone as labelled UTC, switched Spanish/Arabic RTL and retained token,
   hotel and dirty form. Private screenshots: `/tmp/manzanilla-s2-admin-fixture/`.
   This is not combined physical-tablet/backend or designated hotel-staff acceptance.
+- **Passed:** actual microphone grant on disposable API34/WebView113 with host
+  OpenGL. The pending lease survived consent, the empty injected Fish resolver
+  ran exactly once, and the session released without a provider call.
+- **Passed:** `reception-bridge`, `reception-truth`, microphone grant, denial and
+  background cancellation, `translation-startup` and `update-delivery` on both
+  API34/WebView113 and CI Android10 run40853905862; each named PASS has code -1.
+  System-only HOME resolution repaired the earlier background precondition.
+- **Passed:** final CI run40858640035 at commit74cf360 completed all nine Android10
+  reception, permission, startup and setup scenarios, including personal save,
+  cancel and encrypted-key reuse both without a lock and with synthetic PIN2468.
+  The separate Android12 update-delivery case also passed. Every named case
+  includes instrumentation code -1; no provider session was opened.
+- Earlier personal-setup fixtures incorrectly selected Spanish controls by
+  English prose. Password-role/locale-aware selectors and consumer-visible
+  retention/authorization checks replaced those incidental assertions.
+- On this Intel Mac, emulator37.2 SwiftShader produced a System UI ANR over the
+  real permission dialog and an invalid color-buffer error. `-gpu host -feature
+  -Vulkan` yielded the grant pass. A later full-suite attempt while Gradle was
+  running failed to attach its first process; that attempt is not a pass. Run
+  heavy builds and native UI checks separately on this host.
+- Follow-up catalogue data preserves the proper name Orange across all52
+  locales. Permission fixtures seed only synthetic local readiness, retain an
+  empty provider resolver, dismiss only Android's known fullscreen tutorial and
+  assert a recoverable error rather than incidental English wording. Temporary
+  diagnostic logging, screenshot capture and raw logcat collection were removed.
 
 The macOS fixture used a dedicated loopback-only Chromium/Playwright context and a
 temporary TLS identity. Production TLS, Android CSP and network restrictions were
