@@ -403,24 +403,45 @@ internal object VoiceSetupFixture {
         val foreground = KeyEntryActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }
         val fields = KeyEntryActivity::class.java.getDeclaredField("fields").apply { isAccessible = true }
         val openSetups = ArrayList<KeyEntryActivity>()
+        val receptionForeground = HotelActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }
+        fun awaitReception(stage: String) {
+            await("reception resumed: $stage") {
+                var resumed = false
+                test.runOnMainSync {
+                    resumed = openSetups.all { it.isDestroyed } && !activity.isFinishing && !activity.isDestroyed &&
+                        receptionForeground.getBoolean(activity) && activity.hasWindowFocus() &&
+                        browser.isAttachedToWindow && browser.isShown
+                }
+                resumed
+            }
+        }
         fun inputs(setup: KeyEntryActivity): List<EditText> {
             @Suppress("UNCHECKED_CAST")
             return fields.get(setup) as List<EditText>
         }
-        fun js(script: String): String {
+        fun js(stage: String, script: String): String {
+            awaitReception(stage)
             val ready = CountDownLatch(1)
             var value = ""
             test.runOnMainSync { browser.evaluateJavascript(script) { value = it; ready.countDown() } }
-            check(ready.await(15, TimeUnit.SECONDS))
+            check(ready.await(15, TimeUnit.SECONDS)) { "Hotel setup WebView callback timed out: $stage" }
             return value
         }
-        fun open(action: () -> Unit): KeyEntryActivity {
+        fun open(stage: String, action: () -> Unit): KeyEntryActivity {
+            awaitReception(stage)
             val monitor = test.addMonitor(KeyEntryActivity::class.java.name, null, false)
             return try {
                 action()
                 (monitor.waitForActivityWithTimeout(15_000) as? KeyEntryActivity
-                    ?: error("Hotel setup did not open")).also(openSetups::add)
+                    ?: error("Hotel setup did not open: $stage")).also(openSetups::add)
             } finally { test.removeMonitor(monitor) }
+        }
+        fun postSetup(route: String) {
+            // Opening setup pauses this WebView. Its JS result callback may then
+            // be suspended; the ActivityMonitor above observes the real outcome.
+            test.runOnMainSync {
+                browser.evaluateJavascript("window.ManzaniaNative.postMessage(JSON.stringify({action:'$route'}))", null)
+            }
         }
         fun nodes(view: android.view.View): List<android.view.View> {
             val result = arrayListOf(view)
@@ -473,13 +494,13 @@ internal object VoiceSetupFixture {
         }
         var syntheticPin = false
         try {
-            await("hotel packaged page") { js("!!document.querySelector('[data-action=translation]')") == "true" }
+            await("hotel packaged page") { js("initial page", "!!document.querySelector('[data-action=translation]')") == "true" }
             // Both guest bridge entry points and an explicit voice_only extra must fail closed without a lock.
             for (route in listOf("settings", "voice_setup", "intent")) {
-                val setup = open {
+                val setup = open("no-lock $route") {
                     if (route == "intent") context.startActivity(Intent(context, KeyEntryActivity::class.java)
                         .putExtra("voice_only", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    else js("window.ManzaniaNative.postMessage(JSON.stringify({action:'$route'}))")
+                    else postSetup(route)
                 }
                 locked(setup)
                 await("no-lock hotel setup refusal") {
@@ -491,12 +512,12 @@ internal object VoiceSetupFixture {
                     refused
                 }
                 click(setup, "Close")
-                await("no-lock setup closes") { setup.isFinishing || setup.isDestroyed }
+                awaitReception("after no-lock $route closes")
             }
             shell("locksettings set-pin 2468")
             syntheticPin = true
             await("synthetic device credential enrolled") { keyguard.isDeviceSecure }
-            val setup = open { js("window.ManzaniaNative.postMessage(JSON.stringify({action:'voice_setup'}))") }
+            val setup = open("protected voice setup") { postSetup("voice_setup") }
             authenticate(setup)
             // Replacing or clearing enrollment cannot strand the original remote-cleanup credential.
             val originalToken = "fixture-original-device-token-000000000000"
@@ -539,15 +560,16 @@ internal object VoiceSetupFixture {
             await("protected maintenance result applied by parent") {
                 context.getSharedPreferences("deck", 0).getString("reception_appearance", "") == "light"
             }
-            check(setup.isFinishing || setup.isDestroyed)
+            awaitReception("after protected maintenance")
             check(personal.load() == personalKey && TranslationSettings(context).directFishSelected)
             // A hotel guest bridge command cannot override that protected decision.
-            js("window.ManzaniaNative.postMessage(JSON.stringify({action:'appearance',value:'dark'}))")
+            js("guest maintenance denied", "window.ManzaniaNative.postMessage(JSON.stringify({action:'appearance',value:'dark'}))")
             test.waitForIdleSync()
             check(context.getSharedPreferences("deck", 0).getString("reception_appearance", "") == "light")
-            val finalSetup = open { js("window.ManzaniaNative.postMessage(JSON.stringify({action:'settings'}))") }
+            val finalSetup = open("final protected settings") { postSetup("settings") }
             authenticate(finalSetup)
             click(finalSetup, "Done")
+            awaitReception("after final setup closes")
             test.sendStatus(0, Bundle().apply {
                 putString("stream", "HOTEL_SETUP protected=true direct_blocked=true personal_key_retained=true maintenance=true\n")
             })
