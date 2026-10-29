@@ -62,10 +62,10 @@ class FishVoice(ctx: Context, private val push: (JSONObject) -> Unit, private va
     /** Prepare immutable provider configuration while choosing languages; never mint a
      * session, connect media or open the microphone before Start. */
     fun prepare(guest: String, staff: String) {
-        if (current != null || !DeskLanguages.has(guest) || !DeskLanguages.has(staff) || guest == staff) return
+        if (BuildConfig.DISTRIBUTION == "hotel" || current != null ||
+            !DeskLanguages.has(guest) || !DeskLanguages.has(staff) || guest == staff) return
         val connection = HotelConnection(ctx).load()
-        if (BuildConfig.DISTRIBUTION == "hotel" ||
-            TranslationRouting.useManagedConnection(connection != null, TranslationSettings(ctx).directFishSelected, BuildConfig.DISTRIBUTION)) return
+        if (TranslationRouting.useManagedConnection(connection != null, TranslationSettings(ctx).directFishSelected, BuildConfig.DISTRIBUTION)) return
         if (preparation?.isActive == true && preparationRun?.owner?.staff == staff) return
         cancelPreparation()
         val run = Run(VoiceSession("prepare", 0, guest, staff, "translation") {}, "")
