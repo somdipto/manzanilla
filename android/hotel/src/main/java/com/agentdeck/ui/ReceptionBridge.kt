@@ -11,7 +11,7 @@ internal object ReceptionBridge {
     private val actions = setOf(
         "info", "start", "stop", "appearance", "night", "bell", "settings", "voice_setup", "languages",
         "checkin", "operator", "taxi", "question", "message", "confirm", "silence",
-        "activity", "mute", "exit", "apply_update", "check_updates"
+        "activity", "mute", "exit", "apply_update", "check_updates", "watch_request", "unwatch_request"
     )
 
     fun decode(raw: String): JSONObject? {

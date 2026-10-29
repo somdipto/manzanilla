@@ -24,7 +24,7 @@ import javax.net.ssl.X509TrustManager
 
 /** Real HTTPS/JSON requests through the shipped native gateway, with no hotel/provider access. */
 class HotelGatewayTest {
-    data class Request(val path: String, val authorization: String?, val body: JSONObject)
+    data class Request(val path: String, val authorization: String?, val body: JSONObject, val method: String)
     data class Reply(val code: Int, val body: String, val release: CountDownLatch? = null)
     private lateinit var server: ServerSocket
     private lateinit var serving: Thread
@@ -56,16 +56,17 @@ class HotelGatewayTest {
                             }
                             return bytes.toByteArray().toString(Charsets.US_ASCII)
                         }
-                        val path = line().split(" ")[1]
+                        val requestLine = line().split(" ")
+                        val path = requestLine[1]
                         val headers = mutableMapOf<String, String>()
                         while (true) {
                             val header = line()
                             if (header.isEmpty()) break
                             headers[header.substringBefore(':').lowercase()] = header.substringAfter(':').trim()
                         }
-                        val body = ByteArray(headers.getValue("content-length").toInt())
+                        val body = ByteArray(headers["content-length"]?.toInt() ?: 0)
                         input.readFully(body)
-                        requests.add(Request(path, headers["authorization"], JSONObject(body.toString(Charsets.UTF_8))))
+                        requests.add(Request(path, headers["authorization"], if (body.isEmpty()) JSONObject() else JSONObject(body.toString(Charsets.UTF_8)), requestLine[0]))
                         val reply = if (path.endsWith("/end")) Reply(200, "{\"status\":\"ended\"}")
                             else replies.poll(5, TimeUnit.SECONDS) ?: error("Missing fixture response")
                         check(reply.release?.await(5, TimeUnit.SECONDS) != false)
@@ -91,7 +92,7 @@ class HotelGatewayTest {
 
     @After fun stopServer() { gateway.dispose(); running = false; server.close(); serving.join(2000) }
     private fun reply(body: JSONObject, code: Int = 200) { replies.add(Reply(code, body.toString())) }
-    private fun request(): Request = requests.poll(5, TimeUnit.SECONDS) ?: error("Native HTTP request missing")
+    private fun request(): Request = requests.poll(7, TimeUnit.SECONDS) ?: error("Native HTTP request missing")
     private fun event(): JSONObject = events.poll(5, TimeUnit.SECONDS) ?: error("Native UI event missing")
     private fun draft() = JSONObject().put("status", "confirmation_required").put("confirmation_id", "fixture-note")
         .put("summary", "Message to staff:\n${note.getString("original_request")}")
@@ -327,6 +328,156 @@ class HotelGatewayTest {
         gateway.action(lease, "message", note)
         assertEquals("unavailable", event().getString("status"))
         assertNull(requests.poll(200, TimeUnit.MILLISECONDS))
+    }
+
+    private fun savedReceipt(item: String = "fixture-receipt"): String {
+        reply(JSONObject().put("status", "ready"))
+        reply(JSONObject().put("status", "saved").put("text", "Saved, not acknowledged")
+            .put("result", JSONObject().put("item_id", item).put("pms_delivered", false)))
+        gateway.action(lease, "message", note)
+        val sid = request().body.getString("session_id")
+        assertEquals("/api/device/operations/$sid/action", request().path)
+        assertEquals("saved", event().getString("status"))
+        return sid
+    }
+
+    private fun publicStatus(status: String = "open", version: Int = 0, item: String = "fixture-receipt") =
+        JSONObject().put("item_id", item).put("status", status).put("version", version).put("created", 100.0)
+            .put("acknowledged_at", if (version > 0) 110.0 else JSONObject.NULL)
+            .put("resolved_at", if (status == "resolved") 120.0 else JSONObject.NULL)
+
+    @Test fun watchRequiresTheLastDeliveredReceiptAndPrivateServerSessionAndWhitelistsStatus() {
+        gateway.watch(lease, "guessed")
+        assertNull(requests.poll(150, TimeUnit.MILLISECONDS))
+        val sid = savedReceipt()
+        gateway.watch(lease.copy(generation = lease.generation + 1), "fixture-receipt")
+        gateway.watch(lease, "some-other-receipt")
+        assertNull(requests.poll(150, TimeUnit.MILLISECONDS))
+        reply(publicStatus().put("resolution_note", "private note").put("responsible_name", "private name")
+            .put("acknowledged_by", "private actor").put("payload", note))
+        gateway.watch(lease, "fixture-receipt")
+        gateway.watch(lease, "fixture-receipt")
+        val read = request()
+        assertEquals("/api/device/operations/$sid/items/fixture-receipt", read.path)
+        assertEquals("GET", read.method)
+        assertEquals(0, read.body.length())
+        assertFalse(read.path.contains(lease.request.id))
+        assertEquals("Bearer fixture-only-device-credential", read.authorization)
+        val status = event()
+        assertEquals(setOf("type", "status_available", "item_id", "status", "version", "created", "acknowledged_at", "resolved_at"),
+            status.keys().asSequence().toSet())
+        assertEquals("open", status.getString("status"))
+        gateway.unwatch(lease)
+        assertNull(requests.poll(5500, TimeUnit.MILLISECONDS))
+    }
+
+    @Test fun periodicWatchRetainsLastKnownStateOnFailureThenStopsAtStaffResolution() {
+        savedReceipt()
+        reply(publicStatus("acknowledged", 1))
+        gateway.watch(lease, "fixture-receipt")
+        request()
+        assertEquals("acknowledged", event().getString("status"))
+        reply(JSONObject().put("resolution_note", "never forwarded"), 500)
+        request()
+        val unavailable = event()
+        assertEquals("acknowledged", unavailable.getString("status"))
+        assertEquals(1, unavailable.getInt("version"))
+        assertFalse(unavailable.getBoolean("status_available"))
+        assertTrue(unavailable.getString("text").contains("last known state"))
+        assertFalse(unavailable.toString().contains("never forwarded"))
+        reply(publicStatus("resolved", 2))
+        request()
+        val resolved = event()
+        assertEquals("resolved", resolved.getString("status"))
+        assertFalse(resolved.has("booked"))
+        gateway.watch(lease, "fixture-receipt")
+        assertNull(requests.poll(5500, TimeUnit.MILLISECONDS))
+    }
+
+    @Test fun cancelledReadCannotDeliverAcrossUnwatchOrGuestReplacement() {
+        savedReceipt()
+        val release = CountDownLatch(1)
+        replies.add(Reply(200, publicStatus("resolved", 2).toString(), release))
+        gateway.watch(lease, "fixture-receipt")
+        request()
+        gateway.unwatch(lease)
+        gateway.begin(lease.copy(generation = lease.generation + 1))
+        release.countDown()
+        assertTrue(request().path.endsWith("/end"))
+        gateway.watch(lease, "fixture-receipt")
+        gateway.watch(lease.copy(generation = lease.generation + 1), "fixture-receipt")
+        assertNull(events.poll(300, TimeUnit.MILLISECONDS))
+        assertNull(requests.poll(5500, TimeUnit.MILLISECONDS))
+    }
+
+    @Test fun authorizationDenialStopsStatusWithoutCreatingOrExtendingASession() {
+        savedReceipt()
+        reply(JSONObject(), 403)
+        gateway.watch(lease, "fixture-receipt")
+        assertTrue(request().path.endsWith("/items/fixture-receipt"))
+        assertFalse(event().getBoolean("status_available"))
+        gateway.watch(lease, "fixture-receipt") // Denial is terminal even if a bridge repeats the request.
+        assertNull(requests.poll(5500, TimeUnit.MILLISECONDS))
+    }
+
+    @Test fun olderStatusCannotRegressTheLastKnownVersionAndForeignUnwatchHasNoEffect() {
+        savedReceipt()
+        reply(publicStatus("acknowledged", 1))
+        gateway.watch(lease, "fixture-receipt")
+        request(); event()
+        gateway.unwatch(lease.copy(generation = lease.generation + 1))
+        reply(publicStatus("open", 0))
+        request()
+        val status = event()
+        assertEquals("acknowledged", status.getString("status"))
+        assertEquals(1, status.getInt("version"))
+        gateway.unwatch(lease)
+    }
+
+    @Test fun unwatchNeverCancelsAnUncertainSubmittedWrite() {
+        savedReceipt()
+        val release = CountDownLatch(1)
+        replies.add(Reply(200, draft().toString(), release))
+        gateway.action(lease, "message", note)
+        assertTrue(request().path.endsWith("/action"))
+        gateway.unwatch(lease)
+        release.countDown()
+        assertEquals("confirming", event().getString("phase"))
+        assertEquals("message", gateway.confirmationAction(lease, "operation:fixture-note"))
+    }
+
+    @Test fun aNewWatchRevisionDropsTheCancelledReadEvenForTheSameLeaseAndItem() {
+        savedReceipt()
+        val release = CountDownLatch(1)
+        replies.add(Reply(200, publicStatus("resolved", 2).toString(), release))
+        gateway.watch(lease, "fixture-receipt")
+        request()
+        gateway.unwatch(lease)
+        reply(publicStatus("open", 0))
+        gateway.watch(lease, "fixture-receipt")
+        release.countDown()
+        assertTrue(request().path.endsWith("/items/fixture-receipt"))
+        val status = event()
+        assertEquals("open", status.getString("status"))
+        assertEquals(0, status.getInt("version"))
+        assertNull(events.poll(200, TimeUnit.MILLISECONDS))
+        gateway.unwatch(lease)
+    }
+
+    @Test fun aLaterDurableReceiptRevokesThePreviousReceiptEligibility() {
+        savedReceipt()
+        reply(JSONObject().put("status", "queued").put("text", "Queued, not connected")
+            .put("result", JSONObject().put("escalation_id", "second-receipt").put("connected", false)))
+        gateway.action(lease, "operator", JSONObject())
+        assertTrue(request().path.endsWith("/action"))
+        assertFalse(event().getJSONObject("result").getBoolean("connected"))
+        gateway.watch(lease, "fixture-receipt")
+        assertNull(requests.poll(200, TimeUnit.MILLISECONDS))
+        reply(publicStatus(item = "second-receipt"))
+        gateway.watch(lease, "second-receipt")
+        assertTrue(request().path.endsWith("/items/second-receipt"))
+        assertEquals("second-receipt", event().getString("item_id"))
+        gateway.unwatch(lease)
     }
 
     companion object {

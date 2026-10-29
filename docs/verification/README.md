@@ -4,6 +4,28 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.42 staff fulfilment candidate (S5)
+
+Version 17.0.42/code72, stacked on S4. Staff lifecycle metadata is separate from
+immutable execution receipts; guest status contains no payload or private note.
+
+- **Passed:** 638 Python cases, 17 Node cases and catalogue generation/check.
+  Coverage includes transactional configuration CAS, claim races, ownership,
+  idempotent transitions, legacy resolution, revocation and exact session privacy.
+- **Passed:** ten Chromium151 scenarios including actual temporary backend/staff
+  interactions: blank creation, labelled dictionary-preserving settings, dirty
+  configuration conflict, acknowledgement/resolution, retained private outcomes,
+  scoped/hidden single-flight refresh, RTL and immutable guest receipts.
+- The delayed-overview regression initially lost a successful acknowledgement
+  through a detached row reference. Applying the result to the current item by
+  ID preserves the newer version; the actual browser scenario now passes.
+  Ownership denial refreshes the row without granting the denied actor access.
+- **Passed:** personal-test JVM, debug/instrumentation assembly and lint with
+  JDK17/SDK34 and empty provider fields.
+- Actual native receipt tracking and real native-client/HTTPS staff transitions
+  remain runtime gates. Synthetic browser staff are not designated hotel staff;
+  no physical, provider or external booking/call acceptance is claimed.
+
 ## 17.0.41 readiness/distribution candidate (S4)
 
 Version 17.0.41/code71, stacked on S3. The canonical catalogue has 410 messages

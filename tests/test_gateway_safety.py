@@ -173,7 +173,7 @@ def test_cancellation_during_handoff_keeps_uncertain_write_claim(store, tool, ar
 @pytest.mark.parametrize('invalidate',['source','rendering','legacy','authorization'])
 def test_cached_information_is_revalidated_without_rewriting_durable_calls(store,monkeypatch,invalidate):
     import cloud.hotel_answers as answers
-    hotel=store.hotel('hotel-a'); hotel['knowledge']={'breakfast':'07:00–10:00'}; store.save_hotel(hotel)
+    hotel=store.hotel('hotel-a'); hotel['knowledge']={'breakfast':'07:00–10:00'}; hotel=store.save_hotel(hotel)
     approval=ContentApproval(kind='knowledge',content_key='breakfast',language='en',
         source_hash=source_hash('knowledge','breakfast','07:00–10:00'),
         title='Breakfast',body='07:00–10:00')
