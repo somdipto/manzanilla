@@ -6,6 +6,7 @@ on:
     paths:
       - 'android/**'
       - 'ui/reception/**'
+      - 'shared/reception-locales.json'
       - 'package.json'
       - 'package-lock.json'
       - 'scripts/build-reception.cjs'

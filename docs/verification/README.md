@@ -4,6 +4,33 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## 17.0.39 complete offline interface candidate (S2)
+
+Stacked on S1, version 17.0.39/code69. The source catalogue has 380 English message
+IDs with complete translations for all 52 offered interface locales. None has
+human language-review approval; translation presence is not acoustic qualification.
+
+- **Passed:** generation/check, 17 Node cases and 463 Python tests (two dependency
+  deprecation warnings). Coverage includes catalogue rejection, pinned producer
+  locale, preserved originals/identities and immutable historical receipts.
+- **Passed:** Android JVM, debug/instrumentation assembly and lint with JDK17,
+  SDK34 and empty provider fields.
+- **Passed:** nine Chromium151 scenarios with unchanged packaged CSP/resource
+  policy, including all52 home lookups, Spanish navigation/error/forms/review/
+  cancellation/receipt/retry, Arabic RTL with Spanish reception, 125% text at
+  837×471 and 1024×600, both appearances, focus/unsent text and physical sides.
+- **Passed:** actual isolated HTTPS backend and staff dashboard. A synthetic
+  Spanish operation produced a confirmation and persisted receipt preserving its
+  exact original. The actual admin page displayed configured legacy-invalid
+  timezone as labelled UTC, switched Spanish/Arabic RTL and retained token,
+  hotel and dirty form. Private screenshots: `/tmp/manzanilla-s2-admin-fixture/`.
+  This is not combined physical-tablet/backend or designated hotel-staff acceptance.
+
+The macOS fixture used a dedicated loopback-only Chromium/Playwright context and a
+temporary TLS identity. Production TLS, Android CSP and network restrictions were
+not relaxed. No live hotel data, provider session, paid call, publication or
+deployment was involved.
+
 ## 17.0.38 caption-evidence repair candidate (S1)
 
 Baseline `a2b46ea84c0d6ab65b9f1a7fd94975ce69d7554f`, 17.0.37/code67.

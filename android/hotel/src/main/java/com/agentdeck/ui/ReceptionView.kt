@@ -11,6 +11,8 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.agentdeck.hotel.BuildConfig
+import com.agentdeck.hotel.DeskLanguages
+import com.agentdeck.hotel.UiText
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.util.ArrayDeque
@@ -27,6 +29,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
     private val host = ReceptionAssets.HOST
 
     init {
+        UiText.preload(context)
         setBackgroundColor(if (dark) Color.rgb(8, 15, 21) else Color.rgb(243, 245, 242))
         visibility = View.GONE
         addView(browser, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -91,7 +94,7 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
                             while (waiting.isNotEmpty()) deliver(waiting.removeFirst())
                             if (!shown) browser.onPause()
                         } else {
-                            showFallback("Reception could not start.\nUpdate Android System WebView and reopen Reception. If this continues, ask staff to update the app.")
+                            showFallback()
                             unavailable()
                         }
                     }
@@ -135,22 +138,25 @@ class ReceptionView(context: Context, private val action: (JSONObject) -> Unit, 
         browser.evaluateJavascript("window.manzania && window.manzania.receive(${message});", null)
     }
 
-    private fun showFallback(message: String = "Reception could not load.\nReturn to the launcher and open Reception again.") {
+    private fun showFallback() {
         if (disposed) return
         ready = false
         browser.visibility = View.GONE
         if (childCount > 1) return
+        val language = context.getSharedPreferences("deck", Context.MODE_PRIVATE)
+            .getString("reception_guest_language", "es").orEmpty().takeIf(DeskLanguages::has) ?: "es"
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
+            layoutDirection = if (UiText.direction(context, language) == "rtl") View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
             setPadding(32, 24, 32, 24)
             addView(TextView(context).apply {
-                text = message
+                text = UiText.text(context, language, "The reception screen stopped. Return to the launcher and reopen Reception.")
                 textSize = 20f
                 setTextColor(if (dark) Color.rgb(241, 243, 239) else Color.rgb(24, 44, 56))
                 gravity = Gravity.CENTER
             })
-            addView(Button(context).apply { text = "Back to launcher"; setOnClickListener { action(JSONObject().put("action", "exit")) } })
+            addView(Button(context).apply { text = UiText.text(context, language, "Back"); setOnClickListener { action(JSONObject().put("action", "exit")) } })
         }
         addView(column, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
     }

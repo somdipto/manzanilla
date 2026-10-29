@@ -13,6 +13,7 @@ VERSIONS = {"android/VERSION", "android/VERSION_CODE"}
 @pytest.mark.parametrize("path", [
     "android/hotel/src/main/java/HotelActivity.kt", "android/hotel/src/test/java/UpdaterTest.kt",
     "ui/reception/reception.js", "package.json", "package-lock.json", "scripts/build-reception.cjs",
+    "shared/reception-locales.json",
     "scripts/release_policy.py", "scripts/release_policy_check.py", "scripts/publish_release.py", "scripts/verify-signed-upgrade.sh",
     "scripts/run-updater-emulator.sh",
     ".github/workflows/publish.yml", ".github/workflows/release.yml", ".github/workflows/verify.yml",

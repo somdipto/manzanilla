@@ -3,13 +3,14 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 from .db import Store
 from .models import Hotel, BookingLookup
 from .gateway import Gateway
 from .realtime import relay
 from .operations import Operations, Start, Action, Confirmation
+from .localization import catalogue
 from .livekit_route import mint as livekit_mint, end as end_livekit
 from .fish import FishSession, mint, end as end_fish, end_request as end_fish_request, revoke_sessions, NOT_CREATED
 from .models import Strict
@@ -49,6 +50,11 @@ def health(): return {'status':'ok','version':'0.1.0','protocol':1}
 
 @app.get('/admin')
 def dashboard(): return FileResponse(Path(__file__).parent.parent/'admin/index.html')
+
+@app.get('/admin/locales.js')
+def dashboard_locales():
+    return Response('window.MANZANILLA_UI = ' + json.dumps(catalogue(),ensure_ascii=True,separators=(',',':')) + ';',
+                    media_type='application/javascript')
 
 @app.get('/api/hotels', dependencies=[Depends(admin)])
 def hotels(): return [json.loads(row['config']) for row in store.rows('SELECT config FROM hotels')]

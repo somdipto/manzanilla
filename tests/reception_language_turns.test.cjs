@@ -9,8 +9,7 @@ const report = (id, language, original = 'Repeated phrase', text = 'Translation'
 const caption = (id, text, extra = {}) => ({ type: 'caption', utterance_id: id, side: 'human', field: 'original', operation: 'replace', final: false, text, ...extra });
 
 test('all 2652 ordered picker pairs map both languages by selection, including repeats', () => {
-  const source = fs.readFileSync('android/hotel/src/main/java/com/agentdeck/hotel/DeskLanguages.kt', 'utf8');
-  const codes = [...source.match(/val codes: List<String> = listOf\(([\s\S]*?)\)/)[1].matchAll(/"([a-z]{2})"/g)].map(m => m[1]);
+  const codes = JSON.parse(fs.readFileSync('shared/reception-locales.json', 'utf8')).languages.map(language => language.code);
   assert.equal(codes.length, 52);
   for (const guest of codes) for (const staff of codes) {
     if (guest === staff) continue;
@@ -151,4 +150,45 @@ test('unclear whitespace translation is canonical empty while real text is prese
   assert.deepEqual(ledger.turns.map(turn => turn.side), ['staff', null, 'guest', null]);
   assert.deepEqual(ledger.turns.map(turn => turn.text), [translation, '', translation, '']);
   assert.ok(ledger.turns.every(turn => turn.original === original));
+});
+
+test('offline catalogue validates every offered language and named substitution contract', () => {
+  const { parseCatalogue, placeholders } = require('../scripts/build-reception.cjs');
+  const source = fs.readFileSync('shared/reception-locales.json', 'utf8');
+  const catalogue = parseCatalogue(source);
+  assert.equal(catalogue.languages.length, 52);
+  for (const [message, translations] of Object.entries(catalogue.messages)) {
+    for (const { code } of catalogue.languages) {
+      assert.ok(translations[code].trim(), `${code}: ${message}`);
+      assert.deepEqual([...placeholders(translations[code])].sort(), [...placeholders(message)].sort(), `${code}: ${message}`);
+    }
+  }
+  assert.ok(catalogue.messages['This service is unavailable. Please ask hotel staff.']);
+});
+
+test('catalogue validation rejects incomplete locales, blank text and unsafe substitution contracts', () => {
+  const { parseCatalogue } = require('../scripts/build-reception.cjs');
+  const source = fs.readFileSync('shared/reception-locales.json', 'utf8');
+  const original = JSON.parse(source);
+  const message = Object.keys(original.messages).find(key => key.includes('{'));
+  assert.ok(message, 'Real guest messages exercise named values');
+  const invalid = change => {
+    const value = JSON.parse(source);
+    change(value);
+    assert.throws(() => parseCatalogue(JSON.stringify(value)));
+  };
+  invalid(value => value.languages.pop());
+  invalid(value => value.languages.push(value.languages[0]));
+  invalid(value => { [value.languages[0], value.languages[1]] = [value.languages[1], value.languages[0]]; });
+  invalid(value => { value.languages[0].direction = 'auto'; });
+  invalid(value => { delete value.messages[message].ar; });
+  invalid(value => { value.messages[message].es = ' \n\t '; });
+  invalid(value => { value.messages[message].es = 'Sin el valor obligatorio'; });
+  invalid(value => { value.messages[message].ar += ' {unexpected}'; });
+  invalid(value => { delete value.messages['This service is unavailable. Please ask hotel staff.']; });
+  const missingMessage = JSON.parse(source);
+  delete missingMessage.messages['Welcome.'];
+  assert.throws(() => parseCatalogue(JSON.stringify(missingMessage), ['Welcome.']));
+  const duplicate = JSON.stringify(original).replace('"messages":{', '"messages":{' + JSON.stringify(message) + ':' + JSON.stringify(original.messages[message]) + ',');
+  assert.throws(() => parseCatalogue(duplicate), 'Duplicate JSON message keys cannot silently overwrite translations');
 });

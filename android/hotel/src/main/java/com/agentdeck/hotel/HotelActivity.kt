@@ -28,10 +28,26 @@ import java.util.concurrent.atomic.AtomicBoolean
 class HotelActivity : Activity() {
     private var reception: ReceptionView? = null
     private val deck by lazy { getSharedPreferences("deck", MODE_PRIVATE) }
+    private fun text(message: String, values: Map<String, String> = emptyMap(),
+                     language: String = owner.current?.request?.guest ?: deck.getString("reception_guest_language", "es").orEmpty()): String =
+        UiText.text(this, language.takeIf(DeskLanguages::has) ?: "es", message, values)
+
+    private fun updateText(message: String): String {
+        Regex("^Update (.+) is downloaded\\. It will apply when reception is idle\\.$").matchEntire(message)?.let {
+            return text("Update {version} is downloaded. It will apply when reception is idle.", mapOf("version" to it.groupValues[1]))
+        }
+        Regex("^Could not check for updates \\(([a-z ]+), HTTP ([0-9]{3})\\)\\. Tap to retry\\.$").matchEntire(message)?.let {
+            return text("Could not check for updates ({stage}, HTTP {status}). Tap to retry.",
+                mapOf("stage" to it.groupValues[1], "status" to it.groupValues[2]))
+        }
+        return text(message)
+    }
+
     private val owner = SessionOwner()
     private val ui = Handler(Looper.getMainLooper())
     private val ringing = AtomicBoolean(false)
     private val fishStore by lazy { SecretStore(this, "fish") }
+    private var updateStatus: String? = null
     private val updater by lazy { Updater(this,
         onStatus = { status -> runOnUiThread { onUpdate(status) } },
         canInstall = ::canInstallUpdate) }
@@ -61,7 +77,7 @@ class HotelActivity : Activity() {
         override fun run() {
             if (destroyed) return
             if (owner.current != null && !owner.closing && SystemClock.elapsedRealtime() - lastActivity >= 120_000)
-                stopSession("timeout", "Conversation ended after two minutes without guest activity.")
+                stopSession("timeout", text("Conversation ended after two minutes without guest activity."))
             if (owner.current == null && audioState != fish.localAudioState()) {
                 audioState = fish.localAudioState()
                 pushState()
@@ -94,18 +110,19 @@ class HotelActivity : Activity() {
         val audioReady = audioGate.isEmpty()
         page.push(JSONObject().put("type", "appearance").put("value", deck.getString("reception_appearance", "dark")))
         page.push(JSONObject().put("type", "night_mode").put("enabled", night))
-        page.push(JSONObject().put("type", "reception_info").put("hotel_name", "Hotel reception")
+        page.push(JSONObject().put("type", "reception_info").put("hotel_name", text("Hotel reception"))
             .put("sample_hotel", false).put("configured", ready)
             .put("audio_available", audioReady)
             .put("local_audio_state", audioState)
-            .put("audio_gate", audioGate)
-            .apply { java.util.Locale.getDefault().language.takeIf(DeskLanguages::has)?.let { put("staff_language", it) } })
+            .put("audio_gate", if (audioGate.isEmpty()) "" else text(audioGate))
+            .put("staff_language", deck.getString("reception_staff_language", "es").orEmpty().takeIf(DeskLanguages::has) ?: "es"))
         val guest = deck.getString("reception_guest_language", null)
         val staff = deck.getString("reception_staff_language", null)
         if (guest != null && staff != null) page.push(JSONObject().put("type", "language_preferences")
             .put("language", guest).put("staff_language", staff))
         page.push(JSONObject().put("type", "prep").put("status", if (ready) "ready" else "nokey").put("version", BuildConfig.VERSION_NAME))
         page.push(JSONObject().put("type", "connection").put("connected", ready))
+        updateStatus?.let(::onUpdate)
     }
 
     private fun forward(message: JSONObject) {
@@ -146,7 +163,7 @@ class HotelActivity : Activity() {
             reception?.push(JSONObject().put("type", "audio_state").put("state", "off")
                 .put("session_id", request.id).put("generation", 0))
             reception?.push(JSONObject().put("type", "reception_event").put("phase", "error")
-                .put("text", "An app update is being installed. Please wait for it to finish before starting a conversation.")
+                .put("text", text("An app update is being installed. Please wait for it to finish before starting a conversation.", language = request.guest))
                 .put("session_id", request.id).put("generation", 0))
             return
         }
@@ -164,7 +181,7 @@ class HotelActivity : Activity() {
                 .put("session_id", request.id).put("generation", 0))
             return
         }
-        val lease = owner.acquire(request) ?: run { notice("Wait until the previous microphone release is confirmed before starting again."); return }
+        val lease = owner.acquire(request) ?: run { notice(text("Wait until the previous microphone release is confirmed before starting again.")); return }
         lastActivity = SystemClock.elapsedRealtime()
         audioState = "off"
         phase(lease, "connecting")
@@ -185,7 +202,8 @@ class HotelActivity : Activity() {
             val credentials = hotelConnection.load()
             gateway = HotelGateway(credentials?.base.orEmpty(), credentials?.token.orEmpty(),
                 { currentLease, event -> runOnUiThread { if (current(currentLease)) push(currentLease, event) } },
-                { currentLease, event -> runOnUiThread { if (current(currentLease)) dialOperation(currentLease, event) } })
+                { currentLease, event -> runOnUiThread { if (current(currentLease)) dialOperation(currentLease, event) } },
+                { currentLease, message, values -> text(message, values, currentLease.request.guest) })
                 .also { it.begin(lease) }
             audio(lease, "off")
             phase(lease, "ready")
@@ -258,30 +276,31 @@ class HotelActivity : Activity() {
         val number = response.optString("number", response.optJSONObject("result")?.optString("number").orEmpty())
         val status = openDialer(number)
         push(lease, JSONObject(response.toString()).put("type", "operation_result").put("status", status)
-            .put("text", if (status == "dialer_opened") "The phone dialer is open. No answered call or taxi booking is confirmed." else "This device could not open the dialer. Ask reception to call for you."))
+            .put("text", if (status == "dialer_opened") text("The phone dialer is open. No answered call or taxi booking is confirmed.") else text("This device could not open the dialer. Ask reception to call for you.")))
     }
 
     private fun onUpdate(status: String) {
+        updateStatus = status
         val page = reception ?: return
         when {
-            status.startsWith("checking:") -> page.push(JSONObject().put("type", "update_status").put("phase", "checking").put("text", "Checking for updates…"))
-            status.startsWith("current:") -> page.push(JSONObject().put("type", "update_status").put("phase", "current").put("text", "Up to date · ${BuildConfig.VERSION_NAME}"))
+            status.startsWith("checking:") -> page.push(JSONObject().put("type", "update_status").put("phase", "checking").put("text", text("Checking for updates…")))
+            status.startsWith("current:") -> page.push(JSONObject().put("type", "update_status").put("phase", "current").put("text", text("Up to date · {version}", mapOf("version" to BuildConfig.VERSION_NAME))))
             status.startsWith("offer:") -> page.push(JSONObject().put("type", "update_status").put("phase", "ready")
                 .put("version", status.removePrefix("offer:"))
-                .put("text", "Update ${status.removePrefix("offer:")} downloaded. It will apply when this device is idle."))
+                .put("text", text("Update {version} downloaded. It will apply when this device is idle.", mapOf("version" to status.removePrefix("offer:")))))
             status.startsWith("waiting:") -> page.push(JSONObject().put("type", "update_status").put("phase", "ready")
-                .put("text", status.removePrefix("waiting:")))
+                .put("text", updateText(status.removePrefix("waiting:"))))
             status.startsWith("progress:") -> {
                 val value = status.removePrefix("progress:")
                 val percent = value.toIntOrNull()
-                val text = if (percent != null) { if (percent >= 0) "Downloading $percent%" else "Starting download…" }
-                    else if (value.startsWith("m") && value.removePrefix("m").toLongOrNull() != null) "Downloading ${value.removePrefix("m")} MB"
-                    else value.ifBlank { "Starting download…" }
+                val text = if (percent != null) { if (percent >= 0) text("Downloading {percent}%", mapOf("percent" to percent.toString())) else text("Starting download…") }
+                    else if (value.startsWith("m") && value.removePrefix("m").toLongOrNull() != null) text("Downloading {size} MB", mapOf("size" to value.removePrefix("m")))
+                    else updateText(value.ifBlank { "Starting download…" })
                 page.push(JSONObject().put("type", "update_status").put("phase", "progress").put("percent", percent ?: -1).put("text", text))
             }
-            status.startsWith("confirm:") -> page.push(JSONObject().put("type", "update_status").put("phase", "confirm").put("text", status.removePrefix("confirm:")))
-            status.startsWith("failed:") -> page.push(JSONObject().put("type", "update_status").put("phase", "failed").put("text", status.removePrefix("failed:")))
-            status.startsWith("installed") -> page.push(JSONObject().put("type", "update_status").put("phase", "installed").put("text", "Updated"))
+            status.startsWith("confirm:") -> page.push(JSONObject().put("type", "update_status").put("phase", "confirm").put("text", updateText(status.removePrefix("confirm:"))))
+            status.startsWith("failed:") -> page.push(JSONObject().put("type", "update_status").put("phase", "failed").put("text", updateText(status.removePrefix("failed:"))))
+            status.startsWith("installed") -> page.push(JSONObject().put("type", "update_status").put("phase", "installed").put("text", text("Updated")))
         }
     }
 
@@ -305,8 +324,10 @@ class HotelActivity : Activity() {
             }
             "languages" -> if (owner.current == null) {
                 val guest = message.optString("language"); val staff = message.optString("staff_language")
-                if (DeskLanguages.has(guest) && DeskLanguages.has(staff)) deck.edit()
-                    .putString("reception_guest_language", guest).putString("reception_staff_language", staff).apply()
+                if (DeskLanguages.has(guest) && DeskLanguages.has(staff)) {
+                    deck.edit().putString("reception_guest_language", guest).putString("reception_staff_language", staff).apply()
+                    pushState()
+                }
             }
             "bell" -> ringBell()
             "settings" -> openStaffSetup()
@@ -318,7 +339,7 @@ class HotelActivity : Activity() {
                 val guest = message.optString("language"); val staff = message.optString("staff_language")
                 val validId = runCatching { UUID.fromString(id).toString() == id }.getOrDefault(false)
                 if (!validId || !DeskLanguages.has(guest) || !DeskLanguages.has(staff) || (mode != "translation" && mode != "reception") || (mode == "translation" && guest == staff)) {
-                    notice("Choose a supported mode and languages; translation needs two different languages.")
+                    notice(text("Choose a supported mode and languages; translation needs two different languages."))
                     return
                 }
                 begin(SessionOwner.Request(id, mode, guest, staff, message.optString("greet")))
@@ -330,7 +351,7 @@ class HotelActivity : Activity() {
             "confirm" -> owner.current?.takeIf { current(it) }?.let { lease ->
                 val id = message.optString("draft_id"); val approved = message.optBoolean("approved")
                 if (id.startsWith("operation:")) gateway?.confirm(lease, id, approved)
-                else notice("This request is no longer available. Review a new request.")
+                else notice(text("This request is no longer available. Review a new request."))
             }
             "checkin", "operator", "taxi", "question" -> owner.current?.takeIf { current(it) && it.request.mode == "reception" }?.let {
                 gateway?.action(it, message.optString("action"), message.optJSONObject("arguments") ?: JSONObject())
@@ -364,6 +385,7 @@ class HotelActivity : Activity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        UiText.preload(this)
         val dark = deck.getString("reception_appearance", "dark") != "light"
         window.setBackgroundDrawable(ColorDrawable(if (dark) Color.rgb(8, 15, 21) else Color.rgb(243, 245, 242)))
         if (Build.VERSION.SDK_INT >= 33) {
@@ -373,7 +395,7 @@ class HotelActivity : Activity() {
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-        reception = ReceptionView(this, ::handle) { stopSession("error", "The reception screen stopped. Return to the launcher and reopen Reception.") }
+        reception = ReceptionView(this, ::handle) { stopSession("error", text("The reception screen stopped. Return to the launcher and reopen Reception.")) }
         setContentView(FrameLayout(this).apply { addView(reception, FrameLayout.LayoutParams(-1, -1)) })
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         night = deck.getBoolean("reception_night", false)
@@ -415,7 +437,7 @@ class HotelActivity : Activity() {
         if (!current(lease)) { pendingPermission = null; return }
         if (results.firstOrNull() != PackageManager.PERMISSION_GRANTED) {
             pendingPermission = null
-            stopSession("error", "Microphone permission is required. No conversation has started.")
+            stopSession("error", text("Microphone permission is required. No conversation has started."))
         } else if (foreground) {
             pendingPermission = null
             connect(lease)

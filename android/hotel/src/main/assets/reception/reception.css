@@ -101,3 +101,27 @@ html[data-translation="live"] .content[data-page="active"] .session-scroll{width
     .wordmark>*+*{margin-left:8px}
   }
 }
+
+/* Text direction never changes the physical guest-left / staff-right ledger. */
+.conversation{direction:ltr}
+.caption{unicode-bidi:isolate}
+html[dir="rtl"] .caption{direction:rtl}
+.choice,.operation-form,.home-action{text-align:start}
+#guest-locale{font:inherit;max-width:100%;min-height:40px;padding:4px 28px 4px 12px;border:1px solid var(--outline);border-radius:10px;background:var(--surface);color:var(--ink)}
+.content[data-page="idle"]>#guest-locale{align-self:flex-start;max-width:260px}
+.content[data-page="idle"]>.assist-label{font-size:12px}
+.receipt,.pair-title bdi{unicode-bidi:isolate}
+html[dir="rtl"] .clock{margin-left:0;margin-right:auto}
+html[dir="rtl"] .mic-dot,html[dir="rtl"] .status-dot{margin-right:0;margin-left:7px}
+html[dir="rtl"] .language-side select,html[dir="rtl"] .assist-language,html[dir="rtl"] #guest-locale{padding-left:28px;padding-right:12px}
+html[dir="rtl"] .back svg,html[dir="rtl"] .translate-back svg{transform:scaleX(-1)}
+@supports not (inset:0) {
+  html[dir="rtl"] .topbar>*+*,html[dir="rtl"] .wordmark>*+*{margin-left:0;margin-right:12px}
+  html[dir="rtl"] .clock>*+*{margin-left:0;margin-right:20px}
+  html[dir="rtl"] .topbar>.clock{margin-left:0;margin-right:auto}
+  html[dir="rtl"] .primary>*+*,html[dir="rtl"] .choice>*+*,html[dir="rtl"] .back>*+*{margin-left:0;margin-right:8px}
+  html[dir="rtl"] .status-line>*+*{margin-left:0;margin-right:16px}
+  html[dir="rtl"] .session-actions>*+*,html[dir="rtl"] .session-control>*+*,html[dir="rtl"] .service-notices .notice>*+*,html[dir="rtl"] .footer>*+*,html[dir="rtl"] .update-offer>*+*{margin-left:0;margin-right:10px}
+  @media(max-height:550px) and (min-width:600px){html[dir="rtl"] .topbar>*+*,html[dir="rtl"] .wordmark>*+*,html[dir="rtl"] .clock>*+*{margin-right:8px}html[dir="rtl"] .topbar>.clock{margin-right:auto}}
+  @media(max-width:599px){html[dir="rtl"] .topbar>*+*{margin-right:4px}html[dir="rtl"] .topbar>.night-toggle{margin-left:0;margin-right:auto}html[dir="rtl"] .wordmark>*+*{margin-right:8px}}
+}

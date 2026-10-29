@@ -19,6 +19,7 @@ class HotelGateway(
     private val token: String,
     private val deliver: (SessionOwner.Lease, JSONObject) -> Unit,
     private val dial: (SessionOwner.Lease, JSONObject) -> Unit,
+    private val translate: (SessionOwner.Lease, String, Map<String, String>) -> String,
     private val client: OkHttpClient = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS).build()
 ) {
@@ -35,6 +36,8 @@ class HotelGateway(
     private val pendingStarts = mutableSetOf<Call>()
     private var disposed = false
     val configured get() = base.startsWith("https://") && token.isNotBlank()
+    private fun text(context: Context, message: String, values: Map<String, String> = emptyMap()) =
+        translate(context.lease, message, values)
 
     @Synchronized fun begin(lease: SessionOwner.Lease) {
         if (disposed) return
@@ -46,11 +49,11 @@ class HotelGateway(
         val context = current?.takeIf { it.lease == lease && !it.closed } ?: return
         if (!configured) {
             emit(context, JSONObject().put("type", "operation_result").put("status", "unavailable")
-                .put("text", "Hotel services are not connected. Ask staff to configure the hotel's secure backend."))
+                .put("text", text(context, "Hotel services are not connected. Ask staff to configure the hotel's secure backend.")))
             return
         }
         if (context.busy) {
-            emit(context, JSONObject().put("type", "notice").put("text", "Please wait for the current hotel request."))
+            emit(context, JSONObject().put("type", "notice").put("text", text(context, "Please wait for the current hotel request.")))
             return
         }
         context.busy = true
@@ -118,13 +121,13 @@ class HotelGateway(
         }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) = finish(call, JSONObject().put("status", "unavailable")
-                .put("text", "The hotel service could not be reached. Retry or ask reception for help."))
+                .put("text", text(context, "The hotel service could not be reached. Retry or ask reception for help.")))
             override fun onResponse(call: Call, response: Response) {
                 val result = response.use {
                     if (!it.isSuccessful) JSONObject().put("status", "error")
-                        .put("text", "Hotel request was not accepted (HTTP ${it.code}). Ask staff to check the connection and authorization.")
+                        .put("text", text(context, "Hotel request was not accepted (HTTP {status}). Ask staff to check the connection and authorization.", mapOf("status" to it.code.toString())))
                     else try { JSONObject(it.body?.string().orEmpty()) } catch (_: Exception) {
-                        JSONObject().put("status", "error").put("text", "The hotel service returned an unreadable receipt. No success is confirmed.")
+                        JSONObject().put("status", "error").put("text", text(context, "The hotel service returned an unreadable receipt. No success is confirmed."))
                     }
                 }
                 finish(call, result)

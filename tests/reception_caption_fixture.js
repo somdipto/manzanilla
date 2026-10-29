@@ -21,6 +21,11 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
   const doc = frame.contentDocument;
   const messages = [];
   win.ManzaniaNative = { postMessage: value => messages.push(JSON.parse(value)) };
+  const locale = doc.createElement('script');
+  locale.src = new URL('locales.js', assetBase).href;
+  const localeLoaded = new Promise((resolve, reject) => { locale.onload = resolve; locale.onerror = reject; });
+  doc.body.appendChild(locale);
+  await localeLoaded;
   const evidence = doc.createElement('script');
   evidence.src = new URL('language-turns.js', assetBase).href;
   const evidenceLoaded = new Promise((resolve, reject) => { evidence.onload = resolve; evidence.onerror = reject; });
@@ -50,7 +55,7 @@ export async function runReceptionCaptionFixture(assetBase = new URL('../android
     click('[data-action="start"]');
     const session_id = messages.filter(message => message.action === 'start').at(-1).session_id;
     const scope = { session_id, generation: 1 };
-    assert(doc.querySelector('.voice-ball')?.getAttribute('aria-label') === 'Connecting · microphone off', 'Connecting is not a listening indication');
+    assert(doc.querySelector('.voice-ball')?.disabled, 'Connecting does not offer capture controls');
     assert(doc.querySelector('.voice-ball')?.dataset.hearing === 'false', 'Connecting keeps capture off');
     receive({ ...scope, type: 'audio_state', state: 'recording' });
     receive({ ...scope, type: 'reception_event', phase: 'listening' });

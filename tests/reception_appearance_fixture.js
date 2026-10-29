@@ -18,7 +18,7 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
   const win = frame.contentWindow, doc = frame.contentDocument;
   const sent = [];
   win.ManzaniaNative = { postMessage: value => sent.push(JSON.parse(value)) };
-  for (const name of ['greetings.js', 'language-turns.js', 'reception.js']) {
+  for (const name of ['locales.js', 'greetings.js', 'language-turns.js', 'reception.js']) {
     const script = doc.createElement('script');
     script.src = new URL(name, assetBase).href;
     const ready = new Promise((resolve, reject) => { script.onload = resolve; script.onerror = reject; });
