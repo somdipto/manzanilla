@@ -39,8 +39,14 @@ run_fixture() {
   timeout 240s adb shell am instrument -w -r -e case "$fixture" \
     dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture | tee "$evidence/$label.txt"
   # adb itself returns zero even when an instrumentation assertion fails.
-  grep -q "PASS case=$fixture " "$evidence/$label.txt"
-  grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$label.txt"
+  if ! grep -q "PASS case=$fixture " "$evidence/$label.txt" ||
+     ! grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$label.txt"; then
+    # An uncaught exception in this instrumentation process, which also hosts
+    # the target app, reports only "Process crashed." Keep the bounded crash
+    # buffer (exception class, message and top frames) so the cause is visible.
+    adb logcat -d -b crash -t 60 > "$evidence/$label-crash.txt" 2>/dev/null || true
+    return 1
+  fi
 }
 for fixture in "${fixtures[@]}"; do
   run_fixture "$fixture"
