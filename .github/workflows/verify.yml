@@ -16,6 +16,8 @@ jobs:
         with: {node-version: '22'}
       - run: npm ci
       - run: npm run check:reception
+      # cloud/web.py serves these committed bundles; a stale one would ship broken.
+      - run: npm run check:web
       - run: node --test tests/*.test.cjs
       - run: pip install -r requirements-dev.txt
       - run: pip install -r voice-worker/requirements.txt
