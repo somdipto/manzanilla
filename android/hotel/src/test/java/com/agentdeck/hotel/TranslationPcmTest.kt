@@ -48,6 +48,28 @@ class TranslationPcmTest {
         assertEquals(4294967295L, parsed.sequence)
     }
 
+    @Test fun parsesPacketsProducedByTheWorkerPacker() {
+        // Exact bytes from voice_worker.contract.audio_packet(7, 0, bytes 0x00..0x05) and
+        // its EOF packet. The managed route credits playback only when the worker and this
+        // renderer agree on the framing byte for byte, so the layout is pinned here.
+        val playback = TranslationPcm(7)
+        val packet = TranslationPcm.parse(byteArrayOf(
+            0x4d, 0x5a, 0x50, 0x31, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x5d, 0xc0.toByte(), 0x00, 0x01, 0x02, 0x03, 0x04, 0x05))
+        assertEquals(7L, packet.generation)
+        assertEquals(0L, packet.sequence)
+        assertEquals(6, packet.length)
+        playback.accept(packet)
+        assertNull(playback.rendered(2))
+        assertEquals(0L, playback.rendered(3))
+        playback.accept(TranslationPcm.parse(byteArrayOf(
+            0x4d, 0x5a, 0x50, 0x31, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x5d, 0xc0.toByte())))
+        assertFalse(playback.complete)
+        assertEquals(1L, playback.rendered(3))
+        assertTrue(playback.complete)
+    }
+
     @Test fun unconsumedInputCannotGrowAnUnboundedQueue() {
         val playback = TranslationPcm(1)
         repeat(6) { playback.accept(TranslationPcm.parse(packet(it))) }
