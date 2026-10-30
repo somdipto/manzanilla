@@ -60,7 +60,8 @@ async def serve_forever(config: dict):
                         livekit_url=config['livekit_url'], api_key=config['api_key'],
                         api_secret=config['api_secret'], fish_key=config['fish_key'],
                         voice_id=config['voice_id'], llm=config['llm'],
-                        bench=Bench(config['bench_log'], name), max_seconds=config['max_seconds'])
+                        bench=Bench(config['bench_log'], name), max_seconds=config['max_seconds'],
+                        room_prefix=config['prefix'])
                     attempted.add(name)
                     active[name] = asyncio.create_task(session.run(), name='controlled-interpreter')
             except asyncio.CancelledError:

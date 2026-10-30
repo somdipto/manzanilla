@@ -38,6 +38,17 @@ def presentation(text: str) -> str:
     return text.replace('[', '(').replace(']', ')')
 
 
+def device_identity(room_name: str, room_prefix: str = 'manz-') -> str:
+    """The identity the backend puts in this room's device token.
+
+    `cloud/livekit_route.py` names a room `room_prefix + lease[:40]` and issues its
+    device token for `'device-' + lease[:24]`, so the worker must strip its own
+    configured namespace rather than a hard-coded prefix or it would ignore that
+    client's acknowledgements, direction controls and join metadata.
+    """
+    return 'device-' + room_name.removeprefix(room_prefix)[:24]
+
+
 class Bench:
     """Boundary timings only: never transcript, provider body or credentials."""
     def __init__(self, path: str | None, session: str):
@@ -59,12 +70,13 @@ class InterpreterSession:
                  fish_key: str, voice_id: str, llm: TranslateStream,
                  bench: Bench | None = None, max_seconds: int = MAX_SECONDS,
                  client_identity: str | None = None, guest: str | None = None,
-                 staff: str | None = None, session_id: str | None = None):
+                 staff: str | None = None, session_id: str | None = None,
+                 room_prefix: str = 'manz-'):
         if not fish_key or not voice_id:
             raise ValueError('Fish credentials and voice are required')
         self.room_name = room_name
         self.session_id = session_id or room_name
-        self.client_identity = client_identity or ('device-' + room_name.removeprefix('manz-')[:24])
+        self.client_identity = client_identity or device_identity(room_name, room_prefix)
         self._url, self._grant = livekit_url, (api_key, api_secret)
         self._fish_key, self._voice, self._llm = fish_key, voice_id, llm
         self._max_seconds = min(max_seconds, MAX_SECONDS)

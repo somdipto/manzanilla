@@ -327,6 +327,29 @@ def test_interruption_preserves_completed_translation_and_flushes_generation(pip
     asyncio.run(scenario())
 
 
+def test_worker_device_identity_matches_the_room_token_for_its_namespace(pipeline):
+    from cloud import livekit_route
+    from uuid import uuid4
+    pipeline()
+    identify = uuid4().hex + uuid4().hex
+    room = livekit_route.room_name(identify)
+    # The backend writes 'device-' + lease[:24] into the room's device token. If the
+    # worker derived anything else it would ignore that client's acknowledgements,
+    # direction controls and join metadata.
+    assert room == livekit_route.ROOM_PREFIX + identify[:40]
+    assert session.device_identity(room) == 'device-' + identify[:24]
+    built = session.InterpreterSession(room, livekit_url='ws://fixture', api_key='fixture',
+        api_secret='fixture', fish_key='fixture', voice_id='voice', llm=object())
+    assert built.client_identity == 'device-' + identify[:24]
+    # A worker namespace must be used for its own rooms, not a hard-coded prefix.
+    prefixed = 'manz-bench-' + identify[:40]
+    assert session.device_identity(prefixed, 'manz-bench-') == 'device-' + identify[:24]
+    namespaced = session.InterpreterSession(prefixed, livekit_url='ws://fixture', api_key='fixture',
+        api_secret='fixture', fish_key='fixture', voice_id='voice', llm=object(),
+        room_prefix='manz-bench-')
+    assert namespaced.client_identity == 'device-' + identify[:24]
+
+
 def test_turn_loop_interruption_survives_waiter_clearing_the_task(pipeline):
     async def scenario():
         obj = pipeline()

@@ -71,7 +71,12 @@ genuinely new request creates no reservation, room or token.
 
 Worker: `LIVEKIT_WORKER_ENABLED=1`, `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
 `LIVEKIT_API_SECRET`, `FISH_API_KEY`, `FISH_VOICE_ID`, `GEMINI_API_KEY`,
-optional `ROOM_PREFIX` (default `manz-`) and `VOICE_BENCH_LOG`. Gemini's
+optional `ROOM_PREFIX` (default `manz-`) and `VOICE_BENCH_LOG`. `ROOM_PREFIX`
+must match the backend's room namespace: the worker derives each room's device
+identity by stripping it (`cloud/livekit_route.py` names a room
+`prefix + lease[:40]` and issues its device token for `device- + lease[:24]`), so
+a different prefix makes the worker ignore that client's acknowledgements,
+direction controls and join metadata. Gemini's
 OpenAI-compatible endpoint and `gemini-3.8-flash` are fixed in the worker.
 Fish synthesis remains `s2.1-pro`. `FISH_VOICE_ID` is a non-secret identifier,
 not an API credential.
