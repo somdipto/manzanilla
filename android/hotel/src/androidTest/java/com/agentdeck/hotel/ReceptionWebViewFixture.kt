@@ -17,10 +17,10 @@ import java.util.concurrent.TimeUnit
 
 /** Exercises the shipped assets and real addJavascriptInterface boundary, with no audio provider. */
 internal object ReceptionWebViewFixture {
-    /** Synthetic readiness plus an empty injected resolver: granting cannot call Fish. */
+    /** Synthetic readiness is withdrawn before permission resolves: granting cannot call a provider. */
     fun verifyMicrophonePermission(instrumentation: Instrumentation, outcome: String = "grant") {
         val context = instrumentation.targetContext
-        check(BuildConfig.FISH_API_KEY.isEmpty() && !SecretStore(context, "fish").has()
+        check(!SecretStore(context, "fish").has() && !SecretStore(context, "translation_credentials").has()
             && HotelConnection(context).load() == null) { "Use an isolated, unconfigured key-free APK" }
         check(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             "Revoke RECORD_AUDIO on the disposable emulator before this fixture"
@@ -28,8 +28,8 @@ internal object ReceptionWebViewFixture {
         instrumentation.uiAutomation.serviceInfo = instrumentation.uiAutomation.serviceInfo.apply {
             flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
         }
-        val fixtureStore = SecretStore(context, "fish")
-        check(fixtureStore.save("fixture-only-permission-readiness"))
+        val fixtureStore = SecretStore(context, "translation_credentials")
+        check(TranslationCredentials(context).save("fixture-only-fish", "fixture-only-gemini", "fixture-only-voice"))
         val activity = instrumentation.startActivitySync(Intent(context, HotelActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val ownerField = HotelActivity::class.java.getDeclaredField("owner").apply { isAccessible = true }
@@ -38,7 +38,7 @@ internal object ReceptionWebViewFixture {
         lateinit var browser: WebView
         val forward = HotelActivity::class.java.getDeclaredMethod("forward", JSONObject::class.java).apply { isAccessible = true }
         val transportEvents = LinkedBlockingQueue<JSONObject>()
-        // Observe that granting reaches the real Fish start, while ensuring that it has no credential.
+        // Observe the real transport's credential gate after the permission decision.
         instrumentation.runOnMainSync {
             browser = page.getChildAt(0) as WebView
             HotelActivity::class.java.getDeclaredField("fishProvider").apply { isAccessible = true }.set(activity, lazy {
@@ -94,6 +94,7 @@ internal object ReceptionWebViewFixture {
             check(preserved) { "Opening microphone permission discarded the pending translation session" }
             check(evaluate("document.documentElement.dataset.page") == "\"active\"") { "Permission dialog detached the JS conversation" }
             check(evaluate("document.documentElement.dataset.captureActive") == "\"true\"")
+            fixtureStore.clear()
             if (outcome == "background") {
                 check(instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME))
             } else {
@@ -139,7 +140,7 @@ internal object ReceptionWebViewFixture {
     }
 
     fun verify(instrumentation: Instrumentation, truth: Boolean = false) {
-        check(BuildConfig.FISH_API_KEY.isEmpty()) { "Use a key-free fixture build" }
+        check(!SecretStore(instrumentation.targetContext, "translation_credentials").has()) { "Use an unconfigured fixture build" }
         val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, HotelActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val messages = LinkedBlockingQueue<JSONObject>()
@@ -177,6 +178,19 @@ internal object ReceptionWebViewFixture {
             }
             error("Shipped WebView did not deliver native action: $action; page=${evaluate("document.body.innerText")}")
         }
+        fun utterance(session: String, id: String, language: String, guest: String, staff: String, original: String): JSONObject {
+            val known = language == guest || language == staff
+            val role = if (!known) JSONObject.NULL else if (language == guest) "guest" else "receptionist"
+            return JSONObject().put("type", "translation.utterance").put("record", JSONObject()
+                .put("session_id", session).put("utterance_id", id).put("revision", 1)
+                .put("role", role).put("source_language", if (known) language else JSONObject.NULL)
+                .put("target_language", if (!known) JSONObject.NULL else if (language == guest) staff else guest)
+                .put("original", original).put("translation", if (known) "204 · Alex" else "")
+                .put("recognition_status", "final").put("translation_status", if (known) "complete" else "needs_direction")
+                .put("playback_status", "idle").put("output_generation", 0)
+                .put("direction_reason", if (known) "recognized" else "uncertain")
+                .put("detected_language", if (known) language else JSONObject.NULL))
+        }
         try {
             expectAction("info")
             check(!unavailable) { "Shipped assets failed to load" }
@@ -204,6 +218,7 @@ internal object ReceptionWebViewFixture {
             evaluate("document.querySelector('[data-action=translation]').click()")
             check(evaluate("document.querySelector('[data-language-side=language]').value") == JSONObject.quote(if (truth) "es" else "fr"))
             check(evaluate("document.querySelector('[data-language-side=staff_language]').value") == "\"en\"")
+            check(evaluate("document.querySelectorAll('#language option').length") == "28") { "Speech choices must not advertise all interface languages" }
             check(evaluate("document.querySelector('[data-action=start]').disabled") == "false") { "Start stays disabled after native capability/pair" }
             evaluate("document.querySelector('[data-action=start]').click()")
             val start = expectAction("start")
@@ -229,9 +244,7 @@ internal object ReceptionWebViewFixture {
                 }
                 push(JSONObject().put("type", "reception_event").put("phase", "listening"))
                 for ((index, language) in listOf("en", "und", "es", "und").withIndex()) {
-                    push(JSONObject().put("type", "interpretation").put("utterance_id", "truth-$index")
-                        .put("source_language", language).put("language_attribution", "model")
-                        .put("original", "  Alex, 204?  ").put("text", if (language == "und") " \t\n" else "Exact translation"))
+                    push(utterance(start.getString("session_id"), "truth-$index", language, "es", "en", "  Alex, 204?  "))
                 }
                 check(evaluate("JSON.stringify(Array.prototype.map.call(document.querySelectorAll('.caption'),function(n){return n.classList.contains('caption-reception')?'staff':n.classList.contains('caption-guest')?'guest':'neutral'}))") ==
                     "\"[\\\"staff\\\",\\\"neutral\\\",\\\"guest\\\",\\\"neutral\\\"]\"")
@@ -289,9 +302,7 @@ internal object ReceptionWebViewFixture {
                 arabicEvent(JSONObject().put("type", "reception_event").put("phase", "listening"))
                 for ((id, language, original) in listOf(Triple("arabic-guest", "ar", "أين الغرفة 204؟"),
                     Triple("spanish-staff", "es", "Su habitación está a la izquierda."))) {
-                    arabicEvent(JSONObject().put("type", "interpretation").put("utterance_id", id)
-                        .put("source_language", language).put("language_attribution", "model")
-                        .put("original", original).put("text", "204 · Alex"))
+                    arabicEvent(utterance(arabic.getString("session_id"), id, language, "ar", "es", original))
                 }
                 check(evaluate("document.querySelector('.caption-guest').textContent.indexOf('أين الغرفة') >= 0") == "true")
                 check(evaluate("document.querySelector('.caption-reception').textContent.indexOf('Su habitación') >= 0") == "true")

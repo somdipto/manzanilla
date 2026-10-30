@@ -46,7 +46,7 @@ class UpgradeDataFixture : Instrumentation() {
     override fun onStart() {
         val result = Bundle()
         val case = args?.getString("case").takeIf {
-            it in setOf("seed", "verify", "bundled", "reception", "reception-missing-script")
+            it in setOf("seed", "verify", "provider-credentials", "reception", "reception-missing-script")
         } ?: "unknown"
         try {
             check(args?.getString("isolated") == "1")
@@ -124,35 +124,19 @@ class UpgradeDataFixture : Instrumentation() {
                     check(secretClass.getMethod("load").invoke(voiceStore) == voiceMarker)
                     check(secretClass.getMethod("status").invoke(voiceStore).toString() == "READY")
                 }
-                "bundled" -> {
-                    // Inspect only the actual installed field; never print or hash its value.
-                    // Keep the synthetic saved key, including in managed-only hotel builds.
+                "provider-credentials" -> {
+                    // Inspect the installed candidate, never print or hash a credential.
+                    // An in-place update must still retain the user's encrypted key.
                     check(secretClass.getMethod("load").invoke(voiceStore) == voiceMarker)
-                    val bundled = buildConfig.getField("FISH_API_KEY").get(null) as String
-                    check(if (distribution == "personal-test") bundled.isNotBlank() else bundled.isEmpty())
-                    val statusClass = targetContext.classLoader.loadClass("com.agentdeck.hotel.SecretStore\$Status")
-                    val absent = statusClass.enumConstants.single { it.toString() == "ABSENT" }
-                    val policy = targetContext.classLoader.loadClass("com.agentdeck.hotel.AudioPolicy")
-                    val gate = policy.getMethod("blockReason", Boolean::class.javaPrimitiveType,
-                        statusClass, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType,
-                        String::class.java).invoke(policy.getField("INSTANCE").get(null),
-                            false, absent, bundled.isNotBlank(), false, distribution) as String
-                    check(if (distribution == "personal-test") gate.isEmpty() else gate.isNotEmpty())
-                    if (distribution == "hotel") {
-                        val ready = statusClass.enumConstants.single { it.toString() == "READY" }
-                        val savedGate = policy.getMethod("blockReason", Boolean::class.javaPrimitiveType,
-                            statusClass, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType,
-                            String::class.java).invoke(policy.getField("INSTANCE").get(null),
-                                false, ready, false, true, distribution) as String
-                        check(savedGate.isNotEmpty())
+                    for (name in listOf("FISH_API_KEY", "GEMINI_API_KEY", "LLM_API_KEY", "TRANSLATION_API_KEY")) {
+                        val field = try { buildConfig.getField(name) } catch (_: NoSuchFieldException) { null }
+                        if (field != null) check((field.get(null) as String).isEmpty())
                     }
                 }
                 else -> error("Unknown fixture case")
             }
-            val evidence = if (case == "bundled") {
-                if (distribution == "personal-test") "bundled_key=true direct_ready=true"
-                else "bundled_key=false managed_required=true"
-            } else "preferences=true private_file=true encrypted_marker=true voice_credential=true"
+            val evidence = if (case == "provider-credentials") "provider_keys_absent=true"
+                else "preferences=true private_file=true encrypted_marker=true voice_credential=true"
             result.putString("stream", "PASS case=$case $evidence distribution=$distribution\n")
             finish(-1, result)
         } catch (error: Throwable) {

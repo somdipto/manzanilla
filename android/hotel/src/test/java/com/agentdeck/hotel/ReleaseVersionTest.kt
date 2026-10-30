@@ -5,6 +5,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReleaseVersionTest {
+    @Test fun compiledProviderConfigurationNeverContainsCredentials() {
+        // CI supplies synthetic env/property values to catch accidental injection.
+        // Inspect generated fields, not source text or inlined constants.
+        for (field in BuildConfig::class.java.fields) {
+            if (field.name.endsWith("_API_KEY") || field.name == "FISH_VOICE_ID") {
+                assertTrue("Provider configuration must be user-supplied: ${field.name}",
+                    field.type == String::class.java && (field.get(null) as String).isEmpty())
+            }
+        }
+    }
+
     @Test fun explicitCodeAndSemanticVersionMustBothAdvance() {
         assertTrue(ReleaseVersion.offer("v17.0.5", "17.0.4", 34, 35))
         assertFalse(ReleaseVersion.offer("v17.0.5", "17.0.4", 35, 35))

@@ -18,7 +18,7 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
   const win = frame.contentWindow, doc = frame.contentDocument;
   const sent = [];
   win.ManzaniaNative = { postMessage: value => sent.push(JSON.parse(value)) };
-  for (const name of ['locales.js', 'greetings.js', 'language-turns.js', 'reception.js']) {
+  for (const name of ['locales.js', 'language-turns.js', 'reception.js']) {
     const script = doc.createElement('script');
     script.src = new URL(name, assetBase).href;
     const ready = new Promise((resolve, reject) => { script.onload = resolve; script.onerror = reject; });
@@ -81,7 +81,13 @@ export async function runReceptionAppearanceFixture(assetBase = new URL('../andr
   const scope = { session_id: start.session_id, generation: 1 };
   receive({ ...scope, type: 'audio_state', state: 'recording' });
   receive({ ...scope, type: 'reception_event', phase: 'listening' });
-  receive({ ...scope, type: 'interpretation', utterance_id: 'day-caption', source_language: 'de', original: 'Guten Morgen.', text: 'Good morning.', language_attribution: 'model' });
+  receive({ ...scope, type: 'translation.utterance', record: {
+    session_id: scope.session_id, utterance_id: 'day-caption', revision: 1,
+    source_language: start.language, target_language: start.staff_language, role: 'guest',
+    original: 'Guten Morgen.', translation: 'Good morning.', recognition_status: 'final',
+    translation_status: 'complete', playback_status: 'complete', output_generation: 1,
+    direction_reason: 'recognized', detected_language: start.language
+  } });
   assert(styles('.pair-title').color === 'rgb(38, 38, 36)', 'Active translation heading uses day palette');
   assert(styles('.caption').color === 'rgb(38, 38, 36)', 'Day captions are readable');
   assert(contrast(styles('.caption .translated').color, styles('.caption').backgroundColor) >= 4.5, 'Day translated captions meet normal-text contrast');

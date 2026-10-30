@@ -1,6 +1,6 @@
 # EVALUATION ONLY: one LiveKit server + one owning interpreter worker.
 # Run alongside exactly one backend process with its existing SQLite ledger.
-# Backend new-room opt-in: VOICE_ROUTE=livekit and ALLOW_UNQUALIFIED_LIVEKIT=1.
+# Backend new-room opt-in: LIVEKIT_WORKER_ENABLED=1 and ALLOW_UNQUALIFIED_LIVEKIT=1.
 # Not a production recipe with swapped secrets; see docs/selfhosted-voice-route.md.
 # Reject deployments requiring multiple owners or strict immediate token revocation.
 # Provider calls cost money: establish remaining authorization before starting.
@@ -10,11 +10,11 @@ services:
     image: livekit/livekit-server:v1.13.10
     # 1.13.x verified; participant attributes are the agent-state channel and
     # 1.9.x silently drops them.
-    command: ["--dev"]   # local evaluation only; not production credentials or isolation
+    command: ["--dev", "--bind", "0.0.0.0"] # container network only; host ports remain loopback
     ports:
-      - "7880:7880"      # signaling (ws/wss via your TLS proxy)
-      - "7881:7881"      # RTC over TCP
-      - "7882:7882/udp"  # RTC over UDP
+      - "127.0.0.1:7880:7880"      # signaling; development credentials stay on loopback
+      - "127.0.0.1:7881:7881"      # RTC over TCP
+      - "127.0.0.1:7882:7882/udp"  # RTC over UDP
   voice-worker:
     build:
       context: ..
@@ -25,9 +25,8 @@ services:
       LIVEKIT_API_SECRET: secret
       FISH_API_KEY: ${FISH_API_KEY:?set in your secret store}
       FISH_VOICE_ID: ${FISH_VOICE_ID:?}
-      LLM_BASE_URL: https://generativelanguage.googleapis.com/v1beta/openai
-      LLM_API_KEY: ${GEMINI_API_KEY:?}
-      LLM_MODEL: gemini-3.8-flash
+      LIVEKIT_WORKER_ENABLED: "1"
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?}
       ROOM_PREFIX: manz-
     depends_on:
       - livekit

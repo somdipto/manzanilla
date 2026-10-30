@@ -57,6 +57,7 @@ class VoiceLifecycleFixture : Instrumentation() {
                 "predispatch-recovery" -> recoveredReservation(dispatched = false, storageFails = false)
                 "predispatch-storage-failure" -> recoveredReservation(dispatched = false, storageFails = true)
                 "dispatched-recovery" -> recoveredReservation(dispatched = true, storageFails = false)
+                "direct-cleanup-credential" -> directCleanupCredential()
                 "settled-storage-retry" -> settledStorageRetry()
                 "managed-rejection" -> managedRejection(status, args?.getString("notCreated") == "1")
                 else -> error("Unknown fixture case: $case")
@@ -113,6 +114,69 @@ class VoiceLifecycleFixture : Instrumentation() {
                 check(gate.localAudioState() == "unknown" && gate.reason() != null && !gate.acquire("competing"))
             } else check(gate.reason() == null)
         } finally { shared.set(null, previous) }
+    }
+
+    private fun directCleanupCredential() {
+        val meta = targetContext.getSharedPreferences("fishmeta", android.content.Context.MODE_PRIVATE)
+        val store = SecretStore(targetContext, FishCleanupCredential.STORE)
+        check(!meta.contains("outstanding_session") && !store.has()) { "requires clean isolated AVD" }
+        val shared = FishVoice::class.java.getDeclaredField("sharedAdmission").apply { isAccessible = true }
+        val previous = shared.get(null)
+        val credential = "fixture-original-cleanup-only"
+        val replies = AtomicInteger()
+        try {
+            shared.set(null, null)
+            val first = FishVoice(targetContext, { error("cleanup emitted a voice event") }) { error("read current key") }
+            val owner = VoiceSession("fixture-original", 61, "es", "en", "translation") { error("opened voice") }
+            val runClass = FishVoice::class.java.declaredClasses.single { it.simpleName == "Run" }
+            val run = runClass.declaredConstructors.single().apply { isAccessible = true }.newInstance(first, owner)
+            val reservation = runClass.getDeclaredField("reservation").apply { isAccessible = true }.get(run) as String
+            val gate = FishVoice::class.java.getDeclaredField("admission").apply { isAccessible = true }.get(first) as FishSessionAdmission
+            check(gate.acquire(reservation))
+            val retain = FishVoice::class.java.getDeclaredMethod("retainCreationRecovery", runClass, Request::class.java).apply { isAccessible = true }
+            retain.invoke(first, run, Request.Builder().url("https://api.fish.audio/v1/agent/sessions")
+                .header("Authorization", "Bearer $credential").build())
+            check(FishCleanupCredential.resolve(store.load(), reservation, FishCleanupCredential.hash(credential)) == credential)
+            check(!FishVoice.needsCleanupCredential(targetContext))
+
+            // A legacy hash-only installation can recover only the exact original, not replace authority.
+            store.clear()
+            check(FishVoice.needsCleanupCredential(targetContext))
+            check(!FishVoice.recoverCleanupCredential(targetContext, "fixture-replacement"))
+            check(FishVoice.recoverCleanupCredential(targetContext, credential))
+
+            // Simulate process/distribution replacement with no current or bundled personal key.
+            shared.set(null, null)
+            val restored = FishVoice(targetContext, { error("cleanup emitted a voice event") }) { error("cleanup used the new distribution key") }
+            val client = okhttp3.OkHttpClient.Builder().addInterceptor { chain ->
+                val request = chain.request()
+                check(request.method == "GET" && request.url.toString() == FishCleanupCredential.lookup(reservation))
+                check(request.header("Authorization") == "Bearer $credential")
+                val count = replies.incrementAndGet()
+                val body = if (count == 1) """{"sessions":[],"has_more":false}"""
+                    else JSONObject().put("sessions", org.json.JSONArray().put(JSONObject()
+                        .put("end_user_id", reservation).put("status", "completed"))).put("has_more", false).toString()
+                okhttp3.Response.Builder().request(request).protocol(okhttp3.Protocol.HTTP_1_1)
+                    .code(200).message("fixture").body(okhttp3.ResponseBody.create(null, body)).build()
+            }.build()
+            FishVoice::class.java.getDeclaredField("http").apply { isAccessible = true }.set(restored, client)
+            fun recover() {
+                restored.retryCleanup()
+                val job = FishVoice::class.java.getDeclaredField("recoveredEndJob").apply { isAccessible = true }.get(null) as Job
+                runBlocking { withTimeout(5_000) { job.join() } }
+            }
+            recover()
+            check(meta.getString("outstanding_session", null) == reservation && store.has())
+            check(restored.admissionIssue() != null)
+            recover()
+            check(replies.get() == 2 && !meta.contains("outstanding_session") && !store.has())
+            check(restored.admissionIssue() == null)
+        } finally {
+            shared.set(null, previous)
+            meta.edit().remove("outstanding_session").remove("pending_end_url").remove("pending_end_credential_hash")
+                .remove("pending_recovery_url").remove("pending_recovery_lookup").commit()
+            store.clear()
+        }
     }
 
     private fun recoveredReservation(dispatched: Boolean, storageFails: Boolean) {
@@ -210,7 +274,7 @@ class VoiceLifecycleFixture : Instrumentation() {
             val fish = FishVoice(targetContext, { events.add(it) }) { error("managed fixture read direct credentials") }
             val owner = VoiceSession("fixture-rejection-${server.localPort}", 51, "es", "en", "translation", events::add)
             val runClass = FishVoice::class.java.declaredClasses.single { it.simpleName == "Run" }
-            val run = runClass.declaredConstructors.single().apply { isAccessible = true }.newInstance(fish, owner, "")
+            val run = runClass.declaredConstructors.single().apply { isAccessible = true }.newInstance(fish, owner)
             val reservation = runClass.getDeclaredField("reservation").apply { isAccessible = true }.get(run) as String
             check(gate.acquire(reservation))
             val create = FishVoice::class.java.getDeclaredMethod("managedSession", runClass,
@@ -279,7 +343,7 @@ class VoiceLifecycleFixture : Instrumentation() {
             synchronized(events) { events.add(it) }
         }
         val runClass = FishVoice::class.java.declaredClasses.single { it.simpleName == "Run" }
-        val run = runClass.declaredConstructors.single().apply { isAccessible = true }.newInstance(fish, owner, "")
+        val run = runClass.declaredConstructors.single().apply { isAccessible = true }.newInstance(fish, owner)
         val current = FishVoice::class.java.getDeclaredField("current").apply { isAccessible = true }
         current.set(fish, run)
         val admission = FishVoice::class.java.getDeclaredField("admission").apply { isAccessible = true }.get(fish)

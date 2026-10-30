@@ -4,6 +4,31 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## Application-controlled translation candidate (17.0.47/code 77)
+
+New conversations use one pipeline: Fish realtime recognition, application-owned
+direction, Gemini 3.8 Flash translation, and Fish S2.1 Pro synthesis. Neither
+APK compiles a provider key. Playback completes only after the receiver renders
+PCM, including EOF. This is not acoustic, provider-entitlement, or staff acceptance.
+
+- **Passed:** 721 Python tests and 53 Node tests. Coverage includes cancelled
+  Start ownership, completed-translation versus interrupted playback, and a
+  turn-loop interruption that clears the live task during notification.
+- **Passed:** Android `testDebugUnitTest` with JDK 17. No emulator was run.
+- **Passed:** Chromium 151 packaged reception fixtures, including same-language
+  explicit direction, Arabic physical guest-left/receptionist-right, welcome
+  failure, and key-free personal testing.
+- **Passed:** muted headless Chromium against the shipped web bundle, real local
+  LiveKit 1.13.10, and loopback Fish/Gemini substitutes. 106 checks covered one
+  Arabic welcome, X-X-X-Y-Y-X routing, exact originals, translation/TTS equality,
+  suspended-renderer credit, EOF acknowledgements, interruption, late-generation
+  rejection, continuous microphone packets, and exact cleanup. Zero paid calls.
+  Evidence: `/tmp/manzanilla-controlled-browser-fixture-20261030/evidence.json`.
+- **Blocked:** real Fish/Gemini speech, physical echo/interruption/latency, and
+  bilingual or designated-staff review. No paid call was made. The signed update
+  is not published; it still requires this PR to be merged and the publication
+  workflow to verify the signed artifacts.
+
 ## User-main integration and version sequencing
 
 The user published main `e19f711be274330905beec3ac7e31699f9149c82` as

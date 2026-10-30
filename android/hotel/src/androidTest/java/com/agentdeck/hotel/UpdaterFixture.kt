@@ -439,7 +439,8 @@ internal object UpdaterFixture {
     private fun requireQaBuild(test: Instrumentation) {
         check(Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish") { "Use a disposable Android emulator only" }
         val config = test.targetContext.classLoader.loadClass("com.agentdeck.hotel.BuildConfig")
-        check(config.getField("DEBUG").getBoolean(null) && (config.getField("FISH_API_KEY").get(null) as String).isBlank()) {
+        val compiledKey = try { config.getField("FISH_API_KEY").get(null) as String } catch (_: NoSuchFieldException) { "" }
+        check(config.getField("DEBUG").getBoolean(null) && compiledKey.isBlank()) {
             "Use actual installed key-free QA debug APKs"
         }
     }

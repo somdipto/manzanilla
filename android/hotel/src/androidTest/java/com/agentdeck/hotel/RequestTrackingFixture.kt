@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicReference
 internal object RequestTrackingFixture {
     fun verify(instrumentation: Instrumentation) {
         val context = instrumentation.targetContext
-        check(BuildConfig.FISH_API_KEY.isEmpty() && !SecretStore(context, "fish").has() && HotelConnection(context).load() == null) {
+        check(!SecretStore(context, "fish").has() && !SecretStore(context, "translation_credentials").has() && HotelConnection(context).load() == null) {
             "Use an isolated, unconfigured key-free emulator"
         }
         val activity = instrumentation.startActivitySync(Intent(context, HotelActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as HotelActivity

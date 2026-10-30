@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.KeyguardManager
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
@@ -44,6 +45,13 @@ class KeyEntryActivity : Activity() {
     private var foreground = false
     private val fields = ArrayList<EditText>()
     private var dialog: AlertDialog? = null
+    private var updateStatusView: TextView? = null
+    private val updateStatusPrefs by lazy { getSharedPreferences("update_staff_status", MODE_PRIVATE) }
+    private val updateStatusListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "status" && foreground && authenticated && authorized()) {
+            updateStatusView?.text = UpdateStatusText.render(updateStatusPrefs.getString("status", "").orEmpty()) { message, values -> text(message, values) }
+        }
+    }
     private val light by lazy { getSharedPreferences("deck", MODE_PRIVATE).getString("reception_appearance", "dark") == "light" }
     private val background get() = if (light) Color.rgb(243, 245, 242) else Color.rgb(8, 15, 21)
     private val ink get() = if (light) Color.rgb(24, 44, 56) else Color.rgb(229, 237, 243)
@@ -68,6 +76,7 @@ class KeyEntryActivity : Activity() {
     override fun onResume() {
         super.onResume()
         foreground = true
+        updateStatusPrefs.registerOnSharedPreferenceChangeListener(updateStatusListener)
         if (voiceOnly) {
             showConfiguration()
         } else if (authenticationAccepted && keyguard.isDeviceSecure && !keyguard.isKeyguardLocked) {
@@ -81,6 +90,7 @@ class KeyEntryActivity : Activity() {
 
     override fun onPause() {
         foreground = false
+        updateStatusPrefs.unregisterOnSharedPreferenceChangeListener(updateStatusListener)
         lock()
         super.onPause()
     }
@@ -108,6 +118,7 @@ class KeyEntryActivity : Activity() {
         authenticated = false
         authenticationAccepted = false
         dialog?.dismiss()
+        updateStatusView = null
         dialog = null
         fields.forEach { it.setText("") }
         fields.clear()
@@ -161,8 +172,7 @@ class KeyEntryActivity : Activity() {
         if (voiceOnly) {
             column.addView(label(setupTitle, 24f))
             addTestingNotice(column)
-            column.addView(label(text("Save your Fish Audio API key to translate directly on this device. The key stays encrypted here. After saving, return to your selected languages and tap Start translation.")))
-            addProvider(column, text("Fish Audio"), "fish", returnAfterSave = true)
+            addTranslationConfiguration(column, returnAfterSave = true)
             column.addView(button(text("Cancel")) { finish() })
             setContentView(ScrollView(this).apply { isSaveEnabled = false; addView(column) })
             return
@@ -172,8 +182,10 @@ class KeyEntryActivity : Activity() {
             column.addView(label(text("Hotel translation uses the enrolled hotel service. Personal voice keys remain saved but are not used in this build.")))
         } else {
             addTestingNotice(column)
-            column.addView(label(text("Live translation needs a Fish Audio API key on this device or a hotel connection. Check the saved-key status below. Keys stay encrypted on this device; a saved key still needs provider access to start a conversation.")))
-            addProvider(column, text("Fish Audio"), "fish")
+            addTranslationConfiguration(column)
+        }
+        if (FishVoice.needsCleanupCredential(this)) {
+            addProvider(column, text("Fish Audio"), FishCleanupCredential.STORE, cleanupOnly = true)
         }
         column.addView(label(text("Hotel service"), 20f))
         val connectionUrl = EditText(this).apply {
@@ -193,6 +205,12 @@ class KeyEntryActivity : Activity() {
         addProvider(column, text("Hotel connection"), "hotel_connection", connectionUrl)
         if (hotelDistribution) {
             column.addView(label(text("Maintenance"), 20f))
+            updateStatusView = label("").also {
+                updateStatusPrefs.getString("status", null)?.let { status ->
+                    it.text = UpdateStatusText.render(status) { message, values -> text(message, values) }
+                }
+                column.addView(it)
+            }
             addMaintenance(column, "Check updates", "check_updates")
             addMaintenance(column, "Apply update", "apply_update")
             addMaintenance(column, "Light appearance", "appearance_light")
@@ -225,10 +243,7 @@ class KeyEntryActivity : Activity() {
     }
 
     private fun addTestingNotice(column: LinearLayout) {
-        column.addView(label(text(if (BuildConfig.FISH_API_KEY.isNotBlank())
-            "Personal-test build · bundled Fish key" else "Personal testing build")))
-        if (BuildConfig.FISH_API_KEY.isNotBlank())
-            column.addView(label(text("The bundled Fish key is extractable. Use a disposable, limited key and rotate it after testing.")))
+        column.addView(label(text("Personal testing build")))
     }
 
     private fun addMaintenance(column: LinearLayout, message: String, action: String) {
@@ -245,28 +260,135 @@ class KeyEntryActivity : Activity() {
         return false
     }
 
+    private fun addTranslationConfiguration(column: LinearLayout, returnAfterSave: Boolean = false) {
+        val credentials = TranslationCredentials(this)
+        val saved = credentials.load()
+        val savedFish = credentials.savedFishKey()
+        val status = label(text("Fish Audio + Gemini: save both keys and a voice to translate."))
+        column.addView(status)
+        fun keyField(provider: String, present: Boolean): EditText {
+            column.addView(label(text(if (present) "{provider}: a key is securely saved. Entering a new key replaces it."
+                else "{provider}: no device key is saved.", mapOf("provider" to provider))))
+            return secureKeyField(provider).also(column::addView)
+        }
+        val fish = keyField("Fish Audio", savedFish != null)
+        val gemini = keyField("Gemini", saved != null)
+        column.addView(label(text("Fish voice ID")))
+        val voice = EditText(this).apply {
+            contentDescription = text("Fish voice ID")
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setSingleLine()
+            isSaveEnabled = false
+            setSaveFromParentEnabled(false)
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+            setTextColor(ink)
+            setHintTextColor(hintInk)
+            backgroundTintList = ColorStateList.valueOf(accent)
+            setText(saved?.voiceId.orEmpty())
+        }
+        fields.add(voice)
+        column.addView(voice)
+        column.addView(button(text("Save and return")) {
+            if (!authorized() || !credentialChangeAllowed()) return@button
+            val fishKey = fish.text.toString().trim().ifEmpty { savedFish.orEmpty() }
+            val translationKey = gemini.text.toString().trim().ifEmpty { saved?.translationKey.orEmpty() }
+            if (fishKey.isBlank() || translationKey.isBlank() || voice.text.toString().isBlank()) {
+                status.text = text("Fish Audio + Gemini: save both keys and a voice to translate.")
+                return@button
+            }
+            if (!credentials.save(fishKey, translationKey, voice.text.toString().trim())) {
+                status.text = text("The credential could not be securely saved. Check the service URL and device storage; the previous stored entry has been kept.")
+                return@button
+            }
+            fish.setText("")
+            gemini.setText("")
+            if (!TranslationSettings(this).selectDirectFish()) {
+                status.text = text("The saved key is available, but the translation connection could not be selected. Try again.")
+                return@button
+            }
+            setResult(RESULT_OK)
+            if (returnAfterSave) finish() else showConfiguration()
+        })
+    }
+
     private fun addProvider(column: LinearLayout, provider: String, prefsName: String, connectionUrl: EditText? = null,
-                            returnAfterSave: Boolean = false) {
-        // The personal path exposes only Fish. Hotel fields require staff authentication.
+                            cleanupOnly: Boolean = false) {
+        // Enrollment and historical cleanup remain behind the existing staff boundary.
         if (!authorized()) return
         val store = SecretStore(this, prefsName)
         val connection = if (connectionUrl != null) HotelConnection(this) else null
         val status = label("")
-        var savedKeyButton: Button? = null
         fun refresh() {
             if (!authorized()) return
+            if (cleanupOnly) {
+                status.text = text("Paste the original Fish key to finish the previous conversation cleanup. Only the matching original key is accepted; it will not be used for new hotel conversations.")
+                return
+            }
             val savedStatus = store.status()
-            savedKeyButton?.visibility = if (savedStatus == SecretStore.Status.READY) View.VISIBLE else View.GONE
             status.text = when (savedStatus) {
                 SecretStore.Status.READY -> text("{provider}: a key is securely saved. Entering a new key replaces it.", mapOf("provider" to provider))
                 SecretStore.Status.ABSENT -> text("{provider}: no device key is saved.", mapOf("provider" to provider))
-                SecretStore.Status.ERROR -> if (returnAfterSave)
-                    text("{provider}: the saved key could not be read. Paste your original Fish Audio key to replace it. The stored entry is kept until a replacement is saved.", mapOf("provider" to provider))
-                else text("The saved credential could not be read. Replace it or ask the tablet administrator.")
+                SecretStore.Status.ERROR -> text("The saved credential could not be read. Replace it or ask the tablet administrator.")
             }
         }
         column.addView(label(provider, 20f))
         column.addView(status)
+        val field = secureKeyField(provider)
+        column.addView(field)
+        column.addView(button(text("Save {provider} key", mapOf("provider" to provider))) {
+            if (!authorized() || (!cleanupOnly && !credentialChangeAllowed())) return@button
+            val value = field.text.toString().trim()
+            if (value.isEmpty() || value.any { it.isWhitespace() }) {
+                Toast.makeText(this, text("Paste a provider key without spaces."), Toast.LENGTH_LONG).show()
+            } else if (cleanupOnly) {
+                if (FishVoice.recoverCleanupCredential(this, value)) {
+                    field.setText("")
+                    setResult(RESULT_OK)
+                    finish()
+                } else {
+                    status.text = text("Paste the original Fish key to finish the previous conversation cleanup. Only the matching original key is accepted; it will not be used for new hotel conversations.")
+                }
+            } else if (if (connection != null) connection.save(connectionUrl!!.text.toString(), value) else store.save(value)) {
+                field.setText("")
+                refresh()
+                val settings = TranslationSettings(this)
+                val routeSaved = when {
+                    connection != null && !hotelDistribution -> settings.selectHotelConnection()
+                    else -> true
+                }
+                if (!routeSaved) {
+                    status.text = text("{provider} key is saved, but the translation connection could not be selected. Try saving again.", mapOf("provider" to provider))
+                    return@button
+                }
+                Toast.makeText(this, text("{provider} key securely saved.", mapOf("provider" to provider)), Toast.LENGTH_SHORT).show()
+            } else {
+                status.text = text("The credential could not be securely saved. Check the service URL and device storage; the previous stored entry has been kept.")
+            }
+        })
+        if (!cleanupOnly) column.addView(button(text("Remove {provider} key", mapOf("provider" to provider))) {
+            if (!authorized()) return@button
+            dialog = AlertDialog.Builder(this)
+                .setTitle(text("Remove saved {provider} key?", mapOf("provider" to provider)))
+                .setMessage(text("This only removes this tablet's credential. Keep the provider's original key if you need it again."))
+                .setNegativeButton(text("Cancel"), null)
+                .setPositiveButton(text("Remove")) { _, _ ->
+                    if (authorized() && credentialChangeAllowed()) {
+                        store.clear()
+                        field.setText("")
+                        if (store.status == SecretStore.Status.ERROR) status.text =
+                            text("The saved credential could not be removed. Check device storage and try again.")
+                        else refresh()
+                    }
+                }.create().also {
+                    it.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    it.show()
+                    it.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+        })
+        refresh()
+    }
+
+    private fun secureKeyField(provider: String): EditText {
         val field = object : EditText(this) {
             override fun onTextContextMenuItem(id: Int): Boolean {
                 if (id == android.R.id.copy || id == android.R.id.cut || id == android.R.id.shareText) return true
@@ -319,68 +441,7 @@ class KeyEntryActivity : Activity() {
             }
         }
         fields.add(field)
-        column.addView(field)
-        column.addView(button(if (returnAfterSave) text("Save and return") else text("Save {provider} key", mapOf("provider" to provider))) {
-            if (!authorized() || !credentialChangeAllowed()) return@button
-            val value = field.text.toString().trim()
-            if (value.isEmpty() || value.any { it.isWhitespace() }) {
-                Toast.makeText(this, text("Paste a provider key without spaces."), Toast.LENGTH_LONG).show()
-            } else if (if (connection != null) connection.save(connectionUrl!!.text.toString(), value) else store.save(value)) {
-                field.setText("")
-                refresh()
-                val settings = TranslationSettings(this)
-                val routeSaved = when {
-                    returnAfterSave -> settings.selectDirectFish()
-                    connection != null && !hotelDistribution -> settings.selectHotelConnection()
-                    else -> true
-                }
-                if (!routeSaved) {
-                    status.text = text("{provider} key is saved, but the translation connection could not be selected. Try saving again.", mapOf("provider" to provider))
-                    return@button
-                }
-                Toast.makeText(this, text("{provider} key securely saved.", mapOf("provider" to provider)), Toast.LENGTH_SHORT).show()
-                if (returnAfterSave) { setResult(RESULT_OK); finish() }
-            } else {
-                status.text = if (returnAfterSave)
-                    text("{provider}: the key could not be securely saved. Check device storage and try again; the previous stored entry has been kept.", mapOf("provider" to provider))
-                else text("The credential could not be securely saved. Check the service URL and device storage; the previous stored entry has been kept.")
-            }
-        })
-        column.addView(button(text("Remove {provider} key", mapOf("provider" to provider))) {
-            if (!authorized()) return@button
-            dialog = AlertDialog.Builder(this)
-                .setTitle(text("Remove saved {provider} key?", mapOf("provider" to provider)))
-                .setMessage(text("This only removes this tablet's credential. Keep the provider's original key if you need it again."))
-                .setNegativeButton(text("Cancel"), null)
-                .setPositiveButton(text("Remove")) { _, _ ->
-                    if (authorized() && credentialChangeAllowed()) {
-                        store.clear()
-                        field.setText("")
-                        if (store.status == SecretStore.Status.ERROR) status.text = if (returnAfterSave)
-                            text("{provider}: the saved key could not be removed. Check device storage and try again.", mapOf("provider" to provider))
-                        else text("The saved credential could not be removed. Check device storage and try again.")
-                        else refresh()
-                    }
-                }.create().also {
-                    it.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                    it.show()
-                    it.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                }
-        })
-        if (returnAfterSave) {
-            savedKeyButton = button(text("Use saved key")) {
-                if (!authorized()) return@button
-                if (store.load().isNullOrBlank()) {
-                    refresh()
-                } else if (TranslationSettings(this).selectDirectFish()) {
-                    setResult(RESULT_OK)
-                    finish()
-                } else {
-                    status.text = text("The saved key is available, but the translation connection could not be selected. Try again.")
-                }
-            }.also(column::addView)
-        }
-        refresh()
+        return field
     }
 
     private fun column() = LinearLayout(this).apply {

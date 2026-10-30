@@ -39,10 +39,9 @@ property's installation. Confirm cross-property denial in an isolated property.
 
 Install an exact verified signed hotel artifact in place; do not uninstall
 existing data. The source contract pairs `Manzanilla-Hotel.apk` with
-`hotel-release-metadata.json` and contains no shared provider keys.
-`Manzanilla-Reception.apk` / `release-metadata.json` remain personal testing,
-with a disposable extractable Fish key in release only. All debug keys are
-empty, Gemini keys never enter either APK, and `FISH_VOICE_ID` is non-secret.
+`hotel-release-metadata.json` and contains no provider keys.
+`Manzanilla-Reception.apk` / `release-metadata.json` remain personal testing
+and are also key-free. Gemini keys and `FISH_VOICE_ID` never enter either APK.
 The known public 17.0.37/code 67 APK is personal testing, not hotel acceptance;
 this repair has not published or deployed a candidate.
 

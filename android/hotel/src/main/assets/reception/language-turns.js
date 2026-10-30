@@ -1,14 +1,6 @@
 // Generated from ui/reception/language-turns.js; run npm run build:reception.
 (function(root) {
   "use strict";
-  const normalize = (value) => typeof value === "string" ? value.trim().toLowerCase().replace(/_/g, "-").split("-")[0] : "";
-  const sideFor = (language, guest, staff) => {
-    const code = normalize(language);
-    if (!code || normalize(guest) === normalize(staff)) return null;
-    if (code === normalize(staff)) return "staff";
-    if (code === normalize(guest)) return "guest";
-    return null;
-  };
   class LanguageTurns {
     constructor() {
       this.turns = [];
@@ -18,63 +10,57 @@
       this.turns.length = 0;
       this.byId.clear();
     }
-    key(event, kind, id = event.utterance_id) {
-      var _a;
-      return JSON.stringify([event.session_id || "", (_a = event.generation) != null ? _a : null, kind, id]);
-    }
-    add(id, kind) {
-      const turn = { id, kind, side: null, sourceLanguage: "", original: "", text: "", final: { original: false, text: false }, reported: false, node: null };
-      this.byId.set(id, turn);
-      this.turns.push(turn);
-      return turn;
-    }
-    resolve(guest, staff, changed) {
+    settle(sessionId, generation) {
+      const changed = [];
       for (const turn of this.turns) {
-        if (turn.kind !== "human") continue;
-        const side = sideFor(turn.sourceLanguage, guest, staff);
-        if (turn.side !== side) {
-          turn.side = side;
-          changed.add(turn);
-        }
+        if (turn.sessionId !== sessionId || turn.generation !== generation || turn.localClosed) continue;
+        turn.localClosed = true;
+        if (["waiting", "needs_direction", "streaming"].includes(turn.status)) turn.status = "cancelled";
+        if (["queued", "playing"].includes(turn.playbackStatus)) turn.playbackStatus = "interrupted";
+        changed.push(turn);
       }
-      return [...changed];
+      return changed;
     }
     accept(event, guest, staff) {
-      var _a, _b;
-      if (!event || typeof event.utterance_id !== "string" || !event.utterance_id) return [];
-      const changed = /* @__PURE__ */ new Set();
-      if (event.type === "interpretation") {
-        if (typeof event.original !== "string" || !event.original.trim() || typeof event.text !== "string" || typeof event.source_language !== "string" || event.language_attribution !== "model") return [];
-        const language = normalize(event.source_language);
-        if (language !== "und" && !sideFor(language, guest, staff)) return [];
-        if (language === "und" !== !event.text.trim()) return [];
-        const id = this.key(event, "human");
-        const existing = this.byId.get(id);
-        if (existing == null ? void 0 : existing.reported) return [];
-        const turn = existing || this.add(id, "human");
-        Object.assign(turn, { original: event.original, text: language === "und" ? "" : event.text, sourceLanguage: language, reported: true, final: { original: true, text: true } });
-        changed.add(turn);
-      } else if (event.type === "caption") {
-        if (!["human", "guest", "staff", "assistant"].includes(event.side) || !["original", "text"].includes(event.field) || !["append", "replace"].includes(event.operation) || typeof event.text !== "string" || typeof event.final !== "boolean") return [];
-        const assistant = event.side === "assistant";
-        if (event.field !== (assistant ? "text" : "original")) return [];
-        const parent = assistant && typeof event.source_utterance_id === "string" ? this.byId.get(this.key(event, "human", event.source_utterance_id)) : null;
-        const id = this.key(event, assistant ? "assistant" : "human");
-        const turn = parent || this.byId.get(id) || this.add(id, assistant ? "assistant" : "human");
-        if (turn.reported) return [];
-        if (!assistant && event.language_attribution === "model" && sideFor(event.source_language, guest, staff)) {
-          turn.sourceLanguage = normalize(event.source_language);
-          changed.add(turn);
-        }
-        if (!(turn.final[event.field] && (!event.final || event.operation === "append"))) {
-          turn[event.field] = event.operation === "replace" ? event.text : turn[event.field] + event.text;
-          (_a = turn.final)[_b = event.field] || (_a[_b] = event.final);
-          changed.add(turn);
-        }
-      } else return [];
-      return this.resolve(guest, staff, changed);
+      const record = event && event.type === "translation.utterance" && event.record;
+      if (!record || typeof record.session_id !== "string" || record.session_id !== event.session_id || !Number.isInteger(event.generation) || event.generation < 1 || typeof record.utterance_id !== "string" || !record.utterance_id || !Number.isInteger(record.revision) || record.revision < 1 || typeof record.original !== "string" || typeof record.translation !== "string" || !["partial", "final", "degraded"].includes(record.recognition_status) || !["waiting", "needs_direction", "streaming", "complete", "cancelled", "error", "ignored"].includes(record.translation_status) || !["idle", "queued", "playing", "complete", "interrupted", "error"].includes(record.playback_status) || !["recognized", "uncertain", "mixed", "mismatch", "same_language", "manual"].includes(record.direction_reason) || ![null, "guest", "receptionist"].includes(record.role)) return [];
+      const id = JSON.stringify([record.session_id, event.generation, record.utterance_id]);
+      const existing = this.byId.get(id);
+      if (existing && (existing.localClosed || record.revision <= existing.revision || existing.recognitionStatus !== "partial" && record.original !== existing.original)) return [];
+      const source = record.source_language;
+      const target = record.target_language;
+      let side = null;
+      if (record.role !== null) {
+        const from = record.role === "guest" ? guest : staff;
+        const to = record.role === "guest" ? staff : guest;
+        if (record.recognition_status === "partial" || source !== from || target !== to || !["recognized", "manual"].includes(record.direction_reason) || record.direction_reason === "recognized" && (guest === staff || record.recognition_status !== "final" || record.detected_language !== source)) return [];
+        side = record.role === "guest" ? "guest" : "staff";
+      }
+      const turn = existing || { id, kind: "human", node: null };
+      Object.assign(turn, {
+        sessionId: record.session_id,
+        generation: event.generation,
+        utteranceId: record.utterance_id,
+        revision: record.revision,
+        side,
+        sourceLanguage: source,
+        targetLanguage: target,
+        detectedLanguage: record.detected_language,
+        original: record.original,
+        text: record.translation,
+        status: record.translation_status,
+        recognitionStatus: record.recognition_status,
+        playbackStatus: record.playback_status,
+        directionReason: record.direction_reason,
+        final: { original: record.recognition_status !== "partial", text: record.translation_status === "complete" }
+      });
+      if (!existing) {
+        this.byId.set(id, turn);
+        this.turns.push(turn);
+      }
+      return [turn];
     }
   }
-  if (typeof module === "object" && module.exports) module.exports = { LanguageTurns, normalize, sideFor };
+  if (typeof module === "object" && module.exports) module.exports = { LanguageTurns };
   else root.ManzanillaLanguageTurns = LanguageTurns;
 })(typeof window === "object" ? window : globalThis);

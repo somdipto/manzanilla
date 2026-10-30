@@ -1,10 +1,12 @@
-# Self-hosted voice route: bounded evaluation only
+# Application-controlled voice route: bounded evaluation only
 
-`VOICE_ROUTE=fish` remains the default. `VOICE_ROUTE=livekit` selects a
-separately operated LiveKit/worker evaluation route only when the backend also
-has `ALLOW_UNQUALIFIED_LIVEKIT=1` for a genuinely new reservation. The opt-in
-does not qualify audio, provider access, security or production ownership.
-Personal direct Fish testing is independent of this gate.
+New managed sessions use one pipeline: Fish realtime recognition, application-owned
+direction, Gemini 3.8 Flash translation, and Fish S2.1 Pro synthesis. A genuinely
+new reservation also requires `ALLOW_UNQUALIFIED_LIVEKIT=1`,
+`LIVEKIT_WORKER_ENABLED=1`, and separate Fish, voice and Gemini configuration.
+The opt-in does not qualify audio, provider access, security or production ownership.
+Personal direct translation is the same pipeline on the device and is independent of this gate.
+`VOICE_ROUTE` does not select a hosted Fish Agent or another provider.
 
 The reception client uses the existing session-mint endpoint and room event
 contract. Provider behavior, timing, captions and recovery require separate
@@ -19,38 +21,47 @@ physical qualification is established by this recipe.
   original transport even after `VOICE_ROUTE` changes. Legacy rows with an
   existing `manz-` room ID are migrated as LiveKit; rows without an ID remain
   conservatively classified as hosted Fish because their outcome is unknown.
-  End deletes the room over Twirp. `VOICE_ROUTE` defaults to `fish`.
-- **voice-worker/** - one interpreter session per room. Room microphone ->
-  Fish realtime recognition (transcribe-stream-1: provider-side turn detection,
-  per-turn language identification, backchannel filtering, and an
-  `agent_speaking` echo gate fed from our own playback state) -> streaming
-  translation over an OpenAI-compatible endpoint -> Fish streaming synthesis
-  (s2.1-pro) -> room playback. Speech-start interruption cancels generation and
-  flushes queued audio; the behavior and acoustic quality need device testing.
-- The worker implements device contract events: `lk.agent.state`
-  attributes (listening/thinking/speaking), display-only
-  `manzanilla_publish_interpretation_v2` reports on the `agent-event` topic,
-  `error` and `session.ended` events, 600 s cap.
-  Owned input streams and output sources close before room disconnect; stopping
-  the worker does not leave those native audio handles for interpreter shutdown.
+  End deletes the room over Twirp. A legacy `VOICE_ROUTE` value cannot restore
+  hosted Fish Agent creation.
+- **voice-worker/** — one interpreter session per room. The room microphone stays
+  live and is sent to Fish realtime recognition (`transcribe-stream-1`: provider
+  turn detection, per-turn language identification, backchannel filtering, and an
+  `agent_speaking` hint fed from our own playback progress). The application owns
+  the utterance record, direction and target language. Gemini translates only
+  that recognized text. Fish MessagePack synthesis (`s2.1-pro`) returns 24 kHz
+  PCM. The client renders that PCM and acknowledges only samples its audio
+  renderer has consumed, including the empty EOF packet. A confirmed human turn
+  cancels the active generation and flushes queued audio. Acoustic quality and
+  interruption latency still need device testing.
+- The worker sends `lk.agent.state` attributes (listening/thinking/speaking),
+  revisioned `translation.utterance` records, welcome/output status, reliable
+  `translation-audio-v1` PCM, `error` and `session.ended` events. The session cap
+  is 600 seconds. Owned microphone capture closes before room disconnect.
+  Translated audio is not published as a WebRTC audio track and is not resampled
+  to 48 kHz.
 
 ## Design decisions
 
-- **No tool-calling in the model.** The worker emits captions from recognition
-  and translation results rather than asking the model to invoke a display tool.
-  Missing, incorrect, interrupted or delayed provider output can still affect
-  coverage and accuracy; this does not guarantee a complete transcript.
-- **Language identification comes from the recognizer**, never from turn order
-  or speaker identity. Unclear utterances report `und` with an empty
-  translation and are not spoken.
+- **No tool-calling in the model.** Gemini receives the supplied translation-only
+  system prompt and the recognized transcript separately. It does not choose a
+  speaker, invent hotel policy, or call a caption tool. The application record
+  is the caption. Missing, incorrect, interrupted or delayed provider output can
+  still affect coverage and accuracy.
+- **Direction comes from recognition evidence**, never from turn order. A final
+  language matching the selected guest or receptionist sets that side and the
+  opposite target. Uncertain, mixed, same-language and third-language records
+  stay visible and are not spoken until an allowed manual direction, except a
+  third language, which requires changing the selected pair. A completed
+  translation stays complete if playback is interrupted or fails.
 - **The agent grant needs `canUpdateOwnMetadata`** or `lk.agent.state` changes
   silently never leave the worker.
 
 ## Environment
 
-Backend: `VOICE_ROUTE=livekit`, explicit `ALLOW_UNQUALIFIED_LIVEKIT=1`,
-`LIVEKIT_URL` (wss:// for the tablet), `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`.
-Leave the opt-in disabled outside authorized evaluation.
+Backend: `ALLOW_UNQUALIFIED_LIVEKIT=1`, `LIVEKIT_WORKER_ENABLED=1`,
+`LIVEKIT_URL` (wss:// for a tablet), `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`,
+`FISH_API_KEY`, `FISH_VOICE_ID` and `GEMINI_API_KEY`. Leave the opt-in disabled
+outside authorized evaluation. `VOICE_ROUTE` is not a route selector.
 
 The backend looks up that caller's recorded request before the new-reservation
 gate. Withdrawing the flag does not prevent startup, recorded-request
@@ -58,12 +69,12 @@ reconciliation, end, recovery or cleanup. An existing request must not receive
 a proven-noncreation receipt solely because the flag changed. A rejected
 genuinely new request creates no reservation, room or token.
 
-Worker: `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `FISH_API_KEY`,
-`FISH_VOICE_ID`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, optional
-`LLM_EXTRA_JSON`, `ROOM_PREFIX` (default `manz-`), `VOICE_BENCH_LOG`.
-The supplied recipe retains Gemini's OpenAI-compatible endpoint and
-`gemini-3.8-flash`; Fish synthesis remains `s2.1-pro` and the configured voice
-is unchanged. `FISH_VOICE_ID` is a non-secret identifier, not an API credential.
+Worker: `LIVEKIT_WORKER_ENABLED=1`, `LIVEKIT_URL`, `LIVEKIT_API_KEY`,
+`LIVEKIT_API_SECRET`, `FISH_API_KEY`, `FISH_VOICE_ID`, `GEMINI_API_KEY`,
+optional `ROOM_PREFIX` (default `manz-`) and `VOICE_BENCH_LOG`. Gemini's
+OpenAI-compatible endpoint and `gemini-3.8-flash` are fixed in the worker.
+Fish synthesis remains `s2.1-pro`. `FISH_VOICE_ID` is a non-secret identifier,
+not an API credential.
 
 The evaluation server is pinned to LiveKit 1.13.10. Historical local checks
 found participant attributes worked in 1.13.x, whereas 1.9.x dropped them.
@@ -145,20 +156,17 @@ Merging source or publishing an APK does not deploy a backend or worker.
 
 ## Known limits
 
-- The app offers 52 conversation languages, while Fish's
+- The interface offers 52 languages. Speech selection offers the 28-language
+  intersection verified for this pipeline, generated from
+  `shared/translation-languages.json`. Fish's
   [realtime speech-to-text documentation](https://docs.fish.audio/features/speech-to-text/realtime#languages)
   lists 29 `language_code` values when language identification is available.
-  This is a limit on the documented attribution labels, not proof that speech
-  in other languages cannot be recognized. The self-hosted worker speaks a
-  translation only when the returned language code matches one of the selected
-  languages; otherwise it marks the turn `und` and does not speak it. Pairs
-  outside the documented labels, and recognition and direction for every pair,
-  require real provider and target-device acceptance before hotel deployment.
-  Keep all 52 interface choices and explicit personal testing of unqualified
-  pairs. All catalogue translations remain human-unreviewed. The chooser says:
-  “Speech support depends on the provider and tablet. Staff qualification is
-  required.” Neither vendor support nor staff configuration is acoustic
-  qualification, and passing one pairing does not qualify a language globally.
+  That list is not acoustic qualification. A returned language outside the
+  selected pair stays neutral and is not spoken. Every pair still requires
+  provider and target-device acceptance before hotel deployment. All catalogue
+  translations remain human-unreviewed. The chooser says: “Speech support
+  depends on the provider and tablet. Staff qualification is required.”
+  Passing one pairing does not qualify a language globally.
 - A device's initial self-hosted join ticket expires after **120 seconds**;
   the returned expiry matches its JWT. LiveKit documents that connected clients
   receive refreshed credentials for reconnect. These may outlive the initial
@@ -180,5 +188,9 @@ Merging source or publishing an APK does not deploy a backend or worker.
 - Historical scripted turn-pair results were synthetic-provider/transport
   evidence, not matched tablet captures. Device speaker playback and the
   acoustic echo path remain unqualified on physical target hardware.
-- Fish PCM output tops out at 44.1 kHz; the worker synthesizes at 24 kHz and
-  resamples to the room's 48 kHz.
+- Fish synthesis for this route is 24 kHz PCM. The worker does not resample it
+  to a 48 kHz room track. Playback completion follows the receiver's rendered
+  head and EOF acknowledgement. On Android 8–11 the playback buffer must start
+  within 4,800 frames so five full packets can start rendering before a short
+  sixth packet exhausts the six-packet credit window. That is a renderer bound,
+  not acoustic proof.

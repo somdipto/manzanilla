@@ -53,6 +53,10 @@ class Store:
             if 'route' not in columns:
                 self.db.execute("ALTER TABLE fish_sessions ADD COLUMN route TEXT NOT NULL DEFAULT 'fish'")
                 self.db.execute("UPDATE fish_sessions SET route='livekit' WHERE substr(session_id,1,5)='manz-'")
+            # A room name cannot identify the deployment or credentials that
+            # issued its token. Unknown legacy cleanup authority stays unknown.
+            if 'cleanup_authority' not in columns:
+                self.db.execute('ALTER TABLE fish_sessions ADD COLUMN cleanup_authority TEXT')
             columns = {row['name'] for row in self.db.execute('PRAGMA table_info(items)')}
             metadata = {
                 'acknowledged_at':'REAL', 'acknowledged_by':'TEXT',
@@ -109,7 +113,7 @@ class Store:
             return self.db.execute("SELECT 1 FROM credentials WHERE hotel=? AND role='staff' LIMIT 1",
                                    (hid,)).fetchone() is not None
     def reserve_fish(self, dev, duration, hotel_cap, account_cap, creation_seconds, token_seconds,
-                     reservation=None, *, route='fish', session_id_for=None):
+                     reservation=None, *, route='fish', session_id_for=None, cleanup_authority=None):
         if route not in {'fish', 'livekit'}:
             raise ValueError('Unknown interpreter route')
         now = time.time()
@@ -133,9 +137,9 @@ class Store:
                 # Only a validated live response establishes a trustworthy expiry. A
                 # lost creation response stays blocking until termination is confirmed.
                 session_id = session_id_for(ident) if session_id_for else None
-                self.db.execute('INSERT INTO fish_sessions(id,hotel,device,credential_hash,session_id,created,creation_deadline,expires,reserved_seconds,status,route) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                self.db.execute('INSERT INTO fish_sessions(id,hotel,device,credential_hash,session_id,created,creation_deadline,expires,reserved_seconds,status,route,cleanup_authority) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                     (ident,dev['hotel'],dev['id'],credential['hash'],session_id,now,now+creation_seconds,
-                     now+creation_seconds+token_seconds+duration,duration,'creating',route))
+                     now+creation_seconds+token_seconds+duration,duration,'creating',route,cleanup_authority))
                 self.db.commit()
                 return ident
             except BaseException:

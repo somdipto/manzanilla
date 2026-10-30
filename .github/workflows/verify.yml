@@ -50,7 +50,11 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
-      - run: bash gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug :hotel:assembleDebugAndroidTest -Pdistribution=personal-test --no-daemon --max-workers=2
+      - name: Verify personal-test ignores provider injection
+        env:
+          FISH_API_KEY: synthetic-env-not-a-credential
+          GEMINI_API_KEY: synthetic-env-not-a-credential
+        run: bash gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug :hotel:assembleDebugAndroidTest -Pdistribution=personal-test -PFISH_API_KEY=synthetic-property-not-a-credential -PGEMINI_API_KEY=synthetic-property-not-a-credential --no-daemon --max-workers=2
         working-directory: android
       - name: Enable emulator hardware acceleration
         run: |
@@ -90,8 +94,11 @@ jobs:
       - uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
-      - name: Build key-free hotel behavior in its isolated job
-        run: bash gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug :hotel:assembleDebugAndroidTest -Pdistribution=hotel --no-daemon
+      - name: Verify hotel ignores provider injection in its isolated job
+        env:
+          FISH_API_KEY: synthetic-env-not-a-credential
+          GEMINI_API_KEY: synthetic-env-not-a-credential
+        run: bash gradlew :hotel:testDebugUnitTest :hotel:lintDebug :hotel:assembleDebug :hotel:assembleDebugAndroidTest -Pdistribution=hotel -PFISH_API_KEY=synthetic-property-not-a-credential -PGEMINI_API_KEY=synthetic-property-not-a-credential --no-daemon
         working-directory: android
       - name: Enable emulator hardware acceleration
         run: |

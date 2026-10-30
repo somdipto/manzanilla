@@ -19,7 +19,7 @@ separately in `artifacts/VERIFICATION.md`; this file defines the procedure.
    Compilation alone does not close any user-workflow acceptance row.
 3. **Exercise the guest surface.** Serve the actual packaged reception assets
    from an isolated fixture with an explicit native bridge. Exercise translation,
-   same-language rejection, Spanish assistance, greeting/cancel, both caption
+   same-language explicit direction, Spanish assistance, greeting/cancel, record
    forms, message review/cancel/save, all shortcut outcomes, late events,
    language-preserving host refresh and update offer/progress/action. Inspect
    visible audio state, guest-left/receptionist-right paired caption fixtures,

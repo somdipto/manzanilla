@@ -144,11 +144,9 @@ def main() -> int:
         stage = "retained-data"
         instrument("verify", distribution, commit,
                    f"PASS case=verify {retained} distribution={distribution}")
-        stage = "bundled-credential-policy"
-        bundled = "bundled_key=true direct_ready=true" if distribution == "personal-test" else \
-                  "bundled_key=false managed_required=true"
-        instrument("bundled", distribution, commit,
-                   f"PASS case=bundled {bundled} distribution={distribution}")
+        stage = "provider-credentials"
+        instrument("provider-credentials", distribution, commit,
+                   f"PASS case=provider-credentials provider_keys_absent=true distribution={distribution}")
         run("adb", "shell", "settings", "put", "secure", "immersive_mode_confirmations", "confirmed")
         run("adb", "shell", "input", "keyevent", "82")
         stage = "reception-negative-control"

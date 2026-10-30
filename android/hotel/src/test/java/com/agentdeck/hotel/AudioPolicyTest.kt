@@ -4,18 +4,17 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class AudioPolicyTest {
-    @Test fun unreadableSavedKeyIsNotReportedAsMissingSetup() {
-        val missing = AudioPolicy.blockReason(false, SecretStore.Status.ABSENT, false, false, "personal-test")
-        val unreadable = AudioPolicy.blockReason(false, SecretStore.Status.ERROR, false, false, "personal-test")
-        assertTrue(missing.contains("One-time setup"))
-        assertTrue(unreadable.contains("saved voice key could not be opened"))
-        assertNotEquals(missing, unreadable)
-        assertEquals("", AudioPolicy.blockReason(false, SecretStore.Status.READY, false, false, "personal-test"))
-        assertEquals("", AudioPolicy.blockReason(true, SecretStore.Status.ERROR, false, false, "personal-test"))
+    @Test fun personalTranslationRequiresCompleteCredentialsWithoutManagedConnection() {
+        for (direct in listOf(false, true)) {
+            val reason = AudioPolicy.blockReason(false, false, direct, "personal-test")
+            assertTrue(reason.contains("Fish Audio"))
+            assertTrue(reason.contains("Gemini"))
+            assertTrue(reason.contains("voice"))
+            assertEquals("", AudioPolicy.blockReason(false, true, direct, "personal-test"))
+        }
     }
 
     @Test fun approvedFishRouteNeverBlocksStart() {
@@ -25,27 +24,23 @@ class AudioPolicyTest {
         assertNull(blocked)
     }
 
-    @Test fun bundledCredentialAllowsPersonalTranslationWithoutADeviceKey() {
-        for (status in SecretStore.Status.values()) {
-            assertEquals("", AudioPolicy.blockReason(false, status, true, false, "personal-test"))
-            assertEquals("", AudioPolicy.blockReason(true, status, true, true, "personal-test"))
-        }
+    @Test fun configuredManagedRouteDoesNotRequirePersonalCredentials() {
+        assertEquals("", AudioPolicy.blockReason(true, false, false, "personal-test"))
+        assertEquals("", AudioPolicy.blockReason(true, true, false, "personal-test"))
     }
 
-    @Test fun directSelectionNeverTreatsSavedHotelConnectionAsAUsableFishKey() {
-        assertEquals("", AudioPolicy.blockReason(true, SecretStore.Status.ABSENT, false, false, "personal-test"))
-        assertTrue(AudioPolicy.blockReason(true, SecretStore.Status.ABSENT, false, true, "personal-test").contains("One-time setup"))
-        assertTrue(AudioPolicy.blockReason(true, SecretStore.Status.ERROR, false, true, "personal-test").contains("saved voice key could not be opened"))
-        assertEquals("", AudioPolicy.blockReason(true, SecretStore.Status.READY, false, true, "personal-test"))
+    @Test fun directSelectionDoesNotTreatHotelEnrollmentAsCompletePersonalConfiguration() {
+        assertTrue(AudioPolicy.blockReason(true, false, true, "personal-test").isNotBlank())
+        assertEquals("", AudioPolicy.blockReason(true, true, true, "personal-test"))
     }
 
-    @Test fun hotelNeedsEnrollmentRegardlessOfPersonalKeyOrPreference() {
-        for (status in SecretStore.Status.values()) for (bundled in listOf(false, true)) for (direct in listOf(false, true)) {
-            val reason = AudioPolicy.blockReason(false, status, bundled, direct, "hotel")
+    @Test fun hotelNeedsEnrollmentRegardlessOfPersonalConfigurationOrPreference() {
+        for (configured in listOf(false, true)) for (direct in listOf(false, true)) {
+            val reason = AudioPolicy.blockReason(false, configured, direct, "hotel")
             assertTrue(reason.isNotBlank())
             assertFalse(reason.contains("Fish"))
             assertFalse(reason.contains("Settings"))
-            assertEquals("", AudioPolicy.blockReason(true, status, bundled, direct, "hotel"))
+            assertEquals("", AudioPolicy.blockReason(true, configured, direct, "hotel"))
         }
     }
 

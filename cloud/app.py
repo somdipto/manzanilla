@@ -2,7 +2,7 @@ import asyncio, hashlib, json, os, secrets, time, uuid
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends, Request
+from fastapi import FastAPI, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends, Request, Query
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 from .db import Store, HotelVersionConflict
@@ -12,8 +12,8 @@ from .realtime import relay
 from .operations import Operations, Start, Action, Confirmation
 from .localization import catalogue
 from .hotel_answers import ContentSelector, ContentApproval, draft_content, approve_content, content_review, content_availability
-from .livekit_route import mint as livekit_mint, end as end_livekit
-from .fish import FishSession, mint, end as end_fish, end_request as end_fish_request, revoke_sessions, NOT_CREATED
+from .livekit_route import mint as livekit_mint
+from .fish import TranslationSession, end_lease, request_lease, revoke_sessions, NOT_CREATED
 from .models import Strict
 from typing import Literal
 
@@ -25,9 +25,9 @@ edge_pending = {}
 active_devices = set()
 device_connections = {}
 
-# The live audio route is the Fish interpreter; there is no fallback
-# to another provider. Managed session minting requires the server FISH_API_KEY.
-# The legacy generic relay route stays disabled; staff-led HTTP operations remain available.
+# New managed sessions use the application-controlled LiveKit worker.
+# Minting requires its Fish, voice and Gemini configuration. The legacy generic
+# relay and hosted Fish Agent are not fallback routes.
 GENERIC_RELAY_ENABLED = False
 GENERIC_RELAY_BLOCK_REASON = 'This voice route is disabled: the approved interpreter route is the managed Fish session endpoint. Use staff-led reception actions or ask hotel staff; no fallback was started.'
 
@@ -114,7 +114,9 @@ async def revoke(ident: str):
     return {'status':'revoked'}
 
 @app.get('/api/hotels/{hid}/overview')
-def overview(hid: str, authorization: str = Header(default='')):
+def overview(hid: str, authorization: str = Header(default=''),
+             item_status: Literal['all','unfinished','resolved'] = 'all',
+             before: str = Query(default='',max_length=100), limit: int = Query(default=100,ge=1,le=500)):
     principal = scoped(hid,authorization)
     try: hotel = store.hotel(hid)
     except KeyError: raise HTTPException(404,'Hotel not found')
@@ -123,9 +125,22 @@ def overview(hid: str, authorization: str = Header(default='')):
     now = time.time()
     devices = store.rows('SELECT id,role,seen,version,config_version FROM credentials WHERE hotel=? AND role IN (\'device\',\'edge\')',(hid,))
     for row in devices: row['online'] = bool(row['seen'] and now-row['seen']<75)
-    items = store.rows('SELECT * FROM items WHERE hotel=? ORDER BY created DESC LIMIT 500',(hid,))
+    where, parameters = 'hotel=?', [hid]
+    if item_status == 'unfinished':
+        where += " AND status IN ('open','acknowledged')"
+    elif item_status == 'resolved':
+        where += " AND status='resolved'"
+    if before:
+        anchor = store.rows('SELECT created,id FROM items WHERE hotel=? AND id=?',(hid,before))
+        if not anchor: raise HTTPException(404,'Inbox page not found')
+        where += ' AND (created<? OR (created=? AND id<?))'
+        parameters.extend([anchor[0]['created'],anchor[0]['created'],anchor[0]['id']])
+    items = store.rows('SELECT * FROM items WHERE '+where+' ORDER BY created DESC,id DESC LIMIT ?',
+                       (*parameters,limit+1))
+    next_page = items[limit-1]['id'] if len(items)>limit else None
+    items = items[:limit]
     for item in items: item['payload']=json.loads(item['payload'])
-    return {'hotel':hotel,'devices':devices,'items':items,'principal':principal,
+    return {'hotel':hotel,'devices':devices,'items':items,'items_next':next_page,'principal':principal,
             'sessions':store.rows('SELECT * FROM sessions WHERE hotel=? ORDER BY started DESC LIMIT 100',(hid,)),
             'content_review':content_review(store,hid),'content_admin':content_admin,
             'integrations':{'pms':hotel['connector'], 'crm':'not configured', 'edge':hid in edge_connections}}
@@ -215,6 +230,7 @@ class Heartbeat(BaseModel):
     config_version: int = Field(ge=0)
     protocol: int = 1
     language: str = ''
+    capabilities_only: bool = False
 
     @field_validator('language')
     @classmethod
@@ -256,6 +272,8 @@ def heartbeat(value: Heartbeat, authorization: str = Header(default='')):
             'operator':bool(phone_number(hotel.get('operator_primary','')) or staff),
             'message':staff,
         }
+        if value.capabilities_only:
+            hotel={key:hotel[key] for key in ('id','name','timezone','default_language','supported_languages','config_version')}
         return {'hotel':hotel,'device_id':dev['id'],'protocol':1,'services':services}
 
 class VoiceSession(Strict):
@@ -293,28 +311,51 @@ def operations_item_status(sid: str, ident: str, authorization: str = Header(def
         return public_item(row)
 
 @app.post('/api/device/fish-session')
-async def fish_session(value: FishSession, authorization: str = Header(default='')):
+async def fish_session(value: TranslationSession, authorization: str = Header(default='')):
     try: dev = device_auth(authorization)
     except HTTPException as exc:
         exc.headers = NOT_CREATED
         raise
-    if os.getenv('VOICE_ROUTE','fish') == 'livekit':
-        return await livekit_mint(store,dev,value)
-    return await mint(store,dev,value)
+    with store.lock:
+        prior = store.rows('SELECT id FROM fish_sessions WHERE id=?',(request_lease(dev,value.request_id),))
+        if not prior:
+            supported = store.hotel(dev['hotel'])['supported_languages']
+            if value.guest_language not in supported or value.staff_language not in supported:
+                raise HTTPException(422,'Interpreter languages are not enabled by hotel staff',headers=NOT_CREATED)
+    return await livekit_mint(store,dev,value)
+
+def voice_cleanup_lease(authorization, *, session_id=None, request_id=None):
+    # This historical capability authorizes only cleanup of its exact immutable
+    # lease. It never restores the revoked credential's device authority.
+    token = bearer(authorization)
+    if not token: raise HTTPException(401,'Unauthorized device')
+    credential_hash = hashlib.sha256(token.encode()).hexdigest()
+    owners = store.rows('SELECT DISTINCT hotel,device FROM fish_sessions WHERE credential_hash=?',(credential_hash,))
+    if not owners: raise HTTPException(401,'Unauthorized device')
+    if session_id is not None:
+        rows = store.rows('SELECT * FROM fish_sessions WHERE session_id=? AND credential_hash=?',
+                          (session_id,credential_hash))
+    else:
+        rows = []
+        for owner in owners:
+            ident = request_lease({'hotel':owner['hotel'],'id':owner['device']},request_id)
+            rows.extend(store.rows('SELECT * FROM fish_sessions WHERE id=? AND credential_hash=?',
+                                   (ident,credential_hash)))
+    if len(rows) != 1: raise HTTPException(404,'Interpreter session not found')
+    return rows[0]
+
 
 @app.post('/api/device/fish-session/{session_id}/end')
 async def fish_session_end(session_id: str, authorization: str = Header(default='')):
-    dev = device_auth(authorization)
-    rows = store.rows('SELECT route FROM fish_sessions WHERE session_id=? AND device=? AND hotel=?',
-                      (session_id, dev['id'], dev['hotel']))
-    if not rows: raise HTTPException(404, 'Interpreter session not found')
-    if rows[0]['route'] == 'livekit': return await end_livekit(store,dev,session_id)
-    if rows[0]['route'] == 'fish': return await end_fish(store,dev,session_id)
-    raise HTTPException(503, 'Interpreter session unavailable')
+    lease = voice_cleanup_lease(authorization,session_id=session_id)
+    if not await end_lease(store,lease): raise HTTPException(503,'Interpreter cleanup is pending')
+    return {'status':'ended','session_id':session_id}
 
 @app.post('/api/device/fish-session-requests/{request_id}/end')
 async def fish_session_request_end(request_id: str, authorization: str = Header(default='')):
-    return await end_fish_request(store,device_auth(authorization),request_id)
+    lease = voice_cleanup_lease(authorization,request_id=request_id)
+    if not await end_lease(store,lease): raise HTTPException(503,'Interpreter cleanup is pending')
+    return {'status':'ended'}
 
 @app.post('/api/device/session')
 def session(value: VoiceSession, authorization: str = Header(default='')):

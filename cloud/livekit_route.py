@@ -1,12 +1,12 @@
-"""Self-hosted interpreter transport over our own LiveKit deployment (issue #8).
+"""Application-controlled interpreter transport with durable room ownership.
 
-Same admission, lease, budget and response contract as the hosted Fish route in
-fish.py: the device cannot tell the routes apart, and every lease settles through
-the same fish_sessions ledger. The minted token joins one LiveKit room; the
-voice-worker service (voice-worker/) discovers the room and interprets inside it.
+New managed sessions require an explicitly configured interpreter worker. Historic
+Fish leases continue to settle through their original route in fish.py.
 """
 import asyncio, base64, hashlib, hmac, json, os, time
 from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException
@@ -20,13 +20,35 @@ ROOM_PREFIX = 'manz-'
 JOIN_TOKEN_SECONDS = 120
 
 
-def config():
-    url, key, secret = (os.getenv('LIVEKIT_URL', ''), os.getenv('LIVEKIT_API_KEY', ''),
-                        os.getenv('LIVEKIT_API_SECRET', ''))
-    if not url.startswith(('wss://', 'ws://')) or not key or not secret:
-        raise HTTPException(503, UNAVAILABLE, headers=failure_headers('configuration', 'unconfigured'))
-    http = 'https://' + url[6:] if url.startswith('wss://') else 'http://' + url[5:]
+def speech_languages():
+    return json.loads((Path(__file__).resolve().parent.parent /
+                       'shared/translation-languages.json').read_text(encoding='utf-8'))['languages']
+
+
+def config(values=None):
+    url, key, secret = values if values is not None else (
+        os.getenv('LIVEKIT_URL', ''), os.getenv('LIVEKIT_API_KEY', ''),
+        os.getenv('LIVEKIT_API_SECRET', ''))
+    try:
+        parsed = urlsplit(url)
+        local = parsed.scheme == 'ws' and parsed.hostname == '127.0.0.1'
+        if ((parsed.scheme != 'wss' and not local) or not parsed.hostname or
+                parsed.username or parsed.password or parsed.query or parsed.fragment or
+                parsed.path not in ('', '/') or not key or not secret or
+                any(char.isspace() for char in url) or
+                (parsed.port is not None and not 1 <= parsed.port <= 65535)):
+            raise ValueError('Invalid transport configuration')
+    except ValueError:
+        raise HTTPException(503, UNAVAILABLE, headers=failure_headers('configuration', 'unconfigured')) from None
+    http = ('https://' if parsed.scheme == 'wss' else 'http://') + parsed.netloc
     return url, http.rstrip('/'), key, secret
+
+
+def cleanup_authority(http_base: str, key: str, secret: str) -> str:
+    """Opaque identity of the exact deployment and signing authority."""
+    endpoint = str(httpx.URL(http_base)).rstrip('/')
+    canonical = json.dumps([endpoint, key, secret], ensure_ascii=False, separators=(',', ':'))
+    return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
 
 
 def token(key: str, secret: str, identity: str, room: str, ttl: int,
@@ -80,26 +102,30 @@ async def delete_room(http_base: str, key: str, secret: str, room: str) -> bool:
         return False
 
 
-async def mint(store, dev, value):
-    """Route-compatible twin of fish.mint: same guards, lease and response shape."""
+async def mint(store, dev, value, *, transport=None, local=False):
+    """Reserve one route-B lease; a token is not provider-access certification."""
     try:
-        if value.guest_language == value.staff_language:
-            raise HTTPException(422, 'Choose two different interpreter languages',
-                                headers=failure_headers('configuration', 'contract'))
-        url, http_base, key, secret = config()
+        url, http_base, key, secret = config(transport)
         reservation = request_lease(dev, value.request_id) if value.request_id else None
         prior = store.rows('SELECT id FROM fish_sessions WHERE id=? AND device=? AND hotel=?',
                            (reservation, dev['id'], dev['hotel'])) if reservation else []
-        # Withdrawing evaluation consent blocks only new reservations. A recorded
-        # request keeps its existing conflict/recovery contract and cleanup route.
-        if not prior and os.getenv('ALLOW_UNQUALIFIED_LIVEKIT') != '1':
-            raise HTTPException(503, UNAVAILABLE,
-                                headers=failure_headers('configuration', 'unconfigured'))
+        if not prior:
+            codes = {language['code'] for language in speech_languages()}
+            if value.guest_language not in codes or value.staff_language not in codes:
+                raise HTTPException(422, 'Unsupported speech language',
+                                    headers=failure_headers('configuration', 'contract'))
+            if not local and (not url.startswith('wss://') or
+                    os.getenv('ALLOW_UNQUALIFIED_LIVEKIT') != '1' or
+                    os.getenv('LIVEKIT_WORKER_ENABLED') != '1' or
+                    not all(os.getenv(name) for name in ('FISH_API_KEY', 'FISH_VOICE_ID', 'GEMINI_API_KEY'))):
+                raise HTTPException(503, UNAVAILABLE,
+                                    headers=failure_headers('configuration', 'unconfigured'))
         try:
             ident = store.reserve_fish(dev, MAX_DURATION, duration_cap('FISH_HOTEL_DAILY_SECONDS', 1800),
                                        duration_cap('FISH_ACCOUNT_DAILY_SECONDS', 3600), 60, JOIN_TOKEN_SECONDS,
                                        reservation=reservation,
-                                       route='livekit', session_id_for=room_name)
+                                       route='livekit', session_id_for=room_name,
+                                       cleanup_authority=cleanup_authority(http_base, key, secret))
         except PermissionError:
             raise HTTPException(401, 'Unauthorized device', headers=failure_headers('admission', 'unauthorized')) from None
         except ValueError:
@@ -137,15 +163,18 @@ async def mint(store, dev, value):
         raise
 
 
-async def terminate(store, lease) -> bool:
+async def terminate(store, lease, *, transport=None) -> bool:
     """Delete the room; retain the blocking lease if the server cannot confirm."""
     if lease['status'] in {'ended', 'expired'}:
         return True
     store.run("UPDATE fish_sessions SET status='ending' WHERE id=? AND status NOT IN ('ended','expired')",
               (lease['id'],))
     try:
-        _, http_base, key, secret = config()
+        _, http_base, key, secret = config(transport)
     except HTTPException:
+        return False
+    authority = lease.get('cleanup_authority')
+    if not authority or not hmac.compare_digest(authority, cleanup_authority(http_base, key, secret)):
         return False
     if not await delete_room(http_base, key, secret, lease['session_id']):
         return False

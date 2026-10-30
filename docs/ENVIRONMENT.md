@@ -17,9 +17,7 @@ Application-level inbox payloads are not encrypted by the database layer. Config
 
 ## Device
 
-Authenticated staff setup accepts the actual HTTPS hotel service URL and a device credential. They are stored as one encrypted bundle through `HotelConnection` / `SecretStore`, using authenticated encryption and a device-keystore key. Replacing the bundle cannot accidentally pair a new token with an old URL. The URL cannot contain login information, query parameters or a fragment.
-
-The published 17.0.37 testing APK contains an owner-requested, extractable shared Fish key. In the repair candidate, `-Pdistribution=personal-test` remains the default: direct Fish uses an encrypted staff-saved key before any bundled testing fallback, and explicit direct selection takes precedence over enrollment. `-Pdistribution=hotel` permits only new managed translation sessions and never exposes or erases a retained personal key. Both debug distributions and hotel releases compile empty provider fields even when keys are injected. No backend URL, device token or administrator credential belongs in either APK. Old local-only notes are not uploaded or erased and are not staff delivery.
+The published 17.0.37 testing APK contains an owner-requested, extractable shared Fish key. This candidate compiles no provider key in either distribution or any debug build. Direct translation uses only the encrypted Fish key, Gemini key and voice ID saved after installation. Explicit direct selection takes precedence over enrollment. `-Pdistribution=hotel` permits only new managed translation sessions and never exposes or erases a retained personal key. No backend URL, device token or administrator credential belongs in either APK. Old local-only notes are not uploaded or erased and are not staff delivery.
 
 Hotel setup requires the tablet's existing Android screen-lock credential. No
 screen lock means setup remains locked; the guest flow cannot enroll or reset
@@ -31,13 +29,9 @@ hotel approval. All 52 interface translations remain human-unreviewed.
 
 ## Live audio route
 
-An enrolled device requests a managed session from the backend: `VOICE_ROUTE=fish` remains the default hosted Fish route, while `VOICE_ROUTE=livekit` uses the separate evaluation worker described in [the self-hosted route](selfhosted-voice-route.md). Managed provider credentials stay on the worker/backend. Personal direct testing is a distinct route with the explicit credential-exposure risk above. The legacy generic relay remains disabled.
+An enrolled device requests a managed session from the backend. New sessions use the application-controlled worker in [the evaluation route](selfhosted-voice-route.md): Fish realtime recognition, application-owned records and direction, Gemini translation, and Fish synthesis. Managed provider credentials stay on the worker/backend. Personal direct testing runs that same pipeline on the device with the saved keys. The legacy generic relay and hosted Fish Agent are not new-session routes.
 
-For new managed LiveKit reservations the backend additionally requires
-`ALLOW_UNQUALIFIED_LIVEKIT=1`. Leave it disabled normally. The check follows
-lookup of the caller's prior request: flag withdrawal must not block backend
-startup, recorded-request recovery/reconciliation, end or cleanup, or relabel
-an existing uncertain request as not created. It does not gate direct Fish.
+A genuinely new managed reservation requires `ALLOW_UNQUALIFIED_LIVEKIT=1`, `LIVEKIT_WORKER_ENABLED=1`, and separate Fish, voice and Gemini configuration. Leave the opt-in disabled normally. The check follows lookup of the caller's prior request: flag withdrawal must not block backend startup, recorded-request reconciliation, end, recovery or cleanup, or relabel an existing uncertain request as not created. It does not gate direct translation. A legacy `VOICE_ROUTE` value does not restore hosted Fish Agent creation.
 
 The current deployment boundary is exactly one backend process with the local
 SQLite ledger and one owning worker per room namespace. The compose recipe
@@ -84,16 +78,10 @@ isolated jobs from the same commit/version:
 
 | Distribution | Public APK | Metadata / matching latest feed | Compiled provider access |
 | --- | --- | --- | --- |
-| `personal-test` (default) | `Manzanilla-Reception.apk` | `release-metadata.json` | Disposable Fish testing key in release only |
-| `hotel` | `Manzanilla-Hotel.apk` | `hotel-release-metadata.json` | No shared provider key; managed enrollment only |
+| `personal-test` (default) | `Manzanilla-Reception.apk` | `release-metadata.json` | None |
+| `hotel` | `Manzanilla-Hotel.apk` | `hotel-release-metadata.json` | None; managed enrollment only |
 
-The personal-test release requires its injected disposable `FISH_API_KEY` and
-a read-only account-access check; that check is not a voice session or acoustic
-acceptance. The resulting public key is extractable. All debug keys and hotel
-release provider keys are empty regardless of injected values. Gemini keys
-never enter either APK; `FISH_VOICE_ID` is a non-secret voice identifier.
-Building hotel does not revoke any previously exposed testing key: its account
-owner must rotate/revoke it after testing, without printing or attaching it.
+Neither release injects a Fish or Gemini key, and `FISH_VOICE_ID` is not compiled into either APK. Users save the voice identifier with their keys after installation. Building this candidate does not revoke the key already exposed in public 17.0.37: its account owner must rotate/revoke it after testing, without printing or attaching it.
 
 `android/VERSION` and `android/VERSION_CODE` advance explicitly. Both artifacts
 retain `dev.orange.hotel`, the existing signer and increasing version code.

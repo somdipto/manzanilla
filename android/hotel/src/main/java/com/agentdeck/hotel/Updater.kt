@@ -655,7 +655,7 @@ class Updater(context: Context, private val onStatus: (String) -> Unit,
         abandonInstall()
         installPolicy.settled()
         phase = "ready"
-        status(attempt, "confirm:The verified update is kept. Ask staff to install the official signed update from https://github.com/somdipto/manzanilla/releases/latest without uninstalling this app; app data stays in place.")
+        status(attempt, "confirm:${UpdateStatusText.MANUAL_INSTALL}")
     }
 
     private fun note(pct: Int = 0, got: Long = 0, total: Long = 0, done: Boolean = false) {

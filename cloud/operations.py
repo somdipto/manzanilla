@@ -2,7 +2,7 @@ import hashlib, json, secrets, time
 from typing import Literal
 from fastapi import HTTPException
 from pydantic import Field, StrictBool
-from .models import Strict, Empty, Taxi, Search, Operator, Message
+from .models import Strict, Empty, Taxi, Search, Operator, Message, TOOL_MODELS
 from .gateway import Gateway, phone_number
 from .localization import ui_text
 from .hotel_answers import arrival_guidance, current_answer
@@ -62,6 +62,20 @@ def receipt(result, language):
         }.get(status,'Operation result available below.')
         text = ui_text(language,message)
     return {'status':status,'text':text,'result':result}
+
+
+def gateway_request(action, args, language):
+    if action == 'message':
+        # The exact reviewed original is authoritative; the summary is only a label.
+        label = ui_text(language,'Guest message excerpt (see exact original): ')
+        return 'leave_reception_note', {**args,'summary':label + args['original_request'][:1000-len(label)]}
+    return {'taxi':'call_taxi','question':'search_hotel_knowledge','operator':'connect_operator'}[action], args
+
+
+def operation_result(action, result):
+    if action == 'message' and result['status'] == 'saved':
+        return {**result,'destination':'staff inbox','staff_acknowledged':False}
+    return result
 
 
 class Operations:
@@ -167,6 +181,25 @@ class Operations:
             db = self.store.db
             db.execute('BEGIN IMMEDIATE')
             language = self.valid(dev,row['session'])['language']
+            row = db.execute('SELECT * FROM operation_actions WHERE session=? AND call_id=?',
+                             (row['session'],row['call_id'])).fetchone()
+            if row['state'] == 'executing' and not row['result'] and row['action'] != 'checkin':
+                tool, args = gateway_request(row['action'],json.loads(row['arguments']),language)
+                args = TOOL_MODELS[tool].model_validate(args).model_dump()
+                call_id = hashlib.sha256(row['call_id'].encode()).hexdigest()
+                args_hash = hashlib.sha256(json.dumps(args,sort_keys=True).encode()).hexdigest()
+                committed = db.execute('SELECT result FROM calls WHERE session=? AND call_id=? AND tool=? AND args_hash=?',
+                                       (row['session'],call_id,tool,args_hash)).fetchone()
+                if committed and committed['result']:
+                    result = operation_result(row['action'],json.loads(committed['result']))
+                    if result['status'] != 'pending':
+                        if row['action'] == 'question':
+                            result = current_answer(self.store,dev['hotel'],result,language,
+                                                    lambda:self.authorized(dev,row['session']))
+                        response = receipt(result,language)
+                        db.execute("UPDATE operation_actions SET state='done',result=? WHERE session=? AND call_id=?",
+                                   (json.dumps(response),row['session'],row['call_id']))
+                        return response
             # Only information receipts may change with hotel approval/source edits.
             # Submitted writes retain their original execution receipt and identity.
             if row['result']:
@@ -214,17 +247,9 @@ class Operations:
         prefix = hashlib.sha256(call_id.encode()).hexdigest()
         if action == 'checkin':
             result = arrival_guidance(self.store,dev['hotel'],language,lambda:self.authorized(dev,sid))
-        elif action == 'message':
-            # The reviewed original is authoritative; this bounded excerpt is only
-            # an inbox label, never a translation or independent account.
-            label = ui_text(language,'Guest message excerpt (see exact original): ')
-            note = {**args,'summary':label + args['original_request'][:1000-len(label)]}
-            result = await gateway.execute('leave_reception_note',note,prefix)
-            if result['status'] == 'saved':
-                result = {**result,'destination':'staff inbox','staff_acknowledged':False}
         else:
-            tool = {'taxi':'call_taxi','question':'search_hotel_knowledge','operator':'connect_operator'}[action]
-            result = await gateway.execute(tool,args,prefix)
+            tool, arguments = gateway_request(action,args,language)
+            result = operation_result(action,await gateway.execute(tool,arguments,prefix))
         with self.store.lock, self.store.db:
             db = self.store.db
             db.execute('BEGIN IMMEDIATE')

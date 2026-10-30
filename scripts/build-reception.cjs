@@ -79,6 +79,41 @@ function deskLanguages(catalogue) {
     '}\n';
 }
 
+function parseSpeechCatalogue(source, catalogue, greetings) {
+  const speech = JSON.parse(source);
+  // Fish realtime ASR's documented LID set, intersected with existing UI codes.
+  // TTS coverage is not acoustic qualification on any particular tablet.
+  const lid = new Set('ar zh cs da nl en fi fr de el hi hu id it ja ko mk ms fa pl pt ro ru es sv tl th tr vi'.split(' '));
+  const expected = catalogue.languages.filter(language => lid.has(language.code));
+  if (!speech || speech.schema !== 1 || !Array.isArray(speech.languages) ||
+      JSON.stringify(speech.languages) !== JSON.stringify(expected)) {
+    throw new Error('Speech languages must match the documented 28-language intersection');
+  }
+  for (const language of speech.languages) {
+    if (typeof greetings[language.code] !== 'string' || !greetings[language.code].trim()) {
+      throw new Error('Missing speech welcome: ' + language.code);
+    }
+  }
+  return speech;
+}
+
+function speechLanguages(speech, greetings) {
+  const quote = value => JSON.stringify(value).replace(/\$/g, '\\$');
+  const list = speech.languages;
+  return 'package com.agentdeck.hotel\n\n' +
+    '// Generated from shared/translation-languages.json and cloud/fish_greetings.json.\n' +
+    '// Provider coverage is not device or acoustic qualification.\n' +
+    'object SpeechLanguages {\n' +
+    '    val codes: List<String> = listOf(\n' + list.map(language => '        ' + quote(language.code)).join(',\n') + '\n    )\n' +
+    '    private val english = mapOf(\n' + list.map(language => '        ' + quote(language.code) + ' to ' + quote(language.name)).join(',\n') + '\n    )\n' +
+    '    val native = mapOf(\n' + list.map(language => '        ' + quote(language.code) + ' to ' + quote(language.native)).join(',\n') + '\n    )\n' +
+    '    private val greetings = mapOf(\n' + list.map(language => '        ' + quote(language.code) + ' to ' + quote(greetings[language.code])).join(',\n') + '\n    )\n\n' +
+    '    fun has(code: String) = code in codes\n' +
+    '    fun english(code: String): String = requireNotNull(english[code]) { "Unsupported speech language" }\n' +
+    '    fun greeting(code: String): String = requireNotNull(greetings[code]) { "Unsupported welcome language" }\n' +
+    '}\n';
+}
+
 function sourceMessages() {
   // English IDs remain at their call sites. Check static lookup calls as well as
   // each catalogue row, so deleting an entire referenced message is an error.
@@ -126,13 +161,24 @@ function build() {
   let stale = false;
   const source = fs.readFileSync(path.join(root, 'shared/reception-locales.json'), 'utf8');
   const catalogue = parseCatalogue(source, sourceMessages());
+  const speechSource = fs.readFileSync(path.join(root, 'shared/translation-languages.json'), 'utf8');
+  const greetings = JSON.parse(fs.readFileSync(path.join(root, 'cloud/fish_greetings.json'), 'utf8'));
+  const speech = parseSpeechCatalogue(speechSource, catalogue, greetings);
+  const runtime = fs.readFileSync(path.join(root, 'shared/translation-runtime.txt'), 'utf8');
+  const required = ['SOURCE_LANGUAGE_NAME', 'SOURCE_LANGUAGE_CODE', 'TARGET_LANGUAGE_NAME', 'TARGET_LANGUAGE_CODE'];
+  const actual = Array.from(runtime.matchAll(/\{\{([^{}]+)\}\}/g), match => match[1]);
+  if (actual.sort().join(',') !== required.sort().join(',')) throw new Error('Invalid translation runtime placeholders');
+  catalogue.speech_languages = speech.languages;
   const localeScript = '// Generated from shared/reception-locales.json; run npm run build:reception.\nwindow.MANZANILLA_UI = ' + asciiJson(catalogue) + ';\n';
   const outputs = new Map([
     ['ui/reception/locales.js', localeScript],
+    ['android/hotel/src/main/assets/translation-languages.json', speechSource],
+    ['android/hotel/src/main/assets/translation-runtime.txt', runtime],
+    ['android/hotel/src/main/java/com/agentdeck/hotel/SpeechLanguages.kt', speechLanguages(speech, greetings)],
     ['android/hotel/src/main/assets/reception-locales.json', source],
     ['android/hotel/src/main/java/com/agentdeck/hotel/DeskLanguages.kt', deskLanguages(catalogue)],
   ]);
-  for (const file of ['locales.js', 'greetings.js', 'language-turns.js', 'reception.js']) {
+  for (const file of ['locales.js', 'language-turns.js', 'reception.js']) {
     const script = file === 'locales.js' ? localeScript : fs.readFileSync(path.join(root, 'ui/reception', file), 'utf8');
     outputs.set('android/hotel/src/main/assets/reception/' + file, transformSync(script, {
       target: ['chrome61'], charset: file === 'locales.js' ? 'ascii' : 'utf8', legalComments: 'inline',
@@ -151,5 +197,5 @@ function build() {
   if (stale) process.exitCode = 1;
 }
 
-module.exports = { parseCatalogue, placeholders };
+module.exports = { parseCatalogue, placeholders, parseSpeechCatalogue, speechLanguages };
 if (require.main === module) build();

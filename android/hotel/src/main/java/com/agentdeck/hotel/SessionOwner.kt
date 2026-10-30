@@ -2,7 +2,7 @@ package com.agentdeck.hotel
 
 /** One native owner survives permission, greeting, transport and release transitions. */
 class SessionOwner {
-    data class Request(val id: String, val mode: String, val guest: String, val staff: String, val greeting: String = "")
+    data class Request(val id: String, val mode: String, val guest: String, val staff: String)
     data class Lease(val request: Request, val generation: Int)
     var current: Lease? = null
         private set
@@ -16,7 +16,6 @@ class SessionOwner {
     fun acquire(request: Request): Lease? {
         if (current != null || audioUnknown) return null
         require(request.mode == "translation" || request.mode == "reception")
-        require(request.mode != "translation" || request.guest != request.staff)
         return Lease(request, ++generation).also { current = it; closing = false }
     }
 
