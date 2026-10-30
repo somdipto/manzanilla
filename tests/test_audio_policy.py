@@ -1,4 +1,4 @@
-"""Voice admission: the managed Fish interpreter route is open; the legacy generic relay stays closed."""
+"""Voice admission: the managed application-controlled interpreter route is open; the legacy generic relay stays closed."""
 import time
 import pytest
 from fastapi.testclient import TestClient

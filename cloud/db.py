@@ -38,7 +38,6 @@ class Store:
         CREATE TABLE IF NOT EXISTS operation_call_ids(session TEXT NOT NULL REFERENCES operation_sessions(id) ON DELETE CASCADE, call_id TEXT NOT NULL, action TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY(session,call_id));
         CREATE TABLE IF NOT EXISTS write_claims(session TEXT NOT NULL, tool TEXT NOT NULL, args_hash TEXT NOT NULL, call_id TEXT NOT NULL, PRIMARY KEY(session,tool,args_hash));
         INSERT OR IGNORE INTO write_claims SELECT session,tool,args_hash,call_id FROM calls WHERE tool IN ('leave_reception_note','call_taxi','notify_staff','create_guest_request','connect_operator') ORDER BY rowid;
-        CREATE TABLE IF NOT EXISTS provider_agents(provider TEXT PRIMARY KEY, agent_id TEXT NOT NULL, published INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS fish_sessions(id TEXT PRIMARY KEY, hotel TEXT NOT NULL REFERENCES hotels(id), device TEXT NOT NULL, credential_hash TEXT NOT NULL, session_id TEXT UNIQUE, created REAL NOT NULL, creation_deadline REAL NOT NULL, expires REAL NOT NULL, reserved_seconds INTEGER NOT NULL, status TEXT NOT NULL);
         CREATE UNIQUE INDEX IF NOT EXISTS fish_device_lease ON fish_sessions(device) WHERE status IN ('creating','live','uncertain','ending','revoked');
         CREATE INDEX IF NOT EXISTS fish_daily_budget ON fish_sessions(created,hotel);

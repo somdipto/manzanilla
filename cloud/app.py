@@ -29,7 +29,7 @@ device_connections = {}
 # Minting requires its Fish, voice and Gemini configuration. The legacy generic
 # relay and hosted Fish Agent are not fallback routes.
 GENERIC_RELAY_ENABLED = False
-GENERIC_RELAY_BLOCK_REASON = 'This voice route is disabled: the approved interpreter route is the managed Fish session endpoint. Use staff-led reception actions or ask hotel staff; no fallback was started.'
+GENERIC_RELAY_BLOCK_REASON = 'This voice route is disabled: the approved interpreter route is the managed Fish recognition, Gemini translation and Fish synthesis session endpoint. Use staff-led reception actions or ask hotel staff; no fallback was started.'
 
 def require_generic_relay():
     if not GENERIC_RELAY_ENABLED: raise HTTPException(503,GENERIC_RELAY_BLOCK_REASON)
