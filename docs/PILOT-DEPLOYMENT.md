@@ -10,10 +10,13 @@ persistent `ORANGE_DB`, set a fresh administrator credential and serve
 SQLite ledger. Follow [environment and security](ENVIRONMENT.md). Never reuse
 a verification database or test credentials for real hotel use.
 
-`VOICE_ROUTE=fish` remains the default. Self-hosted voice is evaluation-only,
-requires explicit `ALLOW_UNQUALIFIED_LIVEKIT=1` for genuinely new managed
-reservations and permits one owning worker per room namespace. Prior-request
-lookup/recovery and cleanup remain available when the flag is withdrawn.
+Managed translation always uses the application-controlled worker: Fish
+recognition, application-owned direction, Gemini translation and Fish synthesis
+over the supplied LiveKit transport. A genuinely new reservation additionally
+requires `ALLOW_UNQUALIFIED_LIVEKIT=1` and `LIVEKIT_WORKER_ENABLED=1` with the
+Fish, voice and Gemini configuration, and permits one owning worker per room
+namespace. `VOICE_ROUTE` is not a route selector. Prior-request
+lookup/recovery and cleanup remain available when the opt-in is withdrawn.
 The [compose recipe](../infra/livekit.compose.yaml) is not a production recipe
 after changing secrets. Reject deployments requiring multiple owners,
 horizontal/multi-region dispatch or strict immediate token revocation until
@@ -66,11 +69,11 @@ before treating any hotel build as production-ready.
 
 Use Hotel assistance to select a language and open microphone-off support. Arrival guidance and answers require a current approved rendering in that language; Gemini may select approved facts, never supply policy prose. Arrival guidance never completes check-in. An unknown answer creates no ticket unless the guest chooses help or a message. Messages and taxi requests require exact review and confirmation before a durable inbox write. A receipt means saved in the staff inbox, not staff acknowledgement or a taxi booking. Human-contact options do not claim an answered call.
 
-For direct personal testing the source keeps saved-key precedence over bundled
-Fish fallback and explicit direct preference over enrollment, without adding
-a PIN to voice-only setup. The public testing key is extractable; its account
-owner must rotate it after testing. Hotel new sessions never silently fall
-back to that path. All 52 interface choices remain, with human-unreviewed
+For direct personal testing the source uses only the saved Fish key, Gemini key
+and voice ID, with explicit direct preference over enrollment, and voice-only
+setup stays PIN-free. No release embeds a provider key; the key exposed in older
+public testing APKs must still be rotated by its account owner. Hotel new
+sessions never silently fall back to a personal key. All 52 interface choices remain, with human-unreviewed
 catalogue translations. Hotel `supported_languages` bounds enrolled speech,
 not acoustic qualification. A provider support list or configured language
 does not pass a pair. Explicit personal unqualified testing remains available.
