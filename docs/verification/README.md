@@ -33,6 +33,21 @@ PCM, including EOF. This is not acoustic, provider-entitlement, or staff accepta
   suspended-renderer credit, EOF acknowledgements, interruption, late-generation
   rejection, continuous microphone packets, and exact cleanup. Zero paid calls.
   Evidence: `/tmp/manzanilla-controlled-browser-fixture-20261030/evidence.json`.
+- **Passed (document contract, not entitlement):** the three protocol surfaces were
+  re-read against Fish's primary pages for
+  [realtime speech to text](https://docs.fish.audio/api-reference/endpoint/websocket/asr-realtime)
+  and [streaming TTS](https://docs.fish.audio/api-reference/endpoint/websocket/tts-live).
+  Endpoints and the `Authorization`/`model` headers match. The `config` sends exactly
+  the documented fields, because an unknown field is refused, and both clients check
+  their settings against `session_started.config`. Every message is one MessagePack map
+  in a binary frame with audio as `bin`: 80 ms from the worker, 100 ms from Android,
+  inside the documented 80–100 ms guidance. `agent_speaking` follows the documented
+  true/false timing, including a 2 s pause rule. Non-user turns
+  (`user_turn: false`, `turn_kind: backchannel`/`other`) stay visible but unspoken; a
+  missing `user_turn` is treated as true. Synthesis uses `start`/`text`/`flush`/`stop`
+  (the documented event is `stop`, not `close`) and only treats `finish.reason == stop`
+  as completion. `chunk_length` 120 sits inside 100–300, `format: pcm`, `sample_rate`
+  24000, `latency: normal`, and `prosody` within its documented bounds.
 - **Blocked:** real Fish/Gemini speech, physical echo/interruption/latency, and
   bilingual or designated-staff review. No paid call was made. The signed update
   is not published; it still requires this PR to be merged and the publication
