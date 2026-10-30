@@ -43,8 +43,15 @@ run_fixture() {
      ! grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$label.txt"; then
     # An uncaught exception in this instrumentation process, which also hosts
     # the target app, reports only "Process crashed." Keep the bounded crash
-    # buffer (exception class, message and top frames) so the cause is visible.
-    adb logcat -d -b crash -t 60 > "$evidence/$label-crash.txt" 2>/dev/null || true
+    # buffer (exception class, message and top frames) and echo it to the job
+    # log so the cause is visible without downloading artifacts.
+    adb logcat -d -b crash -t 60 2>/dev/null | tail -50 > "$evidence/$label-crash.txt" || true
+    if [[ ! -s "$evidence/$label-crash.txt" ]]; then
+      adb shell dumpsys dropbox --print data_app_crash 2>/dev/null | tail -50 > "$evidence/$label-crash.txt" || true
+    fi
+    echo "--- bounded crash evidence: $label ---"
+    cat "$evidence/$label-crash.txt" || true
+    echo "--- end crash evidence ---"
     return 1
   fi
 }
