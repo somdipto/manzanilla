@@ -48,6 +48,17 @@ PCM, including EOF. This is not acoustic, provider-entitlement, or staff accepta
   (the documented event is `stop`, not `close`) and only treats `finish.reason == stop`
   as completion. `chunk_length` 120 sits inside 100–300, `format: pcm`, `sample_rate`
   24000, `latency: normal`, and `prosody` within its documented bounds.
+- **Passed (live refusal shape, no session and no billing):** with an invalid
+  credential, `wss://api.fish.audio/v1/asr/realtime` and `/v1/tts/live` both refuse
+  the upgrade with HTTP 401 and the documented body `{"status": 401, "message":
+  "Invalid Token"}`, so those paths exist and read the `Authorization` header as
+  intended. Gemini's OpenAI-compatible surface answers `400 INVALID_ARGUMENT`,
+  "Please pass a valid API key"; a missing header answers `404`. Both clients fail
+  closed on any HTTP failure with a bounded message, which matches these codes. A
+  refused credential is answered before a session is assigned, so nothing was
+  billed. This is a refusal and reachability check: a valid credential, the model
+  alias in effect and current entitlement remain unverified. Evidence:
+  `/tmp/manzanilla-endpoint-shape-20261030/result.json`.
 - **Blocked:** real Fish/Gemini speech, physical echo/interruption/latency, and
   bilingual or designated-staff review. No paid call was made. The signed update
   is not published; it still requires this PR to be merged and the publication
