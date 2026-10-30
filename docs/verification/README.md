@@ -14,7 +14,16 @@ PCM, including EOF. This is not acoustic, provider-entitlement, or staff accepta
 - **Passed:** 721 Python tests and 53 Node tests. Coverage includes cancelled
   Start ownership, completed-translation versus interrupted playback, and a
   turn-loop interruption that clears the live task during notification.
-- **Passed:** Android `testDebugUnitTest` with JDK 17. No emulator was run.
+- **Passed:** Android `testDebugUnitTest`, `assembleDebug`, `assembleDebugAndroidTest`
+  and `lintDebug` with JDK 17, then all nine CI jobs on an API 29 disposable emulator:
+  the ten personal-test fixtures, both `voice-setup` variants (no screen lock and a
+  synthetic PIN) and the hotel fixture set, each with `INSTRUMENTATION_CODE: -1`.
+  No physical device was used.
+- **Reproduced and fixed during integration:** the personal setup rendered a pasted
+  Fish or Gemini key in cleartext. `setSingleLine()` installs
+  `SingleLineTransformationMethod`, which replaced the masking transformation installed
+  before it. Masking is now installed after layout, and the setup fixture asserts the
+  rendered glyphs, so a provider key field that ever shows its input fails the fixture.
 - **Passed:** Chromium 151 packaged reception fixtures, including same-language
   explicit direction, Arabic physical guest-left/receptionist-right, welcome
   failure, and key-free personal testing.
