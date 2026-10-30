@@ -18,7 +18,7 @@ physical qualification is established by this recipe.
 - **cloud/livekit_route.py** uses the shared lease, budget, authorization and
   ledger. Each new lease records its route and room name at reservation so
   ordinary end, lost-response recovery and device revocation can select the
-  original transport even after `VOICE_ROUTE` changes. Legacy rows with an
+  original transport even after later configuration changes. Legacy rows with an
   existing `manz-` room ID are migrated as LiveKit; rows without an ID remain
   conservatively classified as hosted Fish because their outcome is unknown.
   End deletes the room over Twirp. A legacy `VOICE_ROUTE` value cannot restore
@@ -142,17 +142,18 @@ Merging source or publishing an APK does not deploy a backend or worker.
    controlled access. Keep exactly one backend/SQLite owner and one worker per
    room namespace, with the unchanged Fish/Gemini model and voice identity.
    TLS or real secrets do not turn this into a production deployment.
-4. Configure the backend's LiveKit URL/key pair, `VOICE_ROUTE=livekit` and
-   `ALLOW_UNQUALIFIED_LIVEKIT=1`. Use a managed enrollment for this isolated
-   property; personal direct preference otherwise remains an independent path.
+4. Configure the backend's LiveKit URL/key pair, `LIVEKIT_WORKER_ENABLED=1`,
+   the Fish/voice/Gemini worker environment and `ALLOW_UNQUALIFIED_LIVEKIT=1`.
+   Use a managed enrollment for this isolated property; personal direct
+   preference otherwise remains an independent path.
 5. Qualify each intended hotel pair under the acoustic and recovery protocol.
    Hotel `supported_languages` bounds enrolled speech; staff configuration or
    a selectable language is not a passed qualification record.
-6. To stop new evaluation reservations, remove the opt-in. To route new
-   managed starts back to Fish, set `VOICE_ROUTE=fish`. Apply configuration
-   through the service's normal controlled restart; recorded leases retain
-   their original route for reconciliation/end/cleanup. Do not discard their
-   ledger or replace unresolved ownership with a fresh request.
+6. To stop new evaluation reservations, remove the opt-in; new managed starts
+   then fail closed instead of opening a room. Apply configuration through the
+   service's normal controlled restart; recorded leases retain their original
+   route for reconciliation/end/cleanup. Do not discard their ledger or replace
+   unresolved ownership with a fresh request.
 
 ## Known limits
 
