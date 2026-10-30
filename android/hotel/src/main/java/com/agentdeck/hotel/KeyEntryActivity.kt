@@ -414,6 +414,10 @@ class KeyEntryActivity : Activity() {
             hint = text("New {provider} key (not shown)", mapOf("provider" to provider))
             contentDescription = text("New {provider} key, masked", mapOf("provider" to provider))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            // setSingleLine() installs SingleLineTransformationMethod, which does not mask.
+            // Lay out first, then install the masking transformation, or a pasted provider
+            // key would render in cleartext on screen.
+            setSingleLine()
             transformationMethod = object : PasswordTransformationMethod() {
                 // Android's default password transform can briefly reveal the last typed glyph.
                 override fun getTransformation(source: CharSequence, view: View): CharSequence = object : CharSequence {
@@ -429,7 +433,6 @@ class KeyEntryActivity : Activity() {
             importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
             if (Build.VERSION.SDK_INT >= 30) importantForContentCapture = View.IMPORTANT_FOR_CONTENT_CAPTURE_NO_EXCLUDE_DESCENDANTS
             filterTouchesWhenObscured = true
-            setSingleLine()
             setTextColor(ink)
             setHintTextColor(hintInk)
             backgroundTintList = ColorStateList.valueOf(accent)

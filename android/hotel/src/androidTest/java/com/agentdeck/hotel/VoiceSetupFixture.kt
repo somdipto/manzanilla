@@ -137,15 +137,17 @@ internal object VoiceSetupFixture {
             test.runOnMainSync {
                 @Suppress("UNCHECKED_CAST")
                 val inputs = fields.get(setup) as List<EditText>
-                val masked = inputs.map { it.transformationMethod != null }
-                val identities = inputs.map { it.contentDescription?.toString() }
                 check(inputs.size == 3) { "Personal setup must own Fish, Gemini and voice ID fields only" }
-                check(inputs.take(2).all { it.transformationMethod != null }) {
-                    "Key fields must be masked; masked=$masked identities=$identities"
+                // Assert what the screen shows: setSingleLine() installs a transformation of
+                // its own, so presence alone would not prove a provider key is hidden.
+                val sample = "fixturefield"
+                val rendered = inputs.map { input ->
+                    input.transformationMethod?.getTransformation(sample, input)?.toString() ?: sample
                 }
-                check(inputs[2].transformationMethod == null) {
-                    "Voice field must stay unmasked; masked=$masked identities=$identities"
+                check(rendered.take(2).all { shown -> shown != sample && shown.none { it in sample } }) {
+                    "Provider keys must render masked; observed $rendered"
                 }
+                check(rendered[2] == sample) { "Voice ID must render readable; observed $rendered" }
                 lengths = inputs.map { it.text.length }
             }
             return lengths
