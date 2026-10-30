@@ -388,6 +388,10 @@ test('welcome is separate, survives a readiness reorder and cannot replay after 
   f.agent({ ...welcome, status: 'interrupted' });
   f.agent(welcome);
   assert.equal(f.welcomes.length, 3);
+  // The worker repeats readiness immediately before the greeting; the repeat must
+  // change nothing and must not replay a settled welcome.
+  ready(f);
+  assert.equal(f.welcomes.length, 3);
   assert.equal(f.utterances.length, 0);
   assert.equal(f.notices.length, 0);
   await f.translator.stop();

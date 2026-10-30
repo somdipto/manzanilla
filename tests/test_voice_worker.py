@@ -521,6 +521,9 @@ def test_welcome_once_after_microphone_and_readiness_outside_history(pipeline):
             assert events[0]['type'] == 'translation.ready'
             welcome = [x for x in events if x['type'] == 'translation.welcome']
             assert [x['status'] for x in welcome] == ['queued', 'playing', 'complete']
+            # A client that missed the first readiness packet must not discard the
+            # only greeting, so readiness is repeated immediately before it.
+            assert events[events.index(welcome[0]) - 1]['type'] == 'translation.ready'
             assert all(x['text'] == contract.greeting('es') for x in welcome)
             assert not obj.conversation.records and not obj._llm.calls
             assert len(Synth.instances) == 1
