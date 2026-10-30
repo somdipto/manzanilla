@@ -34,12 +34,11 @@ internal object HotelReadinessFixture {
 
     fun verify(test: Instrumentation) {
         check(Build.HARDWARE in setOf("ranchu", "goldfish"))
-        check(BuildConfig.FISH_API_KEY.isEmpty())
         val context = test.targetContext
         val connection = HotelConnection(context)
         check(connection.load() == null) { "Readiness requires a fresh disposable emulator" }
         check(SecretStore(context, "fish").status() == SecretStore.Status.ABSENT)
-        if (BuildConfig.DISTRIBUTION == "hotel") FishStartupFixture.verifyHotelPreparation(test)
+        check(!SecretStore(context, "translation_credentials").has())
         val deck = context.getSharedPreferences("deck", 0)
         val oldGuest = deck.getString("reception_guest_language", null)
         val oldStaff = deck.getString("reception_staff_language", null)
@@ -117,7 +116,8 @@ internal object HotelReadinessFixture {
             check(connection.save("https://readiness.invalid", "a".repeat(40)))
             probe(Reply())
             awaitState("ready")
-            check(requests.poll(1, TimeUnit.SECONDS)!!.getString("language") == "es")
+            val initialProbe = requests.poll(1, TimeUnit.SECONDS)!!
+            check(initialProbe.getString("language") == "es" && initialProbe.getBoolean("capabilities_only"))
             check(js("JSON.stringify(window.readinessEvents).indexOf('must-not-reach-page')") == "-1")
             check(js("JSON.stringify(window.readinessEvents).indexOf('operator_primary')") == "-1")
             probe(Reply(401)); awaitState("unauthorized")
@@ -172,12 +172,12 @@ internal object HotelReadinessFixture {
                 check(field("audioState").get(activity) == "off")
             }
             if (BuildConfig.DISTRIBUTION == "personal-test") {
-                check(SecretStore(context, "fish").save("synthetic-personal-key"))
+                check(TranslationCredentials(context).save("synthetic-personal-key", "synthetic-translation-key", "synthetic-voice"))
                 check(TranslationSettings(context).selectDirectFish())
                 test.runOnMainSync { invoke("pushState") }
                 check(js("window.readinessEvents.filter(function(e){return e.type==='reception_info'}).slice(-1)[0].audio_available") == "true")
                 check(js("window.readinessEvents.filter(function(e){return e.type==='connection'}).slice(-1)[0].connected") == "false")
-                SecretStore(context, "fish").clear()
+                SecretStore(context, "translation_credentials").clear()
                 TranslationSettings(context).selectHotelConnection()
             }
             // A form may change UI locale; its immutable operation language must not change.
@@ -204,10 +204,15 @@ internal object HotelReadinessFixture {
             check(js("window.readinessEvents.filter(function(e){return e.type==='operation_result'}).slice(-1)[0].status") == "\"unavailable\"")
             check(owner.current == lease)
             check(operationRequests.isEmpty()) // The absent service was denied before even starting a remote session.
+            requests.clear()
             replies.add(Reply())
             send(JSONObject().put("action", "languages").put("language", "fr").put("staff_language", "es"))
             awaitState("ready")
             check(owner.current == lease && lease.request.guest == "ar" && lease.request.staff == "en")
+            check(requests.poll(1, TimeUnit.SECONDS)!!.getString("language") == "ar")
+            send(JSONObject().put("action", "question").put("session_id", lease.request.id)
+                .put("generation", lease.generation).put("arguments", JSONObject().put("query", "synthetic question")))
+            check(operationRequests.isEmpty()) // French UI must not enable a capability absent in the pinned Arabic session.
             val olderHeartbeat = Reply(release = CountDownLatch(1))
             probe(olderHeartbeat)
             send(JSONObject().put("action", "taxi").put("session_id", lease.request.id)
@@ -218,8 +223,20 @@ internal object HotelReadinessFixture {
             check(olderHeartbeat.finished.await(5, TimeUnit.SECONDS))
             test.waitForIdleSync()
             test.runOnMainSync { check(field("hotelStatus").get(activity).toString() == "unauthorized") }
+            requests.clear()
+            replies.add(Reply())
             send(JSONObject().put("action", "stop").put("session_id", lease.request.id).put("generation", lease.generation))
+            awaitState("ready")
+            check(requests.poll(1, TimeUnit.SECONDS)!!.getString("language") == "fr")
             if (BuildConfig.DISTRIBUTION == "hotel") {
+                val guestUpdateEvents = js("window.readinessEvents.filter(function(e){return e.type==='update_status'}).length")
+                test.runOnMainSync {
+                    val update = HotelActivity::class.java.getDeclaredMethod("onUpdate", String::class.java).apply { isAccessible = true }
+                    update.invoke(activity, "confirm:${UpdateStatusText.MANUAL_INSTALL}")
+                    check(context.getSharedPreferences("update_staff_status", 0).getString("status", null) ==
+                        "confirm:${UpdateStatusText.MANUAL_INSTALL}")
+                }
+                check(js("window.readinessEvents.filter(function(e){return e.type==='update_status'}).length") == guestUpdateEvents)
                 val appearance = deck.getString("reception_appearance", "dark")
                 val night = deck.getBoolean("reception_night", false)
                 for (action in listOf("appearance", "night", "check_updates", "apply_update"))
@@ -266,7 +283,7 @@ internal object HotelReadinessFixture {
             test.runOnMainSync { activity.finish() }
             test.waitForIdleSync()
             SecretStore(context, "hotel_connection").clear()
-            SecretStore(context, "fish").clear()
+            SecretStore(context, "translation_credentials").clear()
             if (oldDirect) TranslationSettings(context).selectDirectFish() else TranslationSettings(context).selectHotelConnection()
             deck.edit().putString("reception_guest_language", oldGuest).putString("reception_staff_language", oldStaff).commit()
             client.dispatcher.executorService.shutdownNow()

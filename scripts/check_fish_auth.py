@@ -1,13 +1,15 @@
-"""Check Fish credentials without creating provider objects or printing secrets.
+"""Manually check a user's Fish credential without storing or printing it.
 
-The response confirms only that the account may list agent sessions; it does not
-prove agent creation, speech entitlement, billing, or audio quality.
+Not a build or release prerequisite. Credentials are entered privately, never read
+from CI environment variables. Account session-list access does not prove realtime
+ASR/TTS entitlement, billing, recognition, translation, or audio quality.
 """
 import argparse
 import http.client
-import os
+import getpass
 import secrets
 import sys
+import warnings
 
 
 def check(key, connection_factory=http.client.HTTPSConnection):
@@ -18,7 +20,7 @@ def check(key, connection_factory=http.client.HTTPSConnection):
         connection = connection_factory("api.fish.audio", timeout=15)
         # A synthetic identifier avoids retrieving existing session data. The
         # body is never read or logged. HTTPSConnection never follows redirects.
-        path = "/v1/agent/sessions?end_user_id=ci-" + secrets.token_hex(16) + "&page_size=1"
+        path = "/v1/agent/sessions?end_user_id=manual-check-" + secrets.token_hex(16) + "&page_size=1"
         connection.request("GET", path, headers={"Authorization": "Bearer " + key.strip()})
         response = connection.getresponse()
         status = response.status
@@ -40,21 +42,22 @@ def check(key, connection_factory=http.client.HTTPSConnection):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--distribution", required=True, choices=("personal-test", "hotel"))
-    distribution = parser.parse_args(argv).distribution
-    key = os.environ.get("FISH_API_KEY", "")
-    if distribution == "hotel":
-        if key.strip():
-            print("Hotel construction must not receive a Fish credential.", file=sys.stderr)
-            return 1
-        print("Hotel construction requires no Fish credential or provider check.")
-        return 0
+    parser.add_argument("--user-credential", action="store_true", required=True,
+                        help="Privately prompt for your own Fish credential; never used to build an APK")
+    parser.parse_args(argv)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", getpass.GetPassWarning)
+            key = getpass.getpass("Your Fish API key (not saved): ")
+    except (EOFError, KeyboardInterrupt, getpass.GetPassWarning):
+        print("Fish authentication check cancelled.", file=sys.stderr)
+        return 1
     result, status = check(key)
     if result == "accepted":
         print("Fish authentication check passed (HTTP %d); live voice is not verified." % status)
         return 0
     if result == "missing":
-        print("Fish authentication check failed: build secret is not configured.", file=sys.stderr)
+        print("Fish authentication check failed: no user credential supplied.", file=sys.stderr)
     elif result == "rejected":
         print("Fish authentication check failed: access denied (HTTP %d)." % status, file=sys.stderr)
     elif status is not None:

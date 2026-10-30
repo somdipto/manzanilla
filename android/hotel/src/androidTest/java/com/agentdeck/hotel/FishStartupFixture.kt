@@ -1,534 +1,241 @@
 package com.agentdeck.hotel
 
 import android.app.Instrumentation
-import android.content.Context
-import android.content.ContextWrapper
-import android.content.Intent
-import android.webkit.WebView
-import com.agentdeck.ui.ReceptionView
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
-import okhttp3.Interceptor
-import okhttp3.MediaType.Companion.toMediaType
+import android.media.AudioTrack
+import android.os.Build
+import android.os.SystemClock
+import com.agentdeck.audio.LiveSpeaker
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
-import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
-import okio.Buffer
-import org.json.JSONArray
 import org.json.JSONObject
-import java.io.Closeable
-import java.lang.reflect.InvocationTargetException
-import java.net.SocketTimeoutException
-import java.util.concurrent.CopyOnWriteArrayList
+import java.nio.ByteBuffer
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
-/** Actual FishVoice provisioning and teardown, with every HTTP call intercepted before networking.
- * This fixture never joins LiveKit, requests microphone permission or uses a provider credential.
- */
+/** Exercises the shipped startup boundary without any provider access or microphone capture. */
 internal object FishStartupFixture {
-    fun verifyHotelPreparation(instrumentation: Instrumentation) {
-        check(BuildConfig.DISTRIBUTION == "hotel" && BuildConfig.FISH_API_KEY.isBlank())
-        Harness(instrumentation.targetContext, preparing = true).use { h ->
-            h.prepare("fr", "de")
-            check(h.wire.requests.isEmpty()) { "Hotel preparation contacted a personal provider" }
-            check(h.events.isEmpty())
-            h.noAudio()
-        }
-    }
-
     fun verify(instrumentation: Instrumentation) {
-        check(BuildConfig.FISH_API_KEY.isBlank()) { "Use a key-free verification APK" }
-        verifyPagePreparation(instrumentation)
-        Harness(instrumentation.targetContext, preparing = true).use { h ->
-            h.wire.existingTools(incompatible = true, mode = "blocking")
-            h.prepare("fr", "de")
-            check("GET /v1/agent/tools/incompatible-tool" in h.wire.requests)
-            check("GET /v1/agent/tools/fixture-tool" in h.wire.requests)
-            check("POST /v1/agent/tools" !in h.wire.requests) { "preparation duplicated a compatible client tool" }
-            check(h.wire.sessionCalls == 0 && h.events.isEmpty())
-            h.noAudio()
-            val beforeStart = h.wire.requests.size
-            h.activate()
-            h.direct(FishPlan.DEFAULT_VOICE)
-            check(h.wire.requests.drop(beforeStart) == listOf("POST /v1/agent/sessions"))
-        }
-        Harness(instrumentation.targetContext, preparing = true).use { h ->
-            h.prepare("fr", "de")
-            h.prepare("en", "es")
-            val beforeReturn = h.wire.requests.size
-            h.prepare("en", "de")
-            check(h.wire.requests.size == beforeReturn) { "returning to a configured language repeated setup" }
-            check(h.wire.sessionCalls == 0 && h.events.isEmpty())
-            h.noAudio()
-        }
-        Harness(instrumentation.targetContext, preparing = true).use { h ->
-            h.cancelPreparation()
-            check(h.wire.requests.isEmpty() && h.events.isEmpty()) { "cancelled preparation reached the provider" }
-        }
-        Harness(instrumentation.targetContext).use { h ->
-            h.direct()
-            check(h.wire.requests == listOf("GET /v1/agent/agents", "GET /v1/agent/tools",
-                "POST /v1/agent/tools", "POST /v1/agent/agents", "POST /v1/agent/agents/fixture-agent-1/publish",
-                "POST /v1/agent/sessions")) { "incomplete direct provisioning chain" }
-            check(h.wire.sessionCalls == 1)
-            check(h.field("endRequest") != null)
-            h.noAudio()
-        }
-        for (mode in listOf(null, "blocking", "fire_and_forget")) Harness(instrumentation.targetContext).use { h ->
-            h.wire.existingTools(incompatible = true, mode = mode)
-            h.direct()
-            check("GET /v1/agent/tools/incompatible-tool" in h.wire.requests)
-            check("GET /v1/agent/tools/fixture-tool" in h.wire.requests)
-            check("POST /v1/agent/tools" !in h.wire.requests) { "compatible client tool was duplicated" }
-            check(h.wire.agentCreates == 1 && h.wire.sessionCalls == 1)
-            h.noAudio()
-        }
-        Harness(instrumentation.targetContext).use { h ->
-            h.wire.existingTools(incompatible = true, compatible = false)
-            val error = h.failed { h.direct() }
-            check(error is FishStartupFailure && error.stage == FishStartupFailure.Stage.CAPTION_READ)
-            h.terminal(error, false)
-            check("POST /v1/agent/tools" !in h.wire.requests)
-            check(h.wire.agentCreates == 0 && h.wire.sessionCalls == 0)
-            check(h.events.last().getString("text").contains("TR-caption_read-configuration"))
-        }
-        for (compatible in listOf(false, true)) for (hasMore in listOf(null, true, "false")) {
-            Harness(instrumentation.targetContext).use { h ->
-                h.wire.existingTools(compatible = compatible)
-                h.wire.toolListing!!.put("has_more", hasMore)
-                val error = h.failed { h.direct() }
-                check(error is FishStartupFailure && error.stage == FishStartupFailure.Stage.CAPTION_LOOKUP)
-                h.terminal(error, false)
-                check("POST /v1/agent/tools" !in h.wire.requests)
-                check(h.wire.agentCreates == 0 && h.wire.sessionCalls == 0)
-            }
-        }
-        Harness(instrumentation.targetContext).use { h ->
-            h.wire.toolLookupTimeout = true
-            h.terminal(h.failed { h.direct() }, false)
-            check("POST /v1/agent/tools" !in h.wire.requests)
-            check(h.wire.agentCreates == 0 && h.wire.sessionCalls == 0)
-        }
-        val rejections = listOf(
-            Triple("GET /v1/agent/agents", 401, FishStartupFailure.Stage.AGENT_LOOKUP),
-            Triple("POST /v1/agent/tools", 402, FishStartupFailure.Stage.CAPTION_CREATE),
-            Triple("POST /v1/agent/agents", 403, FishStartupFailure.Stage.AGENT_CREATE),
-            Triple("POST /v1/agent/agents/fixture-agent-1/publish", 422, FishStartupFailure.Stage.AGENT_PUBLISH),
-            Triple("POST /v1/agent/sessions", 429, FishStartupFailure.Stage.DIRECT_SESSION)
-        )
-        for ((request, status, stage) in rejections) Harness(instrumentation.targetContext).use { h ->
-            h.wire.rejectRequest = request
-            h.wire.rejectStatus = status
-            val error = h.failed { h.direct() }
-            check(error is FishStartupFailure && error.stage == stage && error.httpStatus == status)
-            h.terminal(error, managed = false)
-            check(h.events.last().getString("text").contains("HTTP$status"))
-            check(h.gate.reason() == null) { "definitive refusal retained an unsettled reservation" }
-        }
-        for (status in listOf(404, 409)) Harness(instrumentation.targetContext).use { h ->
-            h.cacheAgent()
-            h.wire.sessionStatuses.add(status)
-            h.direct()
-            check(h.wire.sessionCalls == 2) { "stale agent repair did not retry exactly once" }
-            check(h.wire.publishes == 2)
-            check(h.wire.agentCreates == 2)
-            check(h.wire.requests.count { it == "POST /v1/agent/agents/fixture-agent-1/publish" } == 1) {
-                "repair republished the rejected agent"
-            }
-            h.noAudio()
-        }
-        Harness(instrumentation.targetContext).use { h ->
-            h.cacheAgent()
-            h.wire.sessionStatuses.addAll(listOf(404, 404, 200))
-            val error = h.failed { h.direct() }
-            check(h.wire.sessionCalls == 2) { "stale agent repair retried more than once" }
-            h.terminal(error, false)
-            check(h.gate.reason() == null)
-        }
-        for (timeout in listOf(false, true)) Harness(instrumentation.targetContext).use { h ->
-            h.cacheAgent()
-            if (timeout) h.wire.sessionTimeout = true else h.wire.sessionStatuses.add(500)
-            val error = h.failed { h.direct() }
-            check(h.wire.sessionCalls == 1) { "uncertain creation was retried" }
-            h.terminal(error, false)
-            check(h.gate.reason() != null && !h.gate.acquire("competing")) { "uncertain creation admitted a competing session" }
-            check(h.wire.sessionCalls == 1)
-        }
-        Harness(instrumentation.targetContext).use { h ->
-            h.wire.malformedLookup = true
-            val error = h.failed { h.direct() }
-            h.terminal(error, false)
-            check(h.wire.agentCreates == 0 && h.wire.sessionCalls == 0)
-            check(h.events.last().getString("text").contains("TR-agent_lookup-response"))
-        }
-        Harness(instrumentation.targetContext).use { h ->
-            h.wire.malformedTicket = true
-            val error = h.failed { h.direct() }
-            check(h.field("endRequest") != null) { "malformed ticket lost provider cleanup ownership" }
-            h.terminal(error, false)
-            check(h.wire.ends == 1 && h.gate.reason() == null)
-            check(h.events.last().getString("text").contains("TR-ticket-response"))
-        }
-        Harness(instrumentation.targetContext).use { h ->
-            h.wire.managedStatus = 503
-            h.wire.managedFailure = "tool_create:http:402"
-            val error = h.failed { h.managed() }
-            h.terminal(error, true)
-            check(h.events.last().getString("text").contains("TR-caption_create-billing-HTTP402"))
-            check(h.gate.reason() == null) { "managed proof was ignored" }
-            check(h.wire.sessionCalls == 0 && h.wire.managedCalls == 1)
-        }
-        Harness(instrumentation.targetContext).use { h ->
-            h.wire.managedStatus = 422
-            val error = h.failed { h.managed() }
-            h.terminal(error, true)
-            check(h.gate.reason() == null && h.wire.managedCalls == 1)
-        }
-    }
-
-    private fun verifyPagePreparation(instrumentation: Instrumentation) {
-        val context = instrumentation.targetContext
-        check(BuildConfig.DEBUG && !SecretStore(context, "fish").has() && HotelConnection(context).load() == null) {
-            "Use an isolated, unconfigured key-free debug APK"
-        }
-        val readiness = SecretStore(context, "fish")
-        val deck = context.getSharedPreferences("deck", Context.MODE_PRIVATE)
-        val savedGuest = deck.getString("reception_guest_language", null)
-        val savedStaff = deck.getString("reception_staff_language", null)
-        Harness(context, preparing = true).use { h ->
-            val activity = instrumentation.startActivitySync(Intent(context, HotelActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            lateinit var page: ReceptionView
-            lateinit var browser: WebView
-            val preparation = FishVoice::class.java.getDeclaredField("preparation").apply { isAccessible = true }
-            val owner = HotelActivity::class.java.getDeclaredField("owner").apply { isAccessible = true }
-            val pendingPermission = HotelActivity::class.java.getDeclaredField("pendingPermission").apply { isAccessible = true }
-            fun evaluate(script: String): String {
-                val completed = CountDownLatch(1)
-                var value = ""
-                instrumentation.runOnMainSync {
-                    browser.evaluateJavascript(script) { value = it; completed.countDown() }
-                }
-                check(completed.await(15, TimeUnit.SECONDS)) { "Preparation WebView callback timed out" }
-                return value
-            }
-            fun chooserFailure(stage: String): Nothing {
-                var state = ""
-                instrumentation.runOnMainSync {
-                    val foreground = HotelActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }.getBoolean(activity)
-                    state = "foreground=$foreground focus=${activity.hasWindowFocus()} finishing=${activity.isFinishing} " +
-                        "destroyed=${activity.isDestroyed} attached=${browser.isAttachedToWindow} shown=${browser.isShown}"
-                }
-                instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream", "PREPARATION_STAGE $stage $state") })
-                error("Shipped chooser did not settle")
-            }
-            fun choose(script: String) {
-                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
-                var foreground = false
-                while (!foreground) {
-                    instrumentation.runOnMainSync {
-                        foreground = HotelActivity::class.java.getDeclaredField("foreground").apply { isAccessible = true }.getBoolean(activity) &&
-                            activity.hasWindowFocus() && !activity.isDestroyed && browser.isAttachedToWindow && browser.isShown
-                    }
-                    if (!foreground && System.nanoTime() >= deadline) chooserFailure("before-dispatch")
-                    if (!foreground) Thread.sleep(50)
-                }
-                var previous: Job? = null
-                instrumentation.runOnMainSync { previous = preparation.get(h.fish) as? Job }
-                evaluate(script)
-                var job: Job? = null
-                while (job == null || job === previous) {
-                    if (System.nanoTime() >= deadline) chooserFailure("await-preparation")
-                    instrumentation.runOnMainSync { job = preparation.get(h.fish) as? Job }
-                    if (job == null || job === previous) Thread.sleep(50)
-                }
-                runBlocking { withTimeout(5000) { checkNotNull(job).join() } }
-                instrumentation.runOnMainSync {
-                    check((owner.get(activity) as SessionOwner).current == null && pendingPermission.get(activity) == null) {
-                        "Language selection started a native conversation or requested microphone permission"
-                    }
-                    check(h.fish.localAudioState() == "off")
-                }
-                check(h.wire.sessionCalls == 0 && h.events.isEmpty()) { "Language selection opened a provider session or media" }
-                check(evaluate("document.documentElement.dataset.captureActive") == "\"false\"")
-                h.noAudio()
-            }
-            fun select(side: String, language: String) = choose(
-                "var picker = document.querySelector('[data-language-side=$side]');" +
-                    "picker.value = '$language'; picker.dispatchEvent(new Event('change', {bubbles:true}));")
+        check(BuildConfig.DEBUG)
+        for (status in listOf(401, 402, 429, 503)) {
+            val requests = AtomicInteger()
+            val failed = CountDownLatch(1)
+            val events = mutableListOf<JSONObject>()
+            val owner = VoiceSession("startup-fixture", 1, "en", "es", "translation") { synchronized(events) { events.add(it) } }
+            val pipeline = NativeTranslation(instrumentation.targetContext, owner,
+                TranslationCredentials.Configuration("synthetic-fish-not-a-key", "synthetic-gemini-not-a-key", "synthetic-voice")) { failed.countDown() }
+            val client = OkHttpClient.Builder().addInterceptor { chain ->
+                val request = chain.request()
+                check(request.method == "GET")
+                check(request.url.toString() == "https://generativelanguage.googleapis.com/v1beta/openai/models/gemini-3.8-flash")
+                check(request.header("Authorization") == "Bearer synthetic-gemini-not-a-key")
+                requests.incrementAndGet()
+                Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(status).message("fixture")
+                    .body("{}".toResponseBody()).build()
+            }.build()
+            NativeTranslation::class.java.getDeclaredField("http").apply { isAccessible = true }.set(pipeline, client)
             try {
-                check(readiness.save("fixture-only-native-preparation-readiness"))
-                instrumentation.runOnMainSync {
-                    h.install(activity)
-                    page = HotelActivity::class.java.getDeclaredField("reception").apply { isAccessible = true }
-                        .get(activity) as ReceptionView
-                    browser = page.getChildAt(0) as WebView
+                pipeline.start()
+                check(failed.await(5, TimeUnit.SECONDS)) { "Model denial did not terminate startup" }
+                check(requests.get() == 1) { "Denied model access retried or opened ASR" }
+                synchronized(events) {
+                    check(events.none { it.optString("type") in setOf("translation.ready", "translation.welcome", "audio_state") })
                 }
-                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
-                while (evaluate("typeof window.manzania === 'object' && document.documentElement.dataset.page === 'idle'") != "true") {
-                    check(System.nanoTime() < deadline) { "Shipped Reception did not initialize" }
-                    Thread.sleep(100)
-                }
-                instrumentation.runOnMainSync {
-                    HotelActivity::class.java.getDeclaredMethod("pushState").apply { isAccessible = true }.invoke(activity)
-                    page.push(JSONObject().put("type", "language_preferences").put("language", "fr").put("staff_language", "de"))
-                }
-                // Click the shipped page, leaving its JavascriptInterface, decoder and Activity handler intact.
-                choose("document.querySelector('[data-action=translation]').click()")
-                check(h.wire.agentCreates == 1 && h.wire.publishes == 1) { "Entering the chooser did not provision immutable configuration" }
-                val firstConfiguration = h.wire.requests.size
-                select("language", "en")
-                check(h.wire.requests.size == firstConfiguration) { "Changing only the guest repeated immutable configuration" }
-                select("staff_language", "es")
-                check(h.wire.agentCreates == 2 && h.wire.publishes == 2) { "Changing receptionist language did not prepare its configuration" }
-                val bothConfigurations = h.wire.requests.size
-                select("language", "fr")
-                select("staff_language", "de")
-                check(h.wire.requests.size == bothConfigurations) { "Returning to prepared languages repeated configuration" }
-                // Exercise real session creation without joining media or requesting microphone permission.
-                h.activate()
-                h.direct(BuildConfig.FISH_VOICE_ID.ifBlank { FishPlan.DEFAULT_VOICE })
-                check(h.wire.requests.drop(bothConfigurations) == listOf("POST /v1/agent/sessions")) {
-                    "Page-prepared Start repeated configuration requests"
-                }
-                h.noAudio()
-            } finally {
-                readiness.clear()
-                instrumentation.runOnMainSync { activity.finish() }
-                instrumentation.waitForIdleSync()
-                check(deck.edit().apply {
-                    if (savedGuest == null) remove("reception_guest_language") else putString("reception_guest_language", savedGuest)
-                    if (savedStaff == null) remove("reception_staff_language") else putString("reception_staff_language", savedStaff)
-                }.commit())
-            }
+                check(NativeTranslation::class.java.getDeclaredField("recorder").apply { isAccessible = true }.get(pipeline) == null)
+            } finally { check(pipeline.close()); owner.close(); owner.detached(true) }
+        }
+        val records = TranslationRecords("fixture", "en", "es")
+        records.accept(JSONObject().put("type", "session_started").put("session_id", "asr"))
+        val original = "  Can I leave my bag here?\n"
+        val record = records.accept(JSONObject().put("type", "committed").put("turn_index", 0).put("text", original).put("language_code", "en"))!!
+        check(record.getString("original") == original && record.getString("role") == "guest" && record.getString("target_language") == "es")
+        val binary = FishWire.encode(JSONObject().put("type", "audio").put("data", byteArrayOf(0, 1, -2, 3)))
+        check((FishWire.decode(binary).get("data") as ByteArray).contentEquals(byteArrayOf(0, 1, -2, 3)))
+        verifyRecognitionRestart(instrumentation)
+        verifyPlayback()
+        verifyManagedPlayback()
+    }
+
+    /** Hardware renderer proof only: silent synthetic PCM, no microphone/provider/acoustic claim. */
+    private fun verifyPlayback() {
+        val failures = AtomicInteger()
+        val speaker = LiveSpeaker { failures.incrementAndGet() }
+        speaker.start()
+        try {
+            check(speaker.append(ByteArray(96000))) // Previously rejected solely for message size.
+            repeat(20) { check(speaker.append(ByteArray(2880))) } // Ordinary producer burst.
+            val total = (96000 + 20 * 2880) / 2L
+            check(speaker.submittedSamples() == total)
+            check(speaker.finishInput())
+            val deadline = SystemClock.elapsedRealtime() + 10000
+            while (speaker.playedSamples() < total && SystemClock.elapsedRealtime() < deadline) Thread.sleep(10)
+            check(speaker.playedSamples() >= total && failures.get() == 0) { "Final PCM was not rendered" }
+        } finally { speaker.stop() }
+
+        val cancelled = LiveSpeaker { failures.incrementAndGet() }
+        cancelled.start()
+        val started = CountDownLatch(1)
+        val returned = CountDownLatch(1)
+        var accepted = true
+        val producer = Thread {
+            started.countDown()
+            try { accepted = cancelled.append(ByteArray(960000)) } finally { returned.countDown() }
+        }.apply { start() }
+        check(started.await(1, TimeUnit.SECONDS))
+        val queued = SystemClock.elapsedRealtime() + 2000
+        while (cancelled.submittedSamples() < 24000 && SystemClock.elapsedRealtime() < queued) Thread.sleep(10)
+        cancelled.flush()
+        check(returned.await(1, TimeUnit.SECONDS)) { "Cancellation did not unblock the WebSocket-style producer" }
+        producer.join()
+        cancelled.stop()
+        check(!accepted && failures.get() == 0)
+    }
+
+    private fun pcm(sequence: Int, samples: Int): ByteArray =
+        ByteBuffer.allocate(16 + samples * 2).put(byteArrayOf(77, 90, 80, 49))
+            .putInt(1).putInt(sequence).putInt(24000).array()
+
+    private fun player(speaker: LiveSpeaker): AudioTrack =
+        LiveSpeaker::class.java.getDeclaredField("track").apply { isAccessible = true }.get(speaker) as AudioTrack
+
+    private fun awaitPlayback(condition: () -> Boolean) {
+        val deadline = SystemClock.elapsedRealtime() + 10000
+        while (!condition()) {
+            check(SystemClock.elapsedRealtime() < deadline) { "Actual renderer did not advance" }
+            Thread.sleep(10)
         }
     }
 
-    private class Harness(base: Context, preparing: Boolean = false) : Closeable {
-        private val context = object : ContextWrapper(base) {
-            override fun getApplicationContext(): Context = this
-            override fun getSharedPreferences(name: String, mode: Int) =
-                super.getSharedPreferences("fish-startup-fixture-$name", mode)
-        }
-        private val meta = context.getSharedPreferences("fishmeta", Context.MODE_PRIVATE)
-        private val shared = FishVoice::class.java.getDeclaredField("sharedAdmission").apply { isAccessible = true }
-        private val previous = shared.get(null)
-        val events = CopyOnWriteArrayList<JSONObject>()
-        val wire = Wire(context)
-        val gate = FishSessionAdmission(null) { id ->
-            meta.edit().putString("outstanding_session", id).remove("pending_end_url")
-                .remove("pending_end_credential_hash").remove("pending_recovery_url")
-                .remove("pending_recovery_lookup").commit()
-        }
-        val fish: FishVoice
-        private val runClass = FishVoice::class.java.declaredClasses.single { it.simpleName == "Run" }
-        private val owner = VoiceSession("fixture-startup", 61, "fr", "de", "translation", events::add)
-        private val run: Any
-
-        init {
-            check(meta.edit().clear().commit())
-            shared.set(null, gate)
-            fish = FishVoice(context, events::add) { "fixture-only-not-a-provider-credential" }
-            val client = OkHttpClient.Builder().addInterceptor(wire).build()
-            for (name in listOf("http", "sessionHttp")) {
-                FishVoice::class.java.getDeclaredField(name).apply { isAccessible = true }.set(fish, client)
-            }
-            run = runClass.declaredConstructors.single().apply { isAccessible = true }
-                .newInstance(fish, owner, "Synthetic greeting")
-            if (!preparing) activate()
-        }
-
-        fun install(activity: android.app.Activity) {
-            val provider = HotelActivity::class.java.getDeclaredField("fishProvider").apply { isAccessible = true }
-            val previousProvider = provider.get(activity) as Lazy<*>
-            if (previousProvider.isInitialized()) (previousProvider.value as FishVoice).release()
-            provider.set(activity, lazy { fish })
-        }
-
-        fun activate() {
-            FishVoice::class.java.getDeclaredField("current").apply { isAccessible = true }.set(fish, run)
-            check(gate.acquire(field("reservation") as String))
-        }
-        fun prepare(guest: String, staff: String) {
-            fish.prepare(guest, staff)
-            val job = FishVoice::class.java.getDeclaredField("preparation").apply { isAccessible = true }.get(fish) as? Job
-            if (job != null) {
-                fish.prepare(guest, staff) // The same in-flight configuration must be shared.
-                check(FishVoice::class.java.getDeclaredField("preparation").apply { isAccessible = true }.get(fish) === job)
-                runBlocking { withTimeout(5000) { job.join() } }
-            }
-        }
-        fun cancelPreparation() {
-            fish.prepare("fr", "de")
-            val job = FishVoice::class.java.getDeclaredField("preparation").apply { isAccessible = true }.get(fish) as Job
-            fish.cancelPreparation()
-            runBlocking { withTimeout(5000) { job.join() } }
-        }
-
-        fun field(name: String): Any? = runClass.getDeclaredField(name).apply { isAccessible = true }.get(run)
-        private fun invoke(name: String, vararg args: Any): Any? {
-            val method = FishVoice::class.java.declaredMethods.single { it.name == name && it.parameterTypes.size == args.size }
-                .apply { isAccessible = true }
-            return try { method.invoke(fish, *args) }
-            catch (error: InvocationTargetException) { throw error.targetException }
-        }
-        fun direct(voice: String = "fixture-voice") = invoke("directSession", run, "fixture-only-not-a-provider-credential", voice, "fr", "de")
-        fun managed() = invoke("managedSession", run, "https://fixture.hotel.invalid", "fixture-device-credential", "fr", "de")
-        fun cacheAgent() { invoke("ensureAgent", run, "fixture-only-not-a-provider-credential", "fixture-voice", "") }
-        fun failed(action: () -> Any?): Throwable {
-            try { action() } catch (error: Throwable) { return error }
-            error("fixture expected startup to fail")
-        }
-        fun terminal(error: Throwable, managed: Boolean) {
-            invoke("startupFailed", run, field("startupStage") as FishStartupFailure.Stage, error, managed)
-            waitForEnd()
-            noAudio()
-            check(!owner.active())
-            check(events.size == 2 && events[0].optString("type") == "audio_state" &&
-                events[0].optString("state") == "off" && events[1].optString("phase") == "error") {
-                "failed startup did not acknowledge audio release and its terminal error once"
-            }
-            check(events.all { it.optString("session_id") == "fixture-startup" && it.optInt("generation") == 61 })
-            val text = events.last().getString("text")
-            check(!text.contains("fixture-only") && !text.contains("fixture-response-secret") && !text.contains("fixture.hotel.invalid"))
-        }
-        fun noAudio() {
-            check(field("room") == null && field("recording") == false)
-            check(events.none { it.optString("type") == "audio_state" && it.optString("state") == "recording" })
-        }
-        private fun waitForEnd() {
-            (field("endJob") as? Job)?.let { job -> runBlocking { withTimeout(5000) { job.join() } } }
-        }
-        override fun close() {
-            try {
-                fish.release()
-                waitForEnd()
-                noAudio()
-            } finally {
-                shared.set(null, previous)
-                check(meta.edit().clear().commit())
-            }
-        }
+    private fun rejected(action: () -> Unit) {
+        var rejected = false
+        try { action() } catch (_: IllegalArgumentException) { rejected = true }
+        check(rejected) { "Malformed PCM was accepted" }
     }
 
-    private class Wire(context: Context) : Interceptor {
-        val requests = CopyOnWriteArrayList<String>()
-        val sessionStatuses = java.util.ArrayDeque<Int>()
-        var sessionCalls = 0
-        var managedCalls = 0
-        var agentCreates = 0
-        var publishes = 0
-        var ends = 0
-        var rejectRequest: String? = null
-        var rejectStatus = 0
-        var sessionTimeout = false
-        var malformedLookup = false
-        var malformedTicket = false
-        var managedStatus = 200
-        var managedFailure: String? = null
-        var toolLookupTimeout = false
-        var toolListing: JSONObject? = null
-        private val toolReadbacks = HashMap<String, JSONObject>()
-        private var agentName = ""
-        private var toolCreated = false
-        private val definition = context.assets.open("fish-caption-tool.json").bufferedReader().use { JSONObject(it.readText()) }
+    /** Exercises the managed consumer, real playback head and bounded sender credit, not a timer. */
+    private fun verifyManagedPlayback() {
+        val failures = AtomicInteger()
+        val short = LiveSpeaker { failures.incrementAndGet() }
+        short.start()
+        try {
+            val track = player(short)
+            if (Build.VERSION.SDK_INT >= 31) check(track.startThresholdInFrames == 1)
+            else check(track.bufferSizeInFrames in 1..4800)
+            // Force a nontrivial startup threshold on API31 too, exercising the legacy finite
+            // tail behavior independent of the device's default minimum buffer.
+            track.pause()
+            if (Build.VERSION.SDK_INT >= 31) track.setStartThresholdInFrames(minOf(4800, track.bufferSizeInFrames))
+            val output = FishVoice.ManagedPlayback(TranslationPcm(1), short)
+            output.accept(pcm(0, 1))
+            rejected { output.accept(pcm(2, 0)) } // Missing sequence cannot seal the renderer.
+            rejected { output.accept(pcm(1, 0).copyOf(17)) }
+            rejected { output.accept(pcm(1, 960)) } // A short chunk is the final data chunk.
+            output.accept(pcm(1, 0))
+            rejected { output.accept(pcm(2, 0)) }
+            rejected { output.accept(pcm(2, 1)) }
+            check(output.rendered() == null && !output.pcm.complete)
+            check(short.submittedSamples() == 1L && short.playedSamples() == 0L)
+            check(!short.finishInput() && !short.offer(ByteArray(2), 0, 2))
+            track.play()
+            var acknowledged: Long? = null
+            awaitPlayback {
+                output.rendered()?.let { acknowledged = it }
+                output.pcm.complete
+            }
+            check(acknowledged == 1L && short.playedSamples() == 1L)
+            check(short.submittedSamples() == 1L && output.rendered() == null)
+        } finally { short.stop() }
 
-        fun existingTools(incompatible: Boolean = false, compatible: Boolean = true, mode: String? = null) {
-            val tools = JSONArray()
-            if (incompatible) {
-                tools.put(JSONObject().put("tool_id", "incompatible-tool").put("name", FishPlan.CAPTION_TOOL))
-                val changed = JSONObject(definition.toString())
-                changed.getJSONArray("arguments").getJSONObject(0).put("description", "Changed caption policy")
-                toolReadbacks["incompatible-tool"] = changed
+        val streaming = LiveSpeaker { failures.incrementAndGet() }
+        streaming.start()
+        try {
+            if (Build.VERSION.SDK_INT >= 31) check(player(streaming).startThresholdInFrames == 1)
+            else check(player(streaming).bufferSizeInFrames in 1..4800)
+            val output = FishVoice.ManagedPlayback(TranslationPcm(1), streaming)
+            var sent = 0
+            var acknowledged = -1L
+            awaitPlayback {
+                output.rendered()?.let { acknowledged = it }
+                while (sent < 24 && sent - acknowledged - 1 < 6) output.accept(pcm(sent++, 960))
+                acknowledged == 23L
             }
-            if (compatible) {
-                tools.put(JSONObject().put("tool_id", "fixture-tool").put("name", FishPlan.CAPTION_TOOL))
-                val readback = JSONObject(definition.toString()).put("tool_id", "fixture-tool")
-                    .put("execution_mode", mode).put("timeout", 30)
-                readback.getJSONArray("arguments").getJSONObject(0).put("required", false)
-                toolReadbacks["fixture-tool"] = readback
+            check(!output.pcm.complete && streaming.playedSamples() == 24 * 960L)
+            // Re-prime a one-sample finite tail after the previous burst has fully drained.
+            output.accept(pcm(24, 1))
+            output.accept(pcm(25, 0))
+            awaitPlayback {
+                output.rendered()?.let { acknowledged = it }
+                output.pcm.complete
             }
-            toolListing = JSONObject().put("has_more", false).put("tools", tools)
-        }
+            check(acknowledged == 25L && streaming.playedSamples() == 24 * 960L + 1)
+            check(streaming.submittedSamples() == streaming.playedSamples())
+        } finally { streaming.stop() }
 
-        override fun intercept(chain: Interceptor.Chain): Response {
-            val request = chain.request()
-            val path = request.url.encodedPath
-            val label = "${request.method} $path"
-            requests.add(label)
-            check(request.url.host in setOf("api.fish.audio", "fixture.hotel.invalid")) { "fixture attempted an unexpected destination" }
-            if (request.url.host == "fixture.hotel.invalid") {
-                check(label == "POST /api/device/fish-session")
-                managedCalls++
-                check(body(request).getString("caption_protocol") == FishPlan.CAPTION_PROTOCOL)
-                return reply(request, managedStatus, JSONObject().put("detail", "fixture-response-secret"),
-                    mapOf("X-Manzanilla-Session-Creation" to "not-created").let { headers ->
-                        managedFailure?.let { headers + ("X-Manzanilla-Voice-Failure" to it) } ?: headers
-                    })
+        val creditTail = LiveSpeaker { failures.incrementAndGet() }
+        creditTail.start()
+        try {
+            val track = player(creditTail)
+            // Exercise the largest supported threshold, with all six credits consumed before EOF.
+            val buffer = track.setBufferSizeInFrames(4800)
+            if (Build.VERSION.SDK_INT >= 31) track.setStartThresholdInFrames(minOf(4800, buffer))
+            else check(buffer in 1..4800)
+            val output = FishVoice.ManagedPlayback(TranslationPcm(1), creditTail)
+            repeat(5) { output.accept(pcm(it, 960)) }
+            output.accept(pcm(5, 1))
+            var acknowledged = -1L
+            awaitPlayback {
+                output.rendered()?.let { acknowledged = it }
+                acknowledged >= 0
             }
-            if (label == rejectRequest) {
-                if (path == "/v1/agent/sessions") sessionCalls++
-                return reply(request, rejectStatus, JSONObject().put("detail", "fixture-response-secret"))
+            check(!output.pcm.complete)
+            output.accept(pcm(6, 0))
+            awaitPlayback {
+                output.rendered()?.let { acknowledged = it }
+                output.pcm.complete
             }
-            return when {
-                label == "GET /v1/agent/agents" -> if (malformedLookup) reply(request, 200, JSONObject()) else reply(request, 200, JSONObject().put("agents", JSONArray().apply {
-                    if (agentCreates > 0) put(JSONObject().put("agent_id", "fixture-agent-$agentCreates")
-                        .put("name", agentName).put("status", "published"))
-                }))
-                label == "GET /v1/agent/tools" -> {
-                    if (toolLookupTimeout) throw SocketTimeoutException("fixture-response-secret")
-                    reply(request, 200, toolListing ?: JSONObject().put("has_more", false)
-                        .put("tools", JSONArray().apply { if (toolCreated) put(JSONObject().put("tool_id", "fixture-tool").put("name", FishPlan.CAPTION_TOOL)) }))
-                }
-                label == "GET /v1/agent/tools/incompatible-tool" -> reply(request, 200, toolReadbacks.getValue("incompatible-tool"))
-                label == "GET /v1/agent/tools/fixture-tool" -> reply(request, 200, toolReadbacks["fixture-tool"] ?: definition)
-                label == "POST /v1/agent/tools" -> {
-                    check(FishPlan.captionToolMatches(definition, body(request)))
-                    toolCreated = true
-                    reply(request, 201, JSONObject().put("tool_id", "fixture-tool"))
-                }
-                label == "POST /v1/agent/agents" -> {
-                    val data = body(request)
-                    agentName = data.getString("name")
-                    check(data.getJSONObject("config").getJSONObject("tools").getJSONArray("tool_ids").getString(0) == "fixture-tool")
-                    agentCreates++
-                    reply(request, 201, JSONObject().put("agent_id", "fixture-agent-$agentCreates"))
-                }
-                path.matches(Regex("/v1/agent/agents/fixture-agent-[0-9]+/publish")) -> {
-                    check(request.method == "POST")
-                    publishes++
-                    reply(request, 200, JSONObject())
-                }
-                label == "POST /v1/agent/sessions" -> {
-                    sessionCalls++
-                    if (sessionTimeout) throw SocketTimeoutException("fixture-response-secret")
-                    val status = if (sessionStatuses.isEmpty()) 200 else sessionStatuses.removeFirst()
-                    if (status != 200) reply(request, status, JSONObject().put("detail", "fixture-response-secret"))
-                    else reply(request, 200, JSONObject().put("session_id", "fixture-session-$sessionCalls")
-                        .put("transport", "livekit").put("livekit_url", "wss://fixture.invalid")
-                        .apply { if (!malformedTicket) put("token", "fixture-transport-token") })
-                }
-                path.matches(Regex("/v1/agent/sessions/fixture-session-[0-9]+/end")) -> {
-                    check(request.method == "POST")
-                    ends++
-                    reply(request, 204, JSONObject())
-                }
-                label == "GET /v1/agent/sessions" -> reply(request, 200, JSONObject().put("has_more", false).put("sessions", JSONArray()))
-                else -> error("fixture received an unexpected request")
+            check(acknowledged == 6L && creditTail.playedSamples() == 4801L)
+        } finally { creditTail.stop() }
+
+        val priming = LiveSpeaker { failures.incrementAndGet() }
+        priming.start()
+        try {
+            val track = player(priming)
+            track.pause()
+            // Pausing prevents the real head from advancing while the finite zero tail fills
+            // the buffer. Cancellation must interrupt that worker without granting EOF credit.
+            val frames = track.bufferSizeInFrames
+            check(priming.append(ByteArray(frames * 2)))
+            check(priming.finishInput())
+            val worker = LiveSpeaker::class.java.getDeclaredField("worker").apply { isAccessible = true }.get(priming) as Thread
+            awaitPlayback {
+                worker.state == Thread.State.TIMED_WAITING &&
+                    worker.stackTrace.any { it.className == LiveSpeaker::class.java.name && it.methodName == "write" }
             }
-        }
-        private fun body(request: Request): JSONObject {
-            val buffer = Buffer()
-            request.body!!.writeTo(buffer)
-            return JSONObject(buffer.readUtf8())
-        }
-        private fun reply(request: Request, status: Int, json: JSONObject, headers: Map<String, String> = emptyMap()): Response =
-            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(status).message("Fixture")
-                .body((if (status == 204) "" else json.toString()).toResponseBody("application/json".toMediaType()))
-                .apply { headers.forEach { (name, value) -> header(name, value) } }.build()
+            priming.flush()
+            check(!priming.finishInput() && !priming.append(ByteArray(2)))
+            priming.stop()
+            check(!worker.isAlive && priming.playedSamples() == 0L)
+        } finally { priming.stop() }
+        check(failures.get() == 0)
+    }
+
+    private fun verifyRecognitionRestart(instrumentation: Instrumentation) {
+        val failures = AtomicInteger()
+        val events = mutableListOf<JSONObject>()
+        val owner = VoiceSession("restart-fixture", 1, "en", "es", "translation") { events.add(it) }
+        val pipeline = NativeTranslation(instrumentation.targetContext, owner,
+            TranslationCredentials.Configuration("synthetic-fish", "synthetic-gemini", "synthetic-voice")) { failures.incrementAndGet() }
+        val recognize = NativeTranslation::class.java.getDeclaredMethod("onRecognition", JSONObject::class.java).apply { isAccessible = true }
+        try {
+            recognize.invoke(pipeline, JSONObject().put("type", "error").put("error_type", "engine_error").put("code", 503).put("recoverable", true))
+            check(failures.get() == 0 && events.any { it.optString("type") == "notice" })
+            recognize.invoke(pipeline, JSONObject().put("type", "error").put("error_type", "server_restarting").put("code", 503).put("recoverable", true))
+            check(failures.get() == 1)
+            recognize.invoke(pipeline, JSONObject().put("type", "session_started"))
+            check(failures.get() == 1 && events.none { it.optString("type") == "translation.ready" })
+            check(NativeTranslation::class.java.getDeclaredField("recorder").apply { isAccessible = true }.get(pipeline) == null)
+        } finally { check(pipeline.close()); owner.close(); owner.detached(true) }
     }
 }

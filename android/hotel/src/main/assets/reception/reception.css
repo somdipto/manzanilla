@@ -29,7 +29,7 @@
 @media(max-width:599px){.app{padding-left:18px;padding-right:18px;padding-inline:18px;}.topbar{min-height:76px;gap:4px}.wordmark{font-size:19px}.wordmark svg{width:26px;height:26px}.clock{display:none}.night-toggle{margin-left:auto;font-size:11px;padding-left:6px;padding-right:6px;padding-inline:6px;}.welcome h1{font-size:64px}.welcome p{font-size:17px}.home-actions{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.home-action{min-height:100px;font-size:14px}.home-action-main{grid-column:1/-1}.home-action+.home-action:before{display:none}.home-action small{font-size:12px}.welcome{padding-top:12px}.content[data-page="idle"]{overflow:auto}.language-heading{font-size:25px}.language-pair{gap:16px;margin-top:8px;margin-bottom:8px;margin-block:8px;}.language-side select{font-size:16px;min-height:48px;padding-left:10px;padding-right:22px}.language-side label{font-size:15px}.language-side small{font-size:12px}.language-list{grid-template-columns:repeat(2,minmax(0,1fr))}.session-top h2{font-size:20px}.caption{max-width:92%;min-width:140px}.caption-original,.caption-text{font-size:16px}.session-actions{padding:8px;gap:8px;flex-wrap:wrap}.session-control{justify-content:flex-start}.session-control-copy strong{font-size:13px}.session-control-copy span{font-size:11px}.session-icon{width:40px;height:40px}.session-actions .stop{font-size:13px;min-width:110px;padding-left:10px;padding-right:10px;padding-inline:10px;}.shortcut-list{grid-template-columns:repeat(2,minmax(0,1fr))}.footer{font-size:11px;gap:8px;min-height:44px}#hotel-label{max-width:35%;text-align:right}.aurora>svg{width:190%;left:-60%}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
 
-.content[data-page="translation_languages"],.content[data-page="languages"]{width:100%;max-width:780px;align-self:center;margin-left:auto;margin-right:auto;margin-inline:auto;gap:12px;justify-content:center}
+.content[data-page="translation_languages"],.content[data-page="languages"]{width:100%;max-width:780px;align-self:stretch;margin-left:auto;margin-right:auto;margin-inline:auto;gap:12px;justify-content:flex-start;justify-content:safe center}
 .content[data-page="translation_languages"] .language-heading,.content[data-page="languages"] .language-heading{font-size:22px}
 .content[data-page="translation_languages"] .keypad-hint,.content[data-page="languages"] .keypad-hint{display:none}
 .content[data-page="translation_languages"] .language-pair{width:100%;max-width:none;gap:16px;margin:0}
@@ -59,6 +59,12 @@ html[data-translation="live"] .content[data-page="active"] .session-scroll{width
 .translate-back svg{width:22px;height:22px}
 
 .caption-pending{align-self:center;max-width:78%}
+.direction-controls{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.direction-controls button{min-height:48px}
+.turn-status{font-size:13px;color:var(--muted);margin-top:8px}
+.translation-welcome{padding:8px 12px;margin-bottom:12px;border:1px solid var(--rule);border-radius:12px;color:var(--muted);font-size:14px}
+.translation-welcome span{font-size:12px}
+.translation-welcome p{margin:4px 0 0;white-space:pre-wrap}
 
 :root[data-appearance="light"] .session-actions .stop{color:#fff}
 :root[data-appearance="light"] .session-actions[data-stopped="true"] .stop{color:#fff}

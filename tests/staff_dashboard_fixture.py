@@ -1,11 +1,13 @@
 """Real temporary-backend staff scenarios; no provider/native acceptance claims."""
 from contextlib import contextmanager
+from datetime import datetime, timezone
+from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import expect
 
 
 def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
-    context = browser.new_context(service_workers="block", viewport={"width": 1024, "height": 768})
+    context = browser.new_context(service_workers="block", viewport={"width": 1024, "height": 768}, timezone_id="UTC")
     # Playwright clocks are context-wide. Install once before any page timers;
     # opening another staff tab must not reinstall the shared clock.
     context.clock.install(time=0)
@@ -275,6 +277,26 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         poll(owner)
         assert note.input_value() == private_note
         expect(note).to_be_focused()
+        # A new request belongs at the top without replacing an unchanged card
+        # or interrupting its in-progress private note.
+        retained_card = card(owner, item_id).element_handle()
+        newest_id, _ = submit_message("browser-ordering", "Newest request should lead the inbox")
+        poll(owner)
+        expect(owner.locator("#inbox article").first).to_have_attribute("data-item-id", newest_id)
+        assert retained_card.evaluate("(node) => node === document.querySelector('[data-item-id=\"' + node.dataset.itemId + '\"]')")
+        assert note.input_value() == private_note
+        expect(note).to_be_focused()
+        # A timezone change must update existing cards as well as future cards.
+        old_time = card(owner, item_id).locator("dd").first.text_content()
+        config = current_config()
+        assert api.put(base, headers=admin, json={**config, "timezone": "Asia/Tokyo"}).status_code == 200
+        poll(owner)
+        expect(card(owner, item_id).locator("dd").first).not_to_have_text(old_time)
+        expect(owner.locator("#handoff-timezone")).to_have_text("Asia/Tokyo")
+        assert card(owner, item_id).locator("textarea").input_value() == private_note
+        assert api.put(base, headers=admin, json={**current_config(), "timezone": "Europe/Madrid"}).status_code == 200
+        poll(owner)
+        expect(card(owner, item_id).locator("dd").first).to_have_text(old_time)
         owner.locator("#staff-locale").select_option("ar")
         expect(owner.locator("html")).to_have_attribute("dir", "rtl")
         assert card(owner, item_id).locator("textarea").input_value() == private_note
@@ -338,6 +360,61 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         assert card(page, second_id).locator("textarea").input_value() == "My unsaved private note"
         expect(card(page, second_id).locator("textarea")).to_have_attribute("readonly", "")
         assert "Other recorded outcome" in card(page, second_id).text_content()
+        # The browser itself is UTC; date inputs are explicitly hotel-local.
+        expect(page.locator("#handoff-timezone")).to_have_text("Europe/Madrid")
+        page.locator("#start").fill("2026-07-15T00:00")
+        page.locator("#end").fill("2026-07-15T08:00")
+        with page.expect_response(lambda response: "/morning?" in response.url) as handoff:
+            page.locator("#morning").click()
+        assert handoff.value.status == 200
+        bounds = parse_qs(urlparse(handoff.value.url).query)
+        assert float(bounds["start"][0]) == datetime(2026, 7, 14, 22, tzinfo=timezone.utc).timestamp()
+        assert float(bounds["end"][0]) == datetime(2026, 7, 15, 6, tzinfo=timezone.utc).timestamp()
+        handoff_requests = []
+        page.on("request", lambda request: handoff_requests.append(request.url) if "/morning?" in request.url else None)
+        for start, end in [("2026-03-29T02:30", "2026-03-29T04:00"),
+                           ("2026-10-25T02:30", "2026-10-25T04:00")]:
+            page.locator("#start").fill(start)
+            page.locator("#end").fill(end)
+            page.locator("#morning").click()
+            expect(page.locator("#status")).to_have_text("Choose a valid, unambiguous hotel-local time. Daylight-saving transitions may skip or repeat times.")
+        assert not handoff_requests, "Skipped or repeated hotel-local times must never guess a UTC boundary"
+
+        # Exercise real bounded pages and preserve a private draft while its
+        # request is not returned by either history paging or a status filter.
+        waiting_id, _ = submit_message("browser-pagination-waiting", "Older unfinished request")
+        assert api.patch(base + "/items/" + waiting_id, headers=admin,
+                         json={"status": "acknowledged", "expected_version": 0, "responsible_name": "Admin desk"}).status_code == 200
+        poll(page)
+        pagination_note = "Private draft must survive another history page"
+        card(page, waiting_id).locator("textarea").fill(pagination_note)
+        for index in range(102):
+            history_id, _ = submit_message("browser-history-" + str(index), "Resolved history " + str(index))
+            assert api.patch(base + "/items/" + history_id, headers=admin).status_code == 200
+        poll(page)
+        expect(card(page, waiting_id)).to_have_count(0)
+        expect(page.locator("#inbox-next")).to_be_enabled()
+        expected_page = api.get(base + "/overview", headers=admin).json()
+        assert page.locator("#inbox article").evaluate_all("(nodes) => nodes.map(node => node.dataset.itemId)") == [item["id"] for item in expected_page["items"]]
+        with overview_loaded(page):
+            page.locator("#inbox-next").click()
+        expect(page.locator("#inbox-page")).to_have_text("2")
+        assert card(page, waiting_id).locator("textarea").input_value() == pagination_note
+        expect(page.locator("#inbox-next")).to_be_disabled()
+        with overview_loaded(page):
+            page.locator("#inbox-back").click()
+        expect(card(page, waiting_id)).to_have_count(0)
+        with overview_loaded(page):
+            page.locator("#inbox-filter").select_option("unfinished")
+        expect(page.locator("#inbox-page")).to_have_text("1")
+        assert card(page, waiting_id).locator("textarea").input_value() == pagination_note
+        assert set(page.locator("#inbox article").evaluate_all("(nodes) => nodes.map(node => node.dataset.itemId)")) == {waiting_id, newest_id}
+        with overview_loaded(page):
+            page.locator("#inbox-filter").select_option("resolved")
+        expect(card(page, waiting_id)).to_have_count(0)
+        with overview_loaded(page):
+            page.locator("#inbox-filter").select_option("unfinished")
+        assert card(page, waiting_id).locator("textarea").input_value() == pagination_note
         # Changing token/hotel stops old-scope timers, clears private notes and
         # prevents a delayed response from restoring a previous tenant's inbox.
         show_dashboard(other)
@@ -361,6 +438,6 @@ def run_staff_dashboard_fixture(browser, api, origin, admin, admin_token):
         assert not requests_after_scope and other.locator("#inbox article").count() == 0
         assert not errors, errors
         return {"fixture": "staff-fulfilment-admin", "passed": True,
-                "scope": "real isolated backend/browser: blank creation, labelled edits, CAS, owner transitions, private outcome, single-flight/hidden/scoped refresh, focus, RTL, stale snapshots and conflicts; no provider/native/staff-operator qualification"}
+                "scope": "real isolated backend/browser: blank creation, labelled edits, CAS, owner transitions, private outcome, single-flight/hidden/scoped refresh, focus, RTL, stale snapshots, history paging/draft retention, newest-first order, hotel timezone refresh and DST-safe handoff; no provider/native/staff-operator qualification"}
     finally:
         context.close()

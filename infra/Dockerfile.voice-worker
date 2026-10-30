@@ -1,11 +1,12 @@
 FROM python:3.12.10-slim
 WORKDIR /app
-# The worker imports its prompt fidelity wording from cloud.fish (single source
-# of truth), so both packages ship in one image.
+# Shared trusted language metadata and the translation-only runtime prompt.
 COPY voice-worker/requirements.txt voice-worker-requirements.txt
 RUN pip install --no-cache-dir -r voice-worker-requirements.txt && useradd --uid 10002 --create-home voiceworker
 COPY cloud cloud
 COPY voice-worker voice-worker
+COPY shared/translation-languages.json shared/translation-languages.json
+COPY shared/translation-runtime.txt shared/translation-runtime.txt
 ENV PYTHONPATH=/app:/app/voice-worker
 USER voiceworker
 CMD ["python", "-m", "voice_worker"]

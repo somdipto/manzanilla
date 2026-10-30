@@ -95,13 +95,14 @@ class SessionOwnerTest {
         assertFalse(owner.audioUnknown)
     }
 
-    @Test fun sameLanguageAssistanceIsNotAnInterpreter() {
-        val owner = SessionOwner()
-        assertNotNull(owner.acquire(request(mode = "reception", guest = "es", staff = "es")))
+    @Test fun sameLanguageSessionsCanUseManualSpeakerDirection() {
+        val assistance = SessionOwner()
+        assertNotNull(assistance.acquire(request(mode = "reception", guest = "es", staff = "es")))
         val interpreter = SessionOwner()
-        assertThrows(IllegalArgumentException::class.java) {
-            interpreter.acquire(request(guest = "es", staff = "es"))
-        }
-        assertNull(interpreter.current)
+        val lease = interpreter.acquire(request(guest = "es", staff = "es"))!!
+        assertTrue(interpreter.accepts(lease.request.id, lease.generation))
+        assertFalse(interpreter.accepts(lease.request.id, lease.generation + 1))
+        interpreter.beginClose()
+        assertFalse(interpreter.accepts(lease.request.id, lease.generation))
     }
 }

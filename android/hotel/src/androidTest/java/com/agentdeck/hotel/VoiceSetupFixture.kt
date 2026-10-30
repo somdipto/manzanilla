@@ -22,8 +22,9 @@ internal object VoiceSetupFixture {
         check(BuildConfig.DISTRIBUTION == "personal-test") { "Personal setup requires a personal-test fixture" }
         val context = test.targetContext
         val store = SecretStore(context, "fish")
-        check(BuildConfig.FISH_API_KEY.isEmpty() && BuildConfig.FISH_VOICE_ID.isEmpty() &&
-            store.status() == SecretStore.Status.ABSENT)
+        val credentials = TranslationCredentials(context)
+        check(store.status() == SecretStore.Status.ABSENT)
+        check(credentials.load() == null && credentials.savedFishKey() == null)
         check(HotelConnection(context).load() == null)
         check(!TranslationSettings(context).directFishSelected)
         val secureDevice = context.getSystemService(KeyguardManager::class.java).isDeviceSecure
@@ -42,7 +43,7 @@ internal object VoiceSetupFixture {
             return result
         }
         fun appNodes() = windowRoot(context.packageName, setupWindowId)?.let(::descendants).orEmpty()
-        fun keyField() = appNodes().singleOrNull {
+        fun keyField() = appNodes().firstOrNull {
             it.isEditable && it.isPassword
         }
         val activity = test.startActivitySync(Intent(context, HotelActivity::class.java)
@@ -131,15 +132,25 @@ internal object VoiceSetupFixture {
                 test.removeMonitor(monitor)
             }
         }
-        fun inputLength(setup: KeyEntryActivity): Int {
-            var length = -1
+        fun inputLengths(setup: KeyEntryActivity): List<Int> {
+            var lengths = emptyList<Int>()
             test.runOnMainSync {
                 @Suppress("UNCHECKED_CAST")
                 val inputs = fields.get(setup) as List<EditText>
-                check(inputs.size == 1) { "Personal setup must own exactly one key field" }
-                length = inputs.single().text.length
+                check(inputs.size == 3) { "Personal setup must own Fish, Gemini and voice ID fields only" }
+                // Assert what the screen shows: setSingleLine() installs a transformation of
+                // its own, so presence alone would not prove a provider key is hidden.
+                val sample = "fixturefield"
+                val rendered = inputs.map { input ->
+                    input.transformationMethod?.getTransformation(sample, input)?.toString() ?: sample
+                }
+                check(rendered.take(2).all { shown -> shown != sample && shown.none { it in sample } }) {
+                    "Provider keys must render masked; observed $rendered"
+                }
+                check(rendered[2] == sample) { "Voice ID must render readable; observed $rendered" }
+                lengths = inputs.map { it.text.length }
             }
-            return length
+            return lengths
         }
         fun personalSetupReady(setup: KeyEntryActivity, stage: String) {
             await(stage) {
@@ -147,7 +158,7 @@ internal object VoiceSetupFixture {
                 var resumed = false
                 test.runOnMainSync {
                     @Suppress("UNCHECKED_CAST")
-                    val input = (fields.get(setup) as List<EditText>).singleOrNull()
+                    val input = (fields.get(setup) as List<EditText>).firstOrNull()
                     resumed = !setup.isDestroyed && !setup.isFinishing && foreground.getBoolean(setup) &&
                         setup.hasWindowFocus() && input?.isAttachedToWindow == true
                     if (resumed) {
@@ -159,15 +170,29 @@ internal object VoiceSetupFixture {
                 resumed && keyField()?.let { it.isEnabled && it.isVisibleToUser } == true
             }
             check(authenticated.get(setup) == false) { "Personal translation setup granted Staff authorization" }
-            check(appNodes().count { it.isEditable } == 1) { "Translation setup exposed unrelated hotel fields" }
+            inputLengths(setup)
         }
-        fun enterKey(value: String) {
-            val field = findSetupNode("visible editable Fish key field") {
-                it.isEditable && it.isPassword
+        fun enterKey(provider: String, value: String) {
+            val language = context.getSharedPreferences("deck", 0).getString("reception_staff_language", "es").orEmpty()
+            val description = UiText.text(context, language, "New {provider} key, masked", mapOf("provider" to provider))
+            val field = findSetupNode("visible editable $provider key field") {
+                it.isEditable && it.isPassword && it.contentDescription?.toString() == description
             }
             check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
-            })) { "Fish key field did not accept synthetic input" }
+            })) { "$provider key field did not accept synthetic input" }
+        }
+        fun enterVoice(value: String) {
+            val field = findSetupNode("visible voice ID field") { it.isEditable && !it.isPassword }
+            check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
+            })) { "Voice ID field did not accept synthetic input" }
+        }
+        fun savedConfiguration(fish: String, gemini: String, voice: String) {
+            val saved = checkNotNull(credentials.load()) { "Complete translation configuration was not saved" }
+            check(saved.fishKey == fish && saved.translationKey == gemini && saved.voiceId == voice) {
+                "Saved translation configuration mixed or lost fields"
+            }
         }
         fun click(label: String) {
             val language = context.getSharedPreferences("deck", 0).getString("reception_staff_language", "es").orEmpty()
@@ -204,6 +229,7 @@ internal object VoiceSetupFixture {
             click("Cancel")
             await("cancelled setup closes") { cancelled.isFinishing || cancelled.isDestroyed }
             check(store.status() == SecretStore.Status.ABSENT)
+            check(credentials.load() == null && credentials.savedFishKey() == null)
             check(!TranslationSettings(context).directFishSelected) { "Cancel changed the voice route" }
             await("setup retry button") { js("!!document.querySelector('[data-action=setup-translation]')") == "true" }
             val setup = openSetup("personal setup retry launch") {
@@ -211,10 +237,25 @@ internal object VoiceSetupFixture {
             }
             personalSetupReady(setup, "personal key field on retry")
             val syntheticKey = "fixture-only-not-a-provider-key"
-            enterKey(syntheticKey)
+            val syntheticGemini = "fixture-only-not-a-gemini-key"
+            val syntheticVoice = "fixture-only-not-a-provider-voice"
+            enterVoice("")
+            enterKey("Fish Audio", syntheticKey)
+            click("Save and return")
+            test.waitForIdleSync()
+            check(!setup.isFinishing && !setup.isDestroyed)
+            check(credentials.load() == null && store.status() == SecretStore.Status.ABSENT)
+            check(!TranslationSettings(context).directFishSelected)
+            enterKey("Gemini", syntheticGemini)
+            click("Save and return")
+            test.waitForIdleSync()
+            check(!setup.isFinishing && !setup.isDestroyed)
+            check(credentials.load() == null && store.status() == SecretStore.Status.ABSENT)
+            enterVoice(syntheticVoice)
             click("Save and return")
             await("saved setup closes") { setup.isFinishing || setup.isDestroyed }
-            check(store.load() == syntheticKey)
+            savedConfiguration(syntheticKey, syntheticGemini, syntheticVoice)
+            check(store.status() == SecretStore.Status.ABSENT) { "Atomic save unexpectedly wrote the legacy single-key store" }
             readyTranslation()
 
             // The translation gear must reopen this same personal setup even
@@ -224,9 +265,14 @@ internal object VoiceSetupFixture {
             }
             personalSetupReady(reopened, "saved-key personal setup")
 
+            check(inputLengths(reopened) == listOf(0, 0, syntheticVoice.length))
             val unsavedKey = "fixture-unsaved-key-must-not-survive-recreation"
-            enterKey(unsavedKey)
-            check(inputLength(reopened) == unsavedKey.length) { "Synthetic input did not reach the current setup Activity" }
+            val unsavedGemini = "fixture-unsaved-gemini-must-not-survive-recreation"
+            enterKey("Fish Audio", unsavedKey)
+            enterKey("Gemini", unsavedGemini)
+            check(inputLengths(reopened).take(2) == listOf(unsavedKey.length, unsavedGemini.length)) {
+                "Synthetic input did not reach the current setup Activity"
+            }
             // Recreate the actual Activity to exercise the same saved-instance
             // and resume path as a configuration change, without bypassing auth.
             val recreated = openSetup("personal setup recreation") {
@@ -235,23 +281,28 @@ internal object VoiceSetupFixture {
             check(recreated !== reopened)
             await("previous setup destroyed after recreation") { reopened.isDestroyed }
             personalSetupReady(recreated, "recreated personal setup")
-            val recreatedLength = inputLength(recreated)
-            check(recreatedLength == 0) { "Recreated Fish key field retained $recreatedLength characters" }
-            check(store.load() == syntheticKey) { "Recreation changed the saved key" }
-            // An empty Save must stay on setup: the unsaved input was discarded.
+            check(inputLengths(recreated) == listOf(0, 0, syntheticVoice.length)) {
+                "Recreation retained unsaved keys or lost the saved voice"
+            }
+            savedConfiguration(syntheticKey, syntheticGemini, syntheticVoice)
+            // An incomplete replacement must not partially update either saved key.
+            enterKey("Fish Audio", unsavedKey)
+            enterKey("Gemini", unsavedGemini)
+            enterVoice("")
             click("Save and return")
             test.waitForIdleSync()
-            check(!recreated.isFinishing && !recreated.isDestroyed && inputLength(recreated) == 0) {
-                "Empty Save unexpectedly closed or changed the recreated personal setup"
-            }
-            check(store.load() == syntheticKey) { "Empty Save changed the saved key" }
-            // Reuse the encrypted key without asking for a replacement. This
-            // must also override a previously selected hotel voice route.
+            check(!recreated.isFinishing && !recreated.isDestroyed)
+            savedConfiguration(syntheticKey, syntheticGemini, syntheticVoice)
+            // Blank secret fields reuse the encrypted atomic bundle. This must
+            // also override a previously selected hotel voice route.
+            enterKey("Fish Audio", "")
+            enterKey("Gemini", "")
+            enterVoice(syntheticVoice)
             check(TranslationSettings(context).selectHotelConnection())
             check(!TranslationSettings(context).directFishSelected)
-            click("Use saved key")
+            click("Save and return")
             await("re-enrolled setup closes") { recreated.isFinishing || recreated.isDestroyed }
-            check(store.load() == syntheticKey)
+            savedConfiguration(syntheticKey, syntheticGemini, syntheticVoice)
             readyTranslation()
 
             // Hotel assistance retains its separate Staff credential gate.
@@ -277,7 +328,8 @@ internal object VoiceSetupFixture {
                 check(authenticated.get(staff) == false && (fields.get(staff) as List<*>).isEmpty())
             }
             await("Staff setup closes without authorization") { staff.isFinishing || staff.isDestroyed }
-            check(store.load() == syntheticKey && TranslationSettings(context).directFishSelected)
+            savedConfiguration(syntheticKey, syntheticGemini, syntheticVoice)
+            check(TranslationSettings(context).directFishSelected)
         } finally {
             test.runOnMainSync { activity.finish() }
         }
@@ -357,19 +409,31 @@ internal object VoiceSetupFixture {
     fun verifyHotel(test: Instrumentation) {
         check(Build.HARDWARE in setOf("ranchu", "goldfish"))
         check(BuildConfig.DEBUG && BuildConfig.DISTRIBUTION == "hotel")
-        check(BuildConfig.FISH_API_KEY.isEmpty() && BuildConfig.FISH_VOICE_ID.isEmpty())
         val context = test.targetContext
         val keyguard = context.getSystemService(KeyguardManager::class.java)
         check(!keyguard.isDeviceSecure) { "Hotel setup fixture requires an initially lock-free disposable AVD" }
         val personal = SecretStore(context, "fish")
         val connection = HotelConnection(context)
+        val credentials = TranslationCredentials(context)
         val meta = context.getSharedPreferences("fishmeta", 0)
         check(personal.status() == SecretStore.Status.ABSENT && connection.load() == null)
+        check(credentials.load() == null && credentials.savedFishKey() == null)
         check(!meta.contains("outstanding_session"))
         check(context.getSharedPreferences("deck", 0).edit()
             .putString("reception_guest_language", "en").putString("reception_staff_language", "en").commit())
         val personalKey = "fixture-retained-personal-key-not-a-provider-credential"
-        check(personal.save(personalKey) && TranslationSettings(context).selectDirectFish())
+        val translationKey = "fixture-retained-translation-key-not-a-provider-credential"
+        val voiceId = "fixture-retained-voice-id"
+        check(personal.save(personalKey))
+        check(credentials.load() == null && credentials.savedFishKey() == personalKey) {
+            "A legacy Fish key must remain reusable without masquerading as complete translation setup"
+        }
+        check(TranslationSettings(context).selectDirectFish())
+        fun retainedConfiguration() {
+            val saved = checkNotNull(credentials.load())
+            check(saved.fishKey == personalKey && saved.translationKey == translationKey && saved.voiceId == voiceId)
+            check(personal.load() == personalKey && TranslationSettings(context).directFishSelected)
+        }
         fun reportStage(value: String) {
             test.sendStatus(0, Bundle().apply { putString("stream", "HOTEL_SETUP_STAGE $value\n") })
         }
@@ -393,8 +457,10 @@ internal object VoiceSetupFixture {
         reportStage("enter=owned cleanup")
         verifyRestoredCleanup(test, personalKey)
         reportStage("passed=owned cleanup")
-        // Exercise the real new-start boundary even with a saved personal selection.
-        // Interceptors prevent a regression from making any provider request.
+        // Exercise the real new-start boundary with a saved legacy personal selection.
+        // Keep the combined provider configuration absent until after this attempt:
+        // even a regressed hotel gate cannot construct a paid native pipeline.
+        // Interceptors also block historical/managed provider access.
         shell("pm grant ${context.packageName} android.permission.RECORD_AUDIO")
         val keyReads = java.util.concurrent.atomic.AtomicInteger()
         val requests = java.util.concurrent.atomic.AtomicInteger()
@@ -414,7 +480,9 @@ internal object VoiceSetupFixture {
                 fish.admissionIssue() == null
         }
         check(keyReads.get() == 0 && requests.get() == 0) { "Hotel new start consulted a personal credential or provider" }
-        check(personal.load() == personalKey && TranslationSettings(context).directFishSelected)
+        check(credentials.load() == null && personal.load() == personalKey)
+        check(credentials.save(personalKey, translationKey, voiceId))
+        retainedConfiguration()
         test.uiAutomation.serviceInfo = test.uiAutomation.serviceInfo.apply {
             flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         }
@@ -637,6 +705,30 @@ internal object VoiceSetupFixture {
             await("synthetic device credential enrolled") { keyguard.isDeviceSecure }
             val setup = open("protected voice setup") { postSetup("voice_setup") }
             authenticate(setup)
+            test.runOnMainSync {
+                val update = HotelActivity::class.java.getDeclaredMethod("onUpdate", String::class.java).apply { isAccessible = true }
+                update.invoke(activity, "failed:Could not check for updates (metadata, HTTP 403). Tap to retry.")
+            }
+            await("protected updater failure visible") {
+                var shown = false
+                test.runOnMainSync {
+                    shown = nodes(setup.window.decorView).filterIsInstance<android.widget.TextView>()
+                        .any { it.text.contains("HTTP 403") }
+                }
+                shown
+            }
+            test.runOnMainSync {
+                val update = HotelActivity::class.java.getDeclaredMethod("onUpdate", String::class.java).apply { isAccessible = true }
+                update.invoke(activity, "confirm:${UpdateStatusText.MANUAL_INSTALL}")
+            }
+            await("protected official recovery instructions visible") {
+                var shown = false
+                test.runOnMainSync {
+                    shown = nodes(setup.window.decorView).filterIsInstance<android.widget.TextView>()
+                        .any { it.text.contains(UpdateStatusText.OFFICIAL_URL) && !it.text.contains("{url}") }
+                }
+                shown
+            }
             // Replacing or clearing enrollment cannot strand the original remote-cleanup credential.
             val originalToken = "fixture-original-device-token-000000000000"
             check(connection.save("https://127.0.0.1:1", originalToken))
@@ -680,7 +772,7 @@ internal object VoiceSetupFixture {
                 context.getSharedPreferences("deck", 0).getString("reception_appearance", "") == "light"
             }
             awaitPage("after protected maintenance")
-            check(personal.load() == personalKey && TranslationSettings(context).directFishSelected)
+            retainedConfiguration()
             // A hotel guest bridge command cannot override that protected decision.
             js("guest maintenance denied", "window.ManzaniaNative.postMessage(JSON.stringify({action:'appearance',value:'dark'}))")
             test.waitForIdleSync()

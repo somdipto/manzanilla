@@ -6,15 +6,13 @@ object AudioPolicy {
     const val BLOCK_REASON = "Live translation is unavailable. Ask staff to check the audio credential in Settings."
 
     /** Local readiness only. Returned source IDs are localized by the native message producer. */
-    fun blockReason(backendConfigured: Boolean, directKey: SecretStore.Status, bundledKeyAvailable: Boolean,
+    fun blockReason(backendConfigured: Boolean, credentialsConfigured: Boolean,
                     directFishSelected: Boolean, distribution: String): String {
         if (distribution == "hotel") return if (backendConfigured) "" else "Translation needs hotel setup. Please ask staff."
         if (!LIVE_AUDIO_ENABLED) return BLOCK_REASON
         if (TranslationRouting.useManagedConnection(backendConfigured, directFishSelected, distribution) ||
-            directKey == SecretStore.Status.READY || bundledKeyAvailable) return ""
-        return if (directKey == SecretStore.Status.ERROR)
-            "The saved voice key could not be opened. Tap Set up translation to check it or save your original Fish Audio key again."
-        else "One-time setup: save your Fish Audio API key to start translation."
+            credentialsConfigured) return ""
+        return "Fish Audio + Gemini: save both keys and a voice to translate."
     }
 
     /** Evaluate before permission/capture, credential loading, ticket minting or provider connect. */

@@ -17,9 +17,8 @@ from collections.abc import Iterable
 VERSION_PATHS = frozenset({"android/VERSION", "android/VERSION_CODE"})
 RELEASE_FILES = frozenset({
     "package.json", "package-lock.json",
-    "shared/reception-locales.json",
+    "shared/reception-locales.json", "shared/translation-languages.json", "shared/translation-runtime.txt",
     "scripts/build-reception.cjs", "scripts/release_policy.py", "scripts/release_policy_check.py",
-    "scripts/check_fish_auth.py",
     "scripts/publish_release.py", "scripts/verify-signed-upgrade.sh",
     "scripts/signed_upgrade_proof.py",
     "scripts/run-updater-emulator.sh",

@@ -475,3 +475,144 @@ def test_item_metadata_migration_keeps_historical_unknowns_and_is_restart_safe(t
                 assert json.loads(row['payload'])['original_request']=='Exact '+row['status']
         finally:
             db.db.close()
+
+
+def test_staff_inbox_pages_keep_old_unfinished_requests_reachable(platform):
+    db,client=platform
+    staff=db.issue('a','staff'); headers={'Authorization':'Bearer '+staff['token']}
+    old_open=db.item('a','historical-session','note',{'original_request':'Still needs staff'})
+    old_ack=db.item('a','historical-session','taxi',{'destination':'Still waiting'})
+    db.run('UPDATE items SET created=1 WHERE hotel=?',('a',))
+    db.run("UPDATE items SET status='acknowledged',state_version=1,acknowledged_by=? WHERE id=?",(staff['id'],old_ack))
+    with db.lock,db.db:
+        db.db.executemany("INSERT INTO items(id,hotel,session,kind,created,payload,status) VALUES(?,'a','history','note',2,'{}','resolved')",
+                         [(f'resolved-{index:04d}',) for index in range(620)])
+    foreign=db.item('b','foreign','note',{'original_request':'Private other hotel'})
+    first=client.get('/api/hotels/a/overview',headers=headers).json()
+    assert len(first['items'])==100 and first['items_next']
+    ids=[item['id'] for item in first['items']]
+    cursor=first['items_next']
+    # New arrivals do not shift the cursor and hide or duplicate older rows.
+    newest=db.item('a','new-session','note',{'original_request':'New arrival'})
+    while cursor:
+        page=client.get('/api/hotels/a/overview',headers=headers,params={'before':cursor}).json()
+        assert len(page['items'])<=100
+        ids.extend(item['id'] for item in page['items'])
+        cursor=page['items_next']
+    assert len(ids)==len(set(ids))==622
+    assert {old_open,old_ack}<=set(ids) and newest not in ids and foreign not in ids
+    unfinished=client.get('/api/hotels/a/overview',headers=headers,params={'item_status':'unfinished','limit':1}).json()
+    unfinished_ids=[]
+    while True:
+        unfinished_ids.extend(item['id'] for item in unfinished['items'])
+        if not unfinished['items_next']: break
+        unfinished=client.get('/api/hotels/a/overview',headers=headers,
+                              params={'item_status':'unfinished','limit':1,'before':unfinished['items_next']}).json()
+    assert set(unfinished_ids)=={old_open,old_ack,newest}
+    resolved=client.get('/api/hotels/a/overview',headers=headers,params={'item_status':'resolved','limit':500}).json()
+    assert len(resolved['items'])==500 and all(item['status']=='resolved' for item in resolved['items'])
+    assert client.get('/api/hotels/a/overview',headers=headers,params={'before':foreign}).status_code==404
+    assert client.get('/api/hotels/b/overview',headers=headers,params={'before':foreign}).status_code==403
+    assert client.get('/api/hotels/a/overview',params={'before':old_open}).status_code==403
+    for params in ({'limit':0},{'limit':501},{'item_status':'unknown'}):
+        assert client.get('/api/hotels/a/overview',headers=headers,params=params).status_code==422
+    resolved_old=client.patch('/api/hotels/a/items/'+old_ack,headers=headers,
+                             json={'status':'resolved','expected_version':1,'resolution_note':'Handled after paging'})
+    assert resolved_old.status_code==200 and resolved_old.json()['version']==2
+    assert client.patch('/api/hotels/a/items/'+old_ack,headers=headers,
+                        json={'status':'resolved','expected_version':1,'resolution_note':'Stale change'}).status_code==409
+
+
+def test_capabilities_only_heartbeat_stays_bounded_with_large_approved_hotel(readiness):
+    db,client,dev,probe=readiness
+    db.issue('a','staff')
+    knowledge={f'fact-{index}':'Exact approved source. '*330 for index in range(40)}
+    hotel=db.save_hotel({**db.hotel('a'),'knowledge':knowledge})
+    for key,source in knowledge.items():
+        approve_rendering(db,key=key,title=key,body=source)
+    approve_rendering(db,'arrival','',title='Arrival',body='Present ID to reception')
+    legacy=probe(language='en')
+    assert len(json.dumps(legacy).encode())>256*1024
+    response=client.post('/api/device/heartbeat',headers={'Authorization':'Bearer '+dev['token']},
+                         json={'app_version':'17.0.47','config_version':0,'language':'en','capabilities_only':True})
+    assert response.status_code==200 and len(response.content)<4096
+    minimal=response.json()
+    assert minimal['hotel']=={key:hotel[key] for key in ('id','name','timezone','default_language','supported_languages','config_version')}
+    assert minimal['services']==legacy['services']
+    assert minimal['services']['taxi'] and minimal['services']['message'] and minimal['services']['checkin']
+    assert not minimal['services']['question']  # Oversized knowledge is not silently truncated.
+
+
+def test_managed_new_language_admission_preserves_existing_request_reconciliation(platform,monkeypatch):
+    from fastapi import HTTPException
+    from cloud.fish import request_lease
+    db,client=platform
+    dev=db.issue('a','device'); principal=db.auth(dev['token'],'device')
+    headers={'Authorization':'Bearer '+dev['token']}
+    calls=[]
+
+    async def admission(store,device,value):
+        calls.append(value.request_id)
+        if value.request_id=='prior':
+            raise HTTPException(409,'Recorded creation request already used')
+        return {'status':'admitted'}
+
+    monkeypatch.setattr(server,'livekit_mint',admission)
+    body={'guest_language':'es','staff_language':'en','mode':'translation','request_id':'new','protocol':'translation-v1'}
+    rejected=client.post('/api/device/fish-session',headers=headers,json=body)
+    assert rejected.status_code==422 and rejected.headers['X-Manzanilla-Session-Creation']=='not-created'
+    rejected=client.post('/api/device/fish-session',headers=headers,json={**body,'guest_language':'en','staff_language':'es'})
+    assert rejected.status_code==422 and not calls and not db.rows('SELECT * FROM fish_sessions')
+    assert client.post('/api/device/fish-session',headers=headers,json={**body,'guest_language':'hi'}).json()=={'status':'admitted'}
+    ident=request_lease(principal,'prior')
+    db.reserve_fish(principal,60,600,600,30,30,ident)
+    db.run("UPDATE fish_sessions SET status='ended' WHERE id=?",(ident,))
+    # A recorded request must reach the existing identity/reconciliation rules,
+    # even if its pair is no longer enabled by hotel staff.
+    prior=client.post('/api/device/fish-session',headers=headers,json={**body,'request_id':'prior'})
+    assert prior.status_code==409 and 'X-Manzanilla-Session-Creation' not in prior.headers
+    assert calls==['new','prior']
+
+
+def test_revoked_voice_bearer_authorizes_only_exact_historical_cleanup(platform,monkeypatch):
+    from cloud.fish import request_lease
+    db,client=platform
+    monkeypatch.delenv('FISH_API_KEY',raising=False)
+    owner=db.issue('a','device'); other=db.issue('a','device'); foreign=db.issue('b','device')
+    principal=db.auth(owner['token'],'device')
+    ident=request_lease(principal,'original-request')
+    db.reserve_fish(principal,60,600,600,30,30,ident)
+    db.run("UPDATE fish_sessions SET status='ended',session_id='original-provider-session' WHERE id=?",(ident,))
+    db.run('DELETE FROM credentials WHERE id=?',(owner['id'],))
+    replacement=db.issue('a','device')
+    endpoints=['/api/device/fish-session/original-provider-session/end',
+               '/api/device/fish-session-requests/original-request/end']
+    for endpoint in endpoints:
+        for token in ('','wrong-token',other['token'],foreign['token'],replacement['token']):
+            response=client.post(endpoint,headers={'Authorization':'Bearer '+token})
+            assert response.status_code==401
+        response=client.post(endpoint,headers={'Authorization':'Bearer '+owner['token']})
+        assert response.status_code==200 and response.json()['status']=='ended'
+    for device in (other,foreign):
+        other_principal=db.auth(device['token'],'device')
+        other_lease=request_lease(other_principal,'different-request')
+        db.reserve_fish(other_principal,60,600,600,30,30,other_lease)
+        db.run("UPDATE fish_sessions SET status='ended',session_id=? WHERE id=?",('session-'+device['id'],other_lease))
+        for endpoint in endpoints:
+            assert client.post(endpoint,headers={'Authorization':'Bearer '+device['token']}).status_code==404
+        assert client.post('/api/device/fish-session-requests/different-request/end',
+                           headers={'Authorization':'Bearer '+owner['token']}).status_code==404
+    headers={'Authorization':'Bearer '+owner['token']}
+    assert client.post('/api/device/fish-session/not-owned/end',headers=headers).status_code==404
+    assert client.post('/api/device/fish-session-requests/not-owned/end',headers=headers).status_code==404
+    body={'guest_language':'hi','staff_language':'en','mode':'translation','request_id':'new','protocol':'translation-v1'}
+    assert client.post('/api/device/fish-session',headers=headers,json=body).status_code==401
+    assert client.post('/api/device/heartbeat',headers=headers,json={'app_version':'test','config_version':0}).status_code==401
+    assert client.post('/api/device/operations/start',headers=headers,
+                       json={'session_id':'new','language':'en','staff_language':'hi','mode':'reception'}).status_code==401
+    assert client.get('/api/hotels/a/overview',headers=headers).status_code==403
+    # Possession of the old capability does not turn unknown provider settlement
+    # into positive cleanup proof.
+    db.run("UPDATE fish_sessions SET status='uncertain',session_id=NULL WHERE id=?",(ident,))
+    pending=client.post('/api/device/fish-session-requests/original-request/end',headers=headers)
+    assert pending.status_code==503 and db.rows('SELECT status FROM fish_sessions WHERE id=?',(ident,))[0]['status']=='uncertain'

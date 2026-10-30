@@ -56,24 +56,21 @@ Android may require an "Update" confirmation for an app installed from a file; t
 
 ## Distribution and readiness — repair candidate
 
-Build property `distribution` is `personal-test` by default, or `hotel`. Debug
-builds honor the chosen behavior but always compile empty provider fields.
-Personal testing keeps PIN-free Fish setup, encrypted saved-key precedence over
-the bundled fallback, an explicit direct preference over enrollment and its
-one-click update offer. A bundled testing key is labelled extractable.
+Build property `distribution` is `personal-test` by default, or `hotel`. Both
+debug and release builds compile no provider key. Personal testing keeps
+PIN-free setup for a user-saved Fish key, Gemini key and voice ID, an explicit
+direct preference over enrollment, and its one-click update offer. There is no
+bundled or shared testing key in this candidate.
 
-| Distribution | APK asset | Matching metadata / latest feed | Shared compiled provider key |
+| Distribution | APK asset | Matching metadata / latest feed | Compiled provider key |
 | --- | --- | --- | --- |
-| `personal-test` | `Manzanilla-Reception.apk` | `release-metadata.json` | Disposable Fish testing key, release only |
+| `personal-test` | `Manzanilla-Reception.apk` | `release-metadata.json` | None; saved on device after install |
 | `hotel` | `Manzanilla-Hotel.apk` | `hotel-release-metadata.json` | None; managed enrollment only |
 
 Both artifacts use the same commit/version, application ID and existing signer.
-Only personal-test release construction injects `FISH_API_KEY` and requires a
-read-only account-access check; it creates no voice session and proves no
-acoustic behavior. Hotel releases and all debug builds compile empty provider
-keys regardless of the environment. Gemini keys never enter either APK.
-`FISH_VOICE_ID` is a non-secret voice identifier. A key-free hotel artifact
-cannot revoke a key already exposed in a public testing APK.
+Neither release injects `FISH_API_KEY`, `GEMINI_API_KEY` or `FISH_VOICE_ID`.
+The known public 17.0.37/code 67 APK still contains the previously published
+extractable testing key; building this candidate does not revoke that copy.
 
 Each in-app feed, fallback and cached-download check stays within its current
 distribution; it never changes an installation from testing to hotel. An
@@ -109,12 +106,17 @@ unqualified pairs remains available. The language chooser states:
 
 ## Voice qualification and deployment boundary
 
-`VOICE_ROUTE=fish` remains the managed default. A genuinely new managed LiveKit
-reservation additionally requires backend `ALLOW_UNQUALIFIED_LIVEKIT=1`.
-Prior-request lookup precedes that gate; withdrawing the flag does not block
-backend startup, recorded-request reconciliation, end/recovery/cleanup, or
-personal direct Fish. It must not turn an existing uncertain request into a
-proven-noncreation response. See [the bounded evaluation route](docs/selfhosted-voice-route.md).
+New managed sessions use one route: Fish realtime recognition, application-owned
+direction, Gemini 3.8 Flash translation, and Fish S2.1 Pro synthesis. The
+microphone stays live. Translated audio is reliable 24 kHz PCM acknowledged
+after actual rendering, not a browser/device speech fallback or a resampled
+WebRTC playback track. A new reservation still requires
+`ALLOW_UNQUALIFIED_LIVEKIT=1` plus the worker and separate Fish/Gemini
+configuration. Prior-request lookup precedes that gate; withdrawing the flag
+does not block backend startup, recorded-request reconciliation, end/recovery,
+cleanup, or personal direct translation. It must not turn an existing uncertain
+request into a proven-noncreation response. `VOICE_ROUTE` does not select or
+restore a hosted Fish Agent. See [the bounded evaluation route](docs/selfhosted-voice-route.md).
 
 The current deployment contract permits one backend process with its SQLite
 ledger and one owning worker per room namespace. The supplied compose recipe
@@ -124,12 +126,11 @@ immediate token revocation until implemented and qualified. Initial token
 expiry and room deletion do not prove refreshed-token invalidation or prevent
 room replay. This repair adds no distributed ownership or revocation guarantee.
 
-No recognizer, speculation, endpointing, model, selected voice or route is
-changed by this qualification work. Gemini 3.8 Flash, Fish S2.1 Pro and the
-existing pair-dependent Nova-3/Scribe routing remain. Provider record gaps,
-tool-execution timing, configuration ceilings, transport receipts and
-standalone tier benchmarks do not establish tablet acoustic latency or an
-improvement. Browser/emulator and zero-paid local transport proofs are separate.
+Nova-3/Scribe routing, Fish Agent tools and browser speech synthesis are not
+part of a new conversation. Provider record gaps, tool-execution timing,
+configuration ceilings, transport receipts and standalone tier benchmarks do
+not establish tablet acoustic latency or an improvement. Browser/emulator and
+zero-paid local transport proofs are separate.
 
 Use [the acoustic protocol](docs/TEST-PLAN.md#voice-repair-reproduction-unreleased):
 at least 100 distinct held-out hotel utterances per intended pair, repeated

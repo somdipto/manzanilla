@@ -159,6 +159,88 @@ def test_confirmation_exact_binding_cancel_and_durable_receipt(operations):
     assert json.loads(reopened.rows("SELECT result FROM operation_actions WHERE call_id='next'")[0]['result'])==receipt
 
 
+@pytest.mark.parametrize('operation,args,kind',[
+    ('taxi',TAXI,'taxi'),('message',MESSAGE,'note'),('operator',{},'escalation')])
+def test_gateway_committed_receipt_recovers_after_operation_crash(operations,monkeypatch,operation,args,kind):
+    from cloud.operations import receipt
+    store,client,dev,other,foreign,headers,_=operations
+    original_execute=Gateway.execute
+    committed=[]
+
+    async def crash_after_commit(self,*values):
+        result=await original_execute(self,*values)
+        committed.append(result)
+        raise RuntimeError('Simulated process loss after durable gateway settlement')
+
+    monkeypatch.setattr(Gateway,'execute',crash_after_commit)
+    if operation in {'taxi','message'}:
+        draft=action(client,headers(dev),operation,args).json()
+        with pytest.raises(RuntimeError,match='Simulated process loss'):
+            confirm(client,headers(dev),draft['confirmation_id'])
+    else:
+        with pytest.raises(RuntimeError,match='Simulated process loss'):
+            action(client,headers(dev),operation,args)
+    assert store.rows('SELECT state,result FROM operation_actions')==[{'state':'executing','result':None}]
+    items=store.rows('SELECT * FROM items')
+    assert len(items)==1 and items[0]['kind']==kind
+    expected_result=committed[0]
+    if operation=='message':
+        expected_result={**expected_result,'destination':'staff inbox','staff_acknowledged':False}
+    expected=receipt(expected_result,'en')
+    path=store.db.execute('PRAGMA database_list').fetchone()[2]
+    store.db.close()
+    reopened=Store(path)
+    monkeypatch.setattr(server,'store',reopened)
+
+    async def forbidden(*_):
+        pytest.fail('A committed receipt must recover without executing Gateway again')
+
+    monkeypatch.setattr(Gateway,'execute',forbidden)
+    for device in (other,foreign):
+        assert action(client,headers(device),operation,args).status_code==403
+    assert action(client,headers(dev),operation,args).json()==expected
+    assert action(client,headers(dev),operation,args,'retry-new-call-id').json()==expected
+    if operation in {'taxi','message'}:
+        assert confirm(client,headers(dev),draft['confirmation_id']).json()==expected
+    assert reopened.rows('SELECT * FROM items')==items
+    row=reopened.rows('SELECT state,result FROM operation_actions')[0]
+    assert row['state']=='done' and json.loads(row['result'])==expected
+
+
+@pytest.mark.parametrize('changed',['unsettled','pending','tool','args_hash','call_id','session'])
+def test_recovery_never_executes_or_adopts_an_unsettled_or_mismatched_gateway_call(operations,monkeypatch,changed):
+    store,client,dev,_,_,headers,_=operations
+    original_execute=Gateway.execute
+
+    async def crash_after_commit(self,*values):
+        await original_execute(self,*values)
+        raise RuntimeError('Simulated operation completion crash')
+
+    monkeypatch.setattr(Gateway,'execute',crash_after_commit)
+    draft=action(client,headers(dev),'taxi',TAXI).json()
+    with pytest.raises(RuntimeError,match='Simulated operation'):
+        confirm(client,headers(dev),draft['confirmation_id'])
+    if changed=='unsettled':
+        store.run('UPDATE calls SET result=NULL')
+    elif changed=='pending':
+        store.run('UPDATE calls SET result=?',(json.dumps({'status':'pending'}),))
+    else:
+        store.run('UPDATE calls SET '+changed+'=?',('not-the-owned-call',))
+    path=store.db.execute('PRAGMA database_list').fetchone()[2]
+    store.db.close()
+    reopened=Store(path)
+    monkeypatch.setattr(server,'store',reopened)
+
+    async def forbidden(*_):
+        pytest.fail('Unknown settlement must not reexecute a mutation')
+
+    monkeypatch.setattr(Gateway,'execute',forbidden)
+    assert confirm(client,headers(dev),draft['confirmation_id']).json()['status']=='pending'
+    assert action(client,headers(dev),'taxi',TAXI).json()['status']=='pending'
+    assert len(reopened.rows('SELECT * FROM items'))==1
+    assert reopened.rows('SELECT state,result FROM operation_actions')==[{'state':'executing','result':None}]
+
+
 @pytest.mark.parametrize('operation,args,success,kind',[
     ('taxi',TAXI,'queued','taxi'),('message',MESSAGE,'saved','note')])
 def test_concurrent_confirmations_and_new_call_ids_do_not_double_write(operations,operation,args,success,kind):

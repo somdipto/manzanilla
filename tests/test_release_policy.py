@@ -14,10 +14,9 @@ VERSIONS = {"android/VERSION", "android/VERSION_CODE"}
 @pytest.mark.parametrize("path", [
     "android/hotel/src/main/java/HotelActivity.kt", "android/hotel/src/test/java/UpdaterTest.kt",
     "ui/reception/reception.js", "package.json", "package-lock.json", "scripts/build-reception.cjs",
-    "shared/reception-locales.json",
+    "shared/reception-locales.json", "shared/translation-languages.json", "shared/translation-runtime.txt",
     "scripts/release_policy.py", "scripts/release_policy_check.py", "scripts/publish_release.py", "scripts/verify-signed-upgrade.sh",
     "scripts/run-updater-emulator.sh",
-    "scripts/check_fish_auth.py",
     "scripts/signed_upgrade_proof.py",
     ".github/workflows/publish.yml", ".github/workflows/release.yml", ".github/workflows/verify.yml",
 ])
@@ -30,7 +29,8 @@ def test_release_inputs_require_both_version_changes(path):
 
 def test_docs_backend_and_test_only_changes_do_not_require_an_apk():
     paths = ["README.md", "docs/update-delivery.md", "AGENTS.md", "cloud/fish.py",
-             "tests/test_fish.py", "tests/test_release_policy.py", "android-guide.md"]
+             "tests/test_fish.py", "tests/test_release_policy.py", "android-guide.md",
+             "scripts/check_fish_auth.py"]
     assert not any(release_impact(path) for path in paths)
     assert validate_change(paths, "17.0.28", "58", "17.0.28", "58") is False
 

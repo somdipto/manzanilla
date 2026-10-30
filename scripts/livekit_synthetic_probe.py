@@ -24,6 +24,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'voice-worker'))
 from livekit import api, rtc
 import voice_worker.session as worker
+from voice_worker.worker import SYNTHETIC_ROOM_PREFIX
+from scripts.livekit_probe_playback import ProbePlayback
 
 DEV_KEY = 'devkey'
 DEV_SECRET = 'secret'
@@ -49,6 +51,7 @@ class SyntheticASR:
         self.frames = 0
         self.injected = False
         self.speaking = False
+        self.started = {'type': 'session_started', 'session_id': 'synthetic-asr'}
         SyntheticASR.instance = self
 
     async def connect(self):
@@ -61,9 +64,9 @@ class SyntheticASR:
         self.frames += 1
         if self.speaking and not self.injected and any(pcm):
             self.injected = True
-            await self.events.put({'type': 'user_turn_taken'})
+            await self.events.put({'type': 'user_turn_taken', 'turn_index': 0})
             await self.events.put({'type': 'committed', 'language_code': 'es',
-                                   'user_turn': True, 'turn_kind': 'user',
+                                   'user_turn': True, 'turn_kind': 'user', 'turn_index': 0,
                                    'text': 'Synthetic interruption'})
 
     async def close(self):
@@ -71,12 +74,15 @@ class SyntheticASR:
 
 
 class SyntheticLLM:
+    async def validate(self):
+        pass
+
     async def stream(self, prompt, text):
         yield 'Synthetic translation.'
 
 
 class SyntheticTTS:
-    def __init__(self, key, voice):
+    def __init__(self, key, voice, *, language):
         self.audio = asyncio.Queue()
         self.error = False
         self.text = ''
@@ -92,7 +98,7 @@ class SyntheticTTS:
         if self.task:
             return
         async def emit():
-            count = 120 if 'Greeting' in self.text else 15
+            count = 120 if self.text == worker.contract.greeting('es') else 15
             for _ in range(count):
                 await self.audio.put((bytes((24, 252)) * 12 + bytes((232, 3)) * 12) * 20)
                 await asyncio.sleep(.02)
@@ -124,51 +130,48 @@ async def run(url):
     for key in ('http_proxy', 'https_proxy', 'all_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY'):
         os.environ.pop(key, None)
     worker.FishASR, worker.FishTTS = SyntheticASR, SyntheticTTS
-    name = 'manz-synthetic-' + uuid.uuid4().hex
+    name = SYNTHETIC_ROOM_PREFIX + uuid.uuid4().hex
     trace = Trace()
     session = worker.InterpreterSession(name, livekit_url=url, api_key=DEV_KEY,
         api_secret=DEV_SECRET, fish_key='fixture', voice_id='fixture', llm=SyntheticLLM(),
-        greetings={'es': 'Greeting for test.'}, bench=trace, max_seconds=30)
+        bench=trace, max_seconds=30, client_identity='fixture-device')
     room = rtc.Room()
-    received_audio = asyncio.Event()
+    playback = ProbePlayback(room, session.agent_identity)
+    await playback.start()
+    received_audio = playback.received
     received_caption = asyncio.Event()
-    background = set()
+    records = []
+    outputs = []
 
-    @room.on('track_subscribed')
-    def subscribed(track, publication, participant):
-        if track.kind != rtc.TrackKind.KIND_AUDIO:
-            return
-        async def consume():
-            stream = rtc.AudioStream(track, sample_rate=48000, num_channels=1)
-            try:
-                async for frame in stream:
-                    if any(bytes(frame.frame.data)):
-                        received_audio.set()
-            finally:
-                await stream.aclose()
-        task = asyncio.create_task(consume())
-        background.add(task)
-        task.add_done_callback(background.discard)
 
     @room.on('data_received')
     def data(packet):
-        if packet.topic != 'agent-event':
+        playback.accept(packet)
+        if (packet.topic != 'agent-event' or not packet.participant
+                or packet.participant.identity != session.agent_identity):
             return
         message = json.loads(packet.data)
-        if message.get('toolName') == 'manzanilla_publish_interpretation_v2':
-            params = message.get('params', {})
-            if params.get('original') == 'Synthetic interruption' and params.get('translation') == 'Synthetic translation.':
+        if message.get('type') == 'translation.output':
+            outputs.append(message)
+        if message.get('type') == 'translation.utterance':
+            record = message['record']
+            records.append(record)
+            if (record['original'] == 'Synthetic interruption'
+                    and record['translation'] == 'Synthetic translation.'
+                    and record['translation_status'] == 'complete'):
                 received_caption.set()
 
     token = (api.AccessToken(DEV_KEY, DEV_SECRET).with_identity('fixture-device')
              .with_metadata(json.dumps({'guest_language': 'es', 'staff_language': 'en'}))
              .with_grants(api.VideoGrants(room_join=True, room=name, can_publish=True,
                                           can_subscribe=True)).to_jwt())
-    await asyncio.wait_for(room.connect(url, token), 15)
-    source = rtc.AudioSource(16000, 1)
-    await room.local_participant.publish_track(rtc.LocalAudioTrack.create_audio_track('fixture-mic', source))
-    task = asyncio.create_task(session.run())
+    connection = asyncio.create_task(room.connect(url, token, options=rtc.RoomOptions(connect_timeout=10)))
+    source = task = None
     try:
+        await asyncio.shield(connection)
+        source = rtc.AudioSource(16000, 1)
+        await room.local_participant.publish_track(rtc.LocalAudioTrack.create_audio_track('fixture-mic', source))
+        task = asyncio.create_task(session.run())
         await asyncio.wait_for(received_audio.wait(), 15)
         assert SyntheticASR.instance is not None and SyntheticASR.instance.speaking
         # Audio originates from the SDK track and is decoded by the real server.
@@ -184,29 +187,35 @@ async def run(url):
             await asyncio.sleep(.05)
         assert SyntheticASR.instance.injected, 'worker did not receive microphone audio during greeting'
         await asyncio.wait_for(received_caption.wait(), 15)
-        expected = ['interrupted', 'playback_flushed', 'first_audio_published', 'caption_sent']
+        if playback.error:
+            raise playback.error
+        expected = ['interrupted', 'playback_flushed', 'first_audio_published', 'record_sent']
         names = [entry[0] for entry in trace.events]
         for event in expected:
             assert event in names, (event, names)
         interrupted = next(t for e,t,v in trace.events if e == 'interrupted')
         flushed = next(t for e,t,v in trace.events if e == 'playback_flushed')
-        first_turn = next(t for e,t,v in trace.events if e == 'first_audio_published' and v.get('turn') == 1)
+        first_turn = next(t for e,t,v in trace.events if e == 'first_audio_published' and v.get('generation') == 2)
         assert interrupted <= flushed <= first_turn
         assert SyntheticASR.instance.frames > 0 and SyntheticASR.instance.injected
+        assert any(event['output_generation'] == 1 and event['status'] == 'interrupted' for event in outputs)
+        assert len({record['utterance_id'] for record in records}) == 1
         result = {'result': 'PASS', 'server': 'local LiveKit 1.13.10',
             'providers': 'synthetic fakes; zero paid calls', 'device_audio_frames_received_by_worker': SyntheticASR.instance.frames,
             'device_received_agent_audio': received_audio.is_set(), 'interruption_flushed': True,
-            'device_received_matching_caption': True,
+            'output_renderer': 'shipped AudioWorklet in headless Chromium; not physical speakers',
+            'device_received_matching_utterance': True,
             'interrupt_event_to_local_flush_ms': round((flushed - interrupted) * 1000, 2),
             'scope': 'transport and ordering only; not acoustic latency, ASR accuracy or naturalness'}
     finally:
-        pending = [task, *background]
-        for item in pending:
-            item.cancel()
-        stopped = await asyncio.gather(*pending, return_exceptions=True)
+        await session.stop()
+        stopped = await asyncio.gather(task, return_exceptions=True) if task else []
+        await playback.close()
         try:
-            await source.aclose()
+            if source:
+                await source.aclose()
         finally:
+            await asyncio.gather(connection, return_exceptions=True)
             await room.disconnect()
         for outcome in stopped:
             if isinstance(outcome, BaseException) and not isinstance(outcome, asyncio.CancelledError):

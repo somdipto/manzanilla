@@ -3,9 +3,14 @@
   "private": true,
   "scripts": {
     "build:reception": "node scripts/build-reception.cjs",
-    "check:reception": "node scripts/build-reception.cjs --check"
+    "check:reception": "node scripts/build-reception.cjs --check",
+    "build:web": "node scripts/build-web.cjs",
+    "check:web": "node scripts/build-web.cjs --check"
   },
   "devDependencies": {
     "esbuild": "0.25.12"
+  },
+  "dependencies": {
+    "livekit-client": "2.23.0"
   }
 }

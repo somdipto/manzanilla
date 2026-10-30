@@ -5,9 +5,9 @@ body{font:16px system-ui;background:#faf9f5;color:#20241f;max-width:1080px;margi
 <h1 data-ui="Orange Night Reception"></h1><p data-ui="Hotel configuration, fleet status and morning handoff."></p>
 <label><span data-ui="Staff interface language"></span><select id="staff-locale"></select></label>
 <div class="row"><label><span data-ui="Admin or hotel staff token"></span><input id="token" type="password" autocomplete="off"></label><label><span data-ui="Hotel ID"></span><input id="hotel" autocomplete="off"></label><button id="load" data-ui="Open hotel"></button><button id="list" data-ui="List hotels (admin)"></button><button id="create" data-ui="Create hotel"></button></div><p id="status" role="status"></p><p id="timezone-warning" class="error" role="status"></p><div id="hotel-list"></div>
-<section><h2 data-ui="Night Reception Inbox"></h2><p data-ui="A staffed dashboard is required. No push notification, answered call or booking is promised."></p><div id="inbox"></div></section>
+<section><h2 data-ui="Night Reception Inbox"></h2><p data-ui="A staffed dashboard is required. No push notification, answered call or booking is promised."></p><label><span data-ui="Night Reception Inbox"></span><select id="inbox-filter"><option value="all" data-ui="Night Reception Inbox"></option><option value="unfinished"></option><option value="resolved" data-ui="Staff marked the request resolved"></option></select></label><div id="inbox"></div><nav class="row"><button id="inbox-back" data-ui="Back" disabled></button><output id="inbox-page">1</output><button id="inbox-next" data-ui="Continue" disabled></button></nav></section>
 <section><h2 data-ui="Devices and integrations"></h2><pre id="fleet"></pre></section>
-<section><h2 data-ui="Morning handoff"></h2><div class="row"><input id="start" type="datetime-local"><input id="end" type="datetime-local"><button id="morning" data-ui="Get summary"></button></div><pre id="summary"></pre></section>
+<section><h2 data-ui="Morning handoff"></h2><p><span data-ui="IANA timezone"></span>: <bdi id="handoff-timezone"></bdi></p><div class="row"><input id="start" type="datetime-local" aria-describedby="handoff-timezone"><input id="end" type="datetime-local" aria-describedby="handoff-timezone"><button id="morning" data-ui="Get summary"></button></div><pre id="summary"></pre></section>
 <section><h2 data-ui="Hotel knowledge and escalation configuration"></h2><p data-ui="Admin only. Enter the actual hotel ID, name, IANA timezone, staff-approved languages, contacts, services, knowledge and check-in policy. Empty fields mean unconfigured; no example hotel or policy is supplied. Reservation integration must be unconfigured, rest or edge. Credentials are issued separately."></p><p id="config-conflict" class="error" role="status"></p><button id="refresh-config" data-ui="Refresh configuration" disabled></button>
 <form id="configuration"><fieldset id="config-fields" disabled><div class="fields">
 <label><span data-ui="Hotel name"></span><input id="hotel-name" required maxlength="100" dir="auto"></label><label><span data-ui="IANA timezone"></span><input id="timezone" required dir="ltr"></label>
@@ -29,6 +29,7 @@ const languages=new Map(catalogue.languages.map(language=>[language.code,languag
 let locale='es',localeSelected=false,loadedHotel='',hotelConfig=null,formBase=null,items=[],dirty=false,configConflict=false,principal=null,statusMessage='',statusValues={};
 let reviewRows=[],contentAdmin=false,review=null,reviewMessage='',contentBusy=false;
 let scopeRevision=0,overviewFlight=null,pollTimer=null,dictionaryCounter=0,saveBusy=false;
+let inboxBefore='',inboxPages=[],inboxNext=null,pageRevision=0;
 const drafts=new Map(),hid=()=>encodeURIComponent($('hotel').value);
 const scope=()=>JSON.stringify([scopeRevision,$('hotel').value,$('token').value]);
 function uiText(message,values={}) {
@@ -49,9 +50,28 @@ async function api(path,method='GET',body,signal) {
   return data;
 }
 function action(id,fn) {$(id).onclick=async()=>{const current=scope();try{message('Working…');await fn();if(current===scope())message('Updated')}catch(error){if(current===scope())showError(error)}}}
-function timeFormatter() {
-  try {if(!hotelConfig||!hotelConfig.timezone.trim())throw Error();const formatter=new Intl.DateTimeFormat(locale,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:hotelConfig.timezone});$('timezone-warning').textContent='';return value=>formatter.format(new Date(value*1000))}
-  catch (_) {const formatter=new Intl.DateTimeFormat(locale,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'});$('timezone-warning').textContent=uiText('Invalid hotel timezone. Times are shown in UTC.');return value=>uiText('{time} UTC',{time:formatter.format(new Date(value*1000))})}
+function effectiveTimezone() {
+  try {if(!hotelConfig||!hotelConfig.timezone.trim())throw Error();new Intl.DateTimeFormat(locale,{timeZone:hotelConfig.timezone});$('timezone-warning').textContent='';return hotelConfig.timezone}
+  catch (_) {$('timezone-warning').textContent=uiText('Invalid hotel timezone. Times are shown in UTC.');return 'UTC'}
+}
+function timeFormatter(zone) {
+  const formatter=new Intl.DateTimeFormat(locale,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZone:zone});
+  return value=>zone==='UTC'?uiText('{time} UTC',{time:formatter.format(new Date(value*1000))}):formatter.format(new Date(value*1000));
+}
+function hotelTimestamp(value) {
+  const invalid='Choose a valid, unambiguous hotel-local time. Daylight-saving transitions may skip or repeat times.';
+  const match=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if(!match)fail(invalid);
+  const parts=match.slice(1).map(Number),wall=Date.UTC(parts[0],parts[1]-1,parts[2],parts[3],parts[4]);
+  const formatter=new Intl.DateTimeFormat('en-GB',{timeZone:effectiveTimezone(),calendar:'gregory',numberingSystem:'latn',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+  const localParts=time=>{const fields=Object.fromEntries(formatter.formatToParts(new Date(time)).map(part=>[part.type,part.value]));return ['year','month','day','hour','minute'].map(key=>Number(fields[key]))};
+  // Discover both offsets around a transition, then require exactly one instant
+  // whose hotel-local fields equal the entered fields. Never choose a DST fold.
+  const offsets=new Set(),matches=new Set();
+  for(let hours=-48;hours<=48;hours+=6){const instant=wall+hours*3600000,local=localParts(instant);offsets.add(Date.UTC(local[0],local[1]-1,local[2],local[3],local[4])-instant)}
+  for(const offset of offsets){const instant=wall-offset;if(localParts(instant).every((part,index)=>part===parts[index]))matches.add(instant)}
+  if(matches.size!==1)fail(invalid);
+  return matches.values().next().value/1000;
 }
 function labelledInput(label,id,value,multiline=false) {
   const wrapper=element('label'),caption=element('span',uiText(label)),input=element(multiline?'textarea':'input');
@@ -65,11 +85,13 @@ function itemDraft(item) {
 }
 function renderInbox(force=false) {
   if(!hotelConfig)return;
-  const formatTime=timeFormatter(),states={open:'Waiting for reception',acknowledged:'Acknowledged',resolved:'Staff marked the request resolved'},kinds={taxi:'Taxi',note:'Message',message:'Message',request:'Hotel request',escalation:'Escalation'};
+  const zone=effectiveTimezone(),formatTime=timeFormatter(zone),states={open:'Waiting for reception',acknowledged:'Acknowledged',resolved:'Staff marked the request resolved'},kinds={taxi:'Taxi',note:'Message',message:'Message',request:'Hotel request',escalation:'Escalation'};
+  $('handoff-timezone').textContent=zone;
   const present=new Set();
-  for(const item of items) {
-    present.add(item.id);const draft=itemDraft(item),fingerprint=JSON.stringify([item,locale,principal,draft.reviewRequired,draft.busy]);
+  for(const [index,item] of items.entries()) {
+    present.add(item.id);const draft=itemDraft(item),fingerprint=JSON.stringify([item,locale,zone,principal,draft.reviewRequired,draft.busy]);
     let article=Array.from($('inbox').children).find(node=>node.dataset.itemId===item.id);
+    if(article&&$('inbox').children[index]!==article)$('inbox').insertBefore(article,$('inbox').children[index]||null);
     if(article&&!force&&article.dataset.fingerprint===fingerprint)continue;
     const replacement=element('article');replacement.dataset.itemId=item.id;replacement.dataset.version=String(item.state_version);replacement.dataset.fingerprint=fingerprint;
     const heading=element('h3',uiText(kinds[item.kind]||'Unknown request type')+' · '+uiText(states[item.status]||'Unknown request state')),identity=element('bdi',item.id);
@@ -103,9 +125,10 @@ function renderInbox(force=false) {
       const retained=labelledInput('Private resolution note','item-'+item.id+'-note',draft.note,true);retained.input.readOnly=true;controls.append(retained.wrapper);
       if(draft.reviewRequired)controls.append(element('p',uiText('This request changed. Your note is kept. Review the refreshed request before continuing.'),'error'));
     }
-    replacement.append(controls);if(article)article.replaceWith(replacement);else $('inbox').append(replacement);
+    replacement.append(controls);if(article)article.replaceWith(replacement);else $('inbox').insertBefore(replacement,$('inbox').children[index]||null);
   }
-  for(const article of Array.from($('inbox').children))if(!present.has(article.dataset.itemId)){article.remove();drafts.delete(article.dataset.itemId)}
+  for(const article of Array.from($('inbox').children))if(!present.has(article.dataset.itemId))article.remove();
+  for(const [id,draft] of drafts)if(!present.has(id)&&!draft.name&&!draft.note&&!draft.busy)drafts.delete(id);
 }
 async function transition(item,draft) {
   if(draft.busy||draft.reviewRequired)return;
@@ -191,17 +214,29 @@ function renderLocale() {
   const focused=document.activeElement,focusId=focused&&focused.id,start=focused&&focused.selectionStart,end=focused&&focused.selectionEnd;
   document.documentElement.lang=locale;document.documentElement.dir=languages.get(locale).direction;document.title=uiText('Orange Reception');document.querySelectorAll('[data-ui]').forEach(node=>{node.textContent=uiText(node.dataset.ui)});$('staff-locale').value=locale;
   $('start').setAttribute('aria-label',uiText('Morning handoff'));$('end').setAttribute('aria-label',uiText('Morning handoff'));$('role').setAttribute('aria-label',uiText('Onboard device, Edge or staff'));
+  $('inbox-filter').options[1].textContent=uiText('Waiting for reception')+' / '+uiText('Acknowledged');
   if(statusMessage)$('status').textContent=uiText(statusMessage,statusValues);renderInbox(true);renderPermissions();
   const arrival=reviewRows.findIndex(row=>row.kind==='arrival');if(arrival>=0)$('content-source').options[arrival].textContent=uiText('Arrival guide');renderReview();
   if(focusId&&$(focusId)&&$(focusId)!==focused){$(focusId).focus();if(start!==null&&typeof $(focusId).setSelectionRange==='function')$(focusId).setSelectionRange(start,end)}
 }
 function stopPolling(){clearTimeout(pollTimer);pollTimer=null;if(overviewFlight)overviewFlight.controller.abort()}
 function schedulePoll(){clearTimeout(pollTimer);if(!document.hidden&&loadedHotel&&loadedHotel===$('hotel').value)pollTimer=setTimeout(()=>load().catch(showError),5000)}
+function renderInboxPages(){
+  $('inbox-page').textContent=String(inboxPages.length+1);
+  $('inbox-back').disabled=!loadedHotel||!!overviewFlight||!inboxPages.length;
+  $('inbox-next').disabled=!loadedHotel||!!overviewFlight||!inboxNext;
+}
+function navigateInbox(before,pages) {
+  stopPolling();overviewFlight=null;pageRevision++;inboxBefore=before;inboxPages=pages;inboxNext=null;
+  load().catch(showError);
+}
 async function load() {
   if(overviewFlight)return overviewFlight.promise;
-  const current=scope(),controller=new AbortController(),flight={controller,promise:null};overviewFlight=flight;
+  const current=scope(),page=pageRevision,controller=new AbortController(),flight={controller,promise:null};overviewFlight=flight;renderInboxPages();
+  const parameters=new URLSearchParams();if($('inbox-filter').value!=='all')parameters.set('item_status',$('inbox-filter').value);if(inboxBefore)parameters.set('before',inboxBefore);
   flight.promise=(async()=>{try {
-    const data=await api('/api/hotels/'+hid()+'/overview','GET',undefined,controller.signal);if(current!==scope())return;
+    const data=await api('/api/hotels/'+hid()+'/overview'+(parameters.size?'?'+parameters:''),'GET',undefined,controller.signal);if(current!==scope()||page!==pageRevision)return;
+    inboxNext=data.items_next||null;
     const changed=loadedHotel!==$('hotel').value;loadedHotel=$('hotel').value;
     if(changed){items=[];drafts.clear();dirty=false;configConflict=false;localeSelected=false;$('inbox').replaceChildren()}
     // A delayed overview must never replace a newer item or configuration.
@@ -212,7 +247,7 @@ async function load() {
     if(!localeSelected)locale=languages.has(hotelConfig.default_language)?hotelConfig.default_language:'es';
     updateReview(data.content_review||[],contentAdmin,changed);$('fleet').textContent=JSON.stringify({devices:data.devices,integrations:data.integrations},null,2);$('sessions').textContent=JSON.stringify(data.sessions,null,2);
     renderLocaleFromPoll();
-  } finally {if(overviewFlight===flight){overviewFlight=null;if(current===scope())schedulePoll()}}})();
+  } finally {if(overviewFlight===flight){overviewFlight=null;renderInboxPages();if(current===scope())schedulePoll()}}})();
   return flight.promise;
 }
 function renderLocaleFromPoll(){
@@ -220,7 +255,8 @@ function renderLocaleFromPoll(){
 }
 function resetScope(){
   scopeRevision++;stopPolling();overviewFlight=null;saveBusy=false;loadedHotel='';hotelConfig=null;formBase=null;items=[];drafts.clear();dirty=false;configConflict=false;principal=null;contentAdmin=false;contentBusy=false;review=null;reviewRows=[];reviewMessage='';
-  for(const id of ['inbox','fleet','sessions','credential','summary','hotel-list','timezone-warning'])$(id).replaceChildren();$('content-source').replaceChildren();$('content-title').value='';$('content-body').value='';renderPermissions();renderReview();
+  pageRevision++;inboxBefore='';inboxPages=[];inboxNext=null;$('inbox-filter').value='all';renderInboxPages();
+  for(const id of ['inbox','fleet','sessions','credential','summary','hotel-list','timezone-warning','handoff-timezone'])$(id).replaceChildren();$('content-source').replaceChildren();$('content-title').value='';$('content-body').value='';renderPermissions();renderReview();
 }
 for(const language of catalogue.languages){const option=element('option',language.native);option.value=language.code;option.lang=language.code;option.dir=language.direction;for(const id of ['staff-locale','content-language','default-language','supported-languages'])$(id).append(option.cloneNode(true))}
 const blank=element('option','');blank.value='';$('default-language').prepend(blank);$('default-language').value='';
@@ -228,6 +264,9 @@ $('staff-locale').onchange=()=>{if(languages.has($('staff-locale').value)){local
 $('configuration').addEventListener('input',()=>{dirty=true});$('configuration').addEventListener('change',()=>{dirty=true});
 $('add-service').onclick=()=>{dictionaryRow('services');dirty=true};$('add-knowledge').onclick=()=>{dictionaryRow('knowledge');dirty=true};
 $('content-source').onchange=()=>selectReview();$('content-language').onchange=()=>selectReview();$('content-draft').onclick=()=>submitReview(true);$('content-approve').onclick=()=>submitReview(false);
+$('inbox-filter').onchange=()=>navigateInbox('',[]);
+$('inbox-back').onclick=()=>{if(inboxPages.length)navigateInbox(inboxPages[inboxPages.length-1],inboxPages.slice(0,-1))};
+$('inbox-next').onclick=()=>{if(inboxNext)navigateInbox(inboxNext,[...inboxPages,inboxBefore])};
 for(const id of ['token','hotel'])$(id).addEventListener('input',resetScope);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopPolling();else if(loadedHotel)load().catch(showError)});window.addEventListener('pagehide',stopPolling);
 action('load',load);
@@ -242,7 +281,7 @@ $('configuration').onsubmit=async event=>{
 };
 action('refresh-config',async()=>{if(dirty&&!confirm(uiText('Refreshing replaces your unsaved configuration edits. Continue?')))return;const current=scope();await load();if(current===scope()&&hotelConfig)fillConfiguration(hotelConfig)});
 action('issue',async()=>{if(!contentAdmin)fail('Hotel authorization required');const current=scope(),result=await api('/api/hotels/'+hid()+'/credentials','POST',{role:$('role').value});if(current===scope())$('credential').textContent=JSON.stringify(result,null,2)});
-action('morning',async()=>{const current=scope(),start=new Date($('start').value).getTime()/1000,end=new Date($('end').value).getTime()/1000,result=await api('/api/hotels/'+hid()+'/morning?start='+start+'&end='+end);if(current===scope())$('summary').textContent=JSON.stringify(result,null,2)});
+action('morning',async()=>{const current=scope(),start=hotelTimestamp($('start').value),end=hotelTimestamp($('end').value);if(end<=start)fail('Please complete these details.');const result=await api('/api/hotels/'+hid()+'/morning?start='+start+'&end='+end);if(current===scope())$('summary').textContent=JSON.stringify(result,null,2)});
 renderLocale();
 })();
 </script></html>

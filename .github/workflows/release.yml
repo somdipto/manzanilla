@@ -59,24 +59,19 @@ jobs:
           test -n "$ORANGE_KEY_PASSWORD"
           umask 077
           printf '%s' "$ORANGE_KEYSTORE_BASE64" | base64 --decode > "$ORANGE_KEYSTORE"
-      - name: Check disposable testing access and build personal-test only
-        if: matrix.distribution == 'personal-test'
+      - name: Build signed candidate without provider credentials
+        # These public sentinels exercise the no-injection policy; they are not keys.
+        # The installed-candidate fixture must still observe no provider credentials.
         env:
-          FISH_API_KEY: ${{ secrets.FISH_API_KEY }}
+          FISH_API_KEY: synthetic-env-not-a-credential
+          GEMINI_API_KEY: synthetic-env-not-a-credential
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/check_fish_auth.py --distribution personal-test
           bash android/gradlew -p android :hotel:assembleRelease :hotel:assembleReleaseAndroidTest \
-            -PupgradeFixture -Pdistribution=personal-test --no-daemon --max-workers=2
-      - name: Build hotel without provider credentials
-        if: matrix.distribution == 'hotel'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/check_fish_auth.py --distribution hotel
-          bash android/gradlew -p android :hotel:assembleRelease :hotel:assembleReleaseAndroidTest \
-            -PupgradeFixture -Pdistribution=hotel --no-daemon --max-workers=2
+            -PupgradeFixture -Pdistribution="$RELEASE_DISTRIBUTION" \
+            -PFISH_API_KEY=synthetic-property-not-a-credential -PGEMINI_API_KEY=synthetic-property-not-a-credential \
+            --no-daemon --max-workers=2
       - name: Remove private signing material
         if: always()
         shell: bash

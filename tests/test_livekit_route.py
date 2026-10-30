@@ -14,16 +14,21 @@ from cloud.models import Hotel
 import cloud.app as server
 import cloud.livekit_route as route
 
-REQUEST = {'guest_language': 'es', 'staff_language': 'en', 'mode': 'translation'}
+REQUEST = {'guest_language': 'es', 'staff_language': 'en', 'mode': 'translation',
+           'protocol': 'translation-v1', 'request_id': 'synthetic-request'}
 
 
 @pytest.fixture
 def livekit_env(tmp_path, monkeypatch):
     store = Store(str(tmp_path / 'lk.db'))
-    store.save_hotel(Hotel(id='a', name='Synthetic').model_dump())
+    store.save_hotel(Hotel(id='a', name='Synthetic', supported_languages=['es', 'en']).model_dump())
     monkeypatch.setattr(server, 'store', store)
     monkeypatch.setenv('VOICE_ROUTE', 'livekit')
     monkeypatch.setenv('ALLOW_UNQUALIFIED_LIVEKIT', '1')
+    monkeypatch.setenv('LIVEKIT_WORKER_ENABLED', '1')
+    monkeypatch.setenv('FISH_API_KEY', 'synthetic-fish-key')
+    monkeypatch.setenv('FISH_VOICE_ID', 'synthetic-voice')
+    monkeypatch.setenv('GEMINI_API_KEY', 'synthetic-gemini-key')
     monkeypatch.setenv('LIVEKIT_URL', 'wss://voice.example.test')
     monkeypatch.setenv('LIVEKIT_API_KEY', 'testkey')
     monkeypatch.setenv('LIVEKIT_API_SECRET', 'testsecret')
@@ -124,7 +129,7 @@ def test_another_callers_recorded_request_cannot_bypass_livekit_opt_in(livekit_e
     assert client.post('/api/device/fish-session', json=request, headers=headers).status_code == 200
     recorded = store.rows('SELECT * FROM fish_sessions')
     if hotel_id != 'a':
-        store.save_hotel(Hotel(id=hotel_id, name='Other synthetic hotel').model_dump())
+        store.save_hotel(Hotel(id=hotel_id, name='Other synthetic hotel', supported_languages=['es', 'en']).model_dump())
     other = store.issue(hotel_id, 'device')
     monkeypatch.delenv('ALLOW_UNQUALIFIED_LIVEKIT')
     response = client.post('/api/device/fish-session', json=request,
@@ -141,10 +146,8 @@ def test_disabled_livekit_keeps_authentication_and_language_failures(livekit_env
     unauthorized = client.post('/api/device/fish-session', json=REQUEST)
     assert unauthorized.status_code == 401
     assert unauthorized.headers['X-Manzanilla-Session-Creation'] == 'not-created'
-    invalid_pair = client.post('/api/device/fish-session', json={**REQUEST, 'staff_language': 'es'}, headers=headers)
+    invalid_pair = client.post('/api/device/fish-session', json={**REQUEST, 'staff_language': 'xx'}, headers=headers)
     assert invalid_pair.status_code == 422
-    assert invalid_pair.headers['X-Manzanilla-Voice-Failure'] == 'configuration:contract:0'
-    assert invalid_pair.headers['X-Manzanilla-Session-Creation'] == 'not-created'
     assert store.rows('SELECT * FROM fish_sessions') == []
 
 
@@ -159,6 +162,105 @@ def test_end_deletes_the_room_and_settles_after_opt_in_withdrawal(livekit_env, m
     assert deleted == [minted['session_id']]
     assert store.rows('SELECT status FROM fish_sessions WHERE session_id=?',
                       (minted['session_id'],))[0]['status'] == 'ended'
+
+
+@pytest.mark.parametrize('entrypoint', ['session', 'request', 'admin'])
+@pytest.mark.parametrize('setting,replacement', [
+    ('LIVEKIT_URL', 'wss://replacement.example.test'),
+    ('LIVEKIT_API_KEY', 'replacement-key'),
+    ('LIVEKIT_API_SECRET', 'replacement-secret'),
+    ('LIVEKIT_API_SECRET', None),
+])
+def test_cleanup_requires_original_authority_after_restart(
+        livekit_env, monkeypatch, entrypoint, setting, replacement):
+    store, headers, deleted = livekit_env
+    monkeypatch.setenv('ORANGE_ADMIN_TOKEN', 'x' * 40)
+    client = TestClient(server.app)
+    device = store.auth(server.bearer(headers['Authorization']), 'device')
+    request = {**REQUEST, 'request_id': 'authority-bound-request'}
+    minted = client.post('/api/device/fish-session', json=request, headers=headers).json()
+    recorded = store.rows('SELECT * FROM fish_sessions')[0]
+    authority = recorded['cleanup_authority']
+    assert len(authority) == 64 and set(authority) <= set('0123456789abcdef')
+    assert all(value not in json.dumps(recorded)
+               for value in ('testkey', 'testsecret', 'voice.example.test'))
+    assert 'cleanup_authority' not in minted
+    path = store.db.execute('PRAGMA database_list').fetchone()[2]
+    store.db.close()
+    reopened = Store(path)
+    monkeypatch.setattr(server, 'store', reopened)
+    assert reopened.rows('SELECT cleanup_authority FROM fish_sessions') == [
+        {'cleanup_authority': authority}]
+    if entrypoint == 'admin':
+        url = '/api/credentials/' + device['id']
+        def cleanup():
+            return client.delete(url, headers={'Authorization': 'Bearer ' + 'x' * 40})
+    else:
+        url = ('/api/device/fish-session/' + minted['session_id'] + '/end'
+               if entrypoint == 'session' else
+               '/api/device/fish-session-requests/authority-bound-request/end')
+        def cleanup():
+            return client.post(url, headers=headers)
+    # Even a successful/absent-room response from the replacement deployment
+    # could not prove that the original room is gone: do not contact it at all.
+    with monkeypatch.context() as changed:
+        if replacement is None:
+            changed.delenv(setting)
+        else:
+            changed.setenv(setting, replacement)
+        refused = cleanup()
+        assert refused.status_code == (202 if entrypoint == 'admin' else 503)
+        if entrypoint == 'admin':
+            assert refused.json() == {'status': 'revoked', 'voice_cleanup': 'pending'}
+        assert deleted == []
+        assert reopened.rows('SELECT status,cleanup_authority FROM fish_sessions') == [
+            {'status': 'ending', 'cleanup_authority': authority}]
+        if entrypoint != 'admin':
+            blocked = client.post('/api/device/fish-session',
+                                  json={**REQUEST, 'request_id': 'another-request'}, headers=headers)
+            assert blocked.status_code == (503 if replacement is None else 409)
+    # The original credentials can clean up even after admin revocation removed
+    # device access. No migration or current environment replaces lease identity.
+    settled = cleanup()
+    assert settled.status_code == 200
+    assert deleted == [minted['session_id']]
+    assert reopened.rows('SELECT status FROM fish_sessions') == [{'status': 'ended'}]
+    assert cleanup().status_code == 200 and deleted == [minted['session_id']]
+
+
+@pytest.mark.parametrize('entrypoint', ['session', 'request', 'admin'])
+@pytest.mark.parametrize('authority', [None, ''])
+def test_unknown_cleanup_authority_never_contacts_current_deployment(
+        livekit_env, monkeypatch, entrypoint, authority):
+    store, headers, deleted = livekit_env
+    monkeypatch.setenv('ORANGE_ADMIN_TOKEN', 'x' * 40)
+    client = TestClient(server.app)
+    device = store.auth(server.bearer(headers['Authorization']), 'device')
+    minted = client.post('/api/device/fish-session',
+                         json={**REQUEST, 'request_id': 'unknown-authority'}, headers=headers).json()
+    store.run('UPDATE fish_sessions SET cleanup_authority=?', (authority,))
+    if entrypoint == 'admin':
+        response = client.delete('/api/credentials/' + device['id'],
+                                 headers={'Authorization': 'Bearer ' + 'x' * 40})
+        assert response.status_code == 202
+        assert response.json()['voice_cleanup'] == 'pending'
+    else:
+        url = ('/api/device/fish-session/' + minted['session_id'] + '/end'
+               if entrypoint == 'session' else
+               '/api/device/fish-session-requests/unknown-authority/end')
+        assert client.post(url, headers=headers).status_code == 503
+    assert deleted == []
+    assert store.rows('SELECT status,cleanup_authority FROM fish_sessions') == [
+        {'status': 'ending', 'cleanup_authority': authority}]
+
+
+def test_equivalent_http_endpoint_keeps_cleanup_authority(livekit_env, monkeypatch):
+    _, headers, deleted = livekit_env
+    client = TestClient(server.app)
+    minted = client.post('/api/device/fish-session', json=REQUEST, headers=headers).json()
+    monkeypatch.setenv('LIVEKIT_URL', 'wss://VOICE.EXAMPLE.TEST:443/')
+    response = client.post('/api/device/fish-session/' + minted['session_id'] + '/end', headers=headers)
+    assert response.status_code == 200 and deleted == [minted['session_id']]
 
 
 def test_missing_server_config_refuses_cleanly(livekit_env, monkeypatch):
@@ -186,7 +288,7 @@ def test_lost_response_cleanup_is_owned_and_uses_stored_route_after_switch(livek
     monkeypatch.delenv('ALLOW_UNQUALIFIED_LIVEKIT')
     other = store.issue('a', 'device')
     url = '/api/device/fish-session-requests/lost-livekit-response/end'
-    assert client.post(url, headers={'Authorization': 'Bearer ' + other['token']}).status_code == 503
+    assert client.post(url, headers={'Authorization': 'Bearer ' + other['token']}).status_code == 401
     assert deleted == []
     response = client.post(url, headers=headers)
     assert response.status_code == 200 and response.json() == {'status': 'ended'}
@@ -269,8 +371,9 @@ def test_duplicate_preflight_does_not_claim_original_session_was_not_created(liv
     assert store.rows('SELECT status FROM fish_sessions') == [{'status': 'live'}]
 
 
-def test_legacy_database_migration_preserves_existing_sessions(tmp_path):
-    import sqlite3
+@pytest.mark.parametrize('has_route', [False, True])
+def test_legacy_database_migration_preserves_existing_sessions(tmp_path, monkeypatch, has_route):
+    import asyncio, sqlite3
     path = tmp_path / 'legacy.db'
     with sqlite3.connect(path) as db:
         db.execute('''CREATE TABLE fish_sessions(
@@ -282,16 +385,30 @@ def test_legacy_database_migration_preserves_existing_sessions(tmp_path):
             ('two', 'a', 'd2', 'hash2', 'hosted-session', 1, 2, 3, 600, 'ending'),
             ('three', 'a', 'd3', 'hash3', None, 1, 2, 3, 600, 'uncertain'),
         ])
+        if has_route:
+            db.execute("ALTER TABLE fish_sessions ADD COLUMN route TEXT NOT NULL DEFAULT 'fish'")
+            db.execute("UPDATE fish_sessions SET route='livekit' WHERE id='one'")
     store = Store(str(path))
     assert store.rows('SELECT id,session_id,status,route FROM fish_sessions ORDER BY id') == [
         {'id': 'one', 'session_id': 'manz-legacy', 'status': 'live', 'route': 'livekit'},
         {'id': 'three', 'session_id': None, 'status': 'uncertain', 'route': 'fish'},
         {'id': 'two', 'session_id': 'hosted-session', 'status': 'ending', 'route': 'fish'},
     ]
+    monkeypatch.setenv('LIVEKIT_URL', 'wss://voice.example.test')
+    monkeypatch.setenv('LIVEKIT_API_KEY', 'testkey')
+    monkeypatch.setenv('LIVEKIT_API_SECRET', 'testsecret')
+    async def unexpected_delete(*args):
+        pytest.fail('Migration must not guess which deployment owns a legacy room')
+    monkeypatch.setattr(route, 'delete_room', unexpected_delete)
+    assert all(row['cleanup_authority'] is None for row in store.rows('SELECT * FROM fish_sessions'))
+    assert asyncio.run(route.terminate(store, store.rows("SELECT * FROM fish_sessions WHERE id='one'")[0])) is False
+    assert store.rows("SELECT status FROM fish_sessions WHERE id='one'") == [{'status': 'ending'}]
     # Migration is one-time: a later Fish ID that resembles a room is not reclassified.
     store.run("UPDATE fish_sessions SET session_id='manz-hosted' WHERE id='two'")
     reopened = Store(str(path))
     assert reopened.rows("SELECT route FROM fish_sessions WHERE id='two'") == [{'route': 'fish'}]
+    assert all(row['cleanup_authority'] is None for row in reopened.rows('SELECT * FROM fish_sessions'))
+    assert asyncio.run(route.terminate(reopened, reopened.rows("SELECT * FROM fish_sessions WHERE id='one'")[0])) is False
 
 
 def test_end_uses_stored_fish_route_even_for_room_shaped_hosted_id(livekit_env, monkeypatch):
@@ -299,6 +416,8 @@ def test_end_uses_stored_fish_route_even_for_room_shaped_hosted_id(livekit_env, 
     store, headers, deleted = livekit_env
     device = store.auth(server.bearer(headers['Authorization']), 'device')
     ident = store.reserve_fish(device, 600, 1800, 3600, 60, 3600)
+    assert store.rows('SELECT route,cleanup_authority FROM fish_sessions') == [
+        {'route': 'fish', 'cleanup_authority': None}]
     store.run("UPDATE fish_sessions SET session_id='manz-hosted-provider-id',status='live' WHERE id=?", (ident,))
     closed = []
     async def close_hosted(store_arg, lease):
@@ -314,10 +433,6 @@ def test_end_uses_stored_fish_route_even_for_room_shaped_hosted_id(livekit_env, 
 def test_livekit_startup_references_distinguish_configuration_conflict_and_budget(livekit_env, monkeypatch):
     store, headers, _ = livekit_env
     client = TestClient(server.app)
-    same_language = client.post('/api/device/fish-session', json={**REQUEST, 'staff_language': 'es'}, headers=headers)
-    assert same_language.status_code == 422
-    assert same_language.headers['X-Manzanilla-Voice-Failure'] == 'configuration:contract:0'
-    assert same_language.headers['X-Manzanilla-Session-Creation'] == 'not-created'
     monkeypatch.delenv('LIVEKIT_API_SECRET')
     unconfigured = client.post('/api/device/fish-session', json=REQUEST, headers=headers)
     assert unconfigured.headers['X-Manzanilla-Voice-Failure'] == 'configuration:unconfigured:0'
@@ -329,7 +444,7 @@ def test_livekit_startup_references_distinguish_configuration_conflict_and_budge
     assert conflict.headers['X-Manzanilla-Voice-Failure'] == 'admission:conflict:0'
     store.run("UPDATE fish_sessions SET status='ended'")
     monkeypatch.setenv('FISH_HOTEL_DAILY_SECONDS', '600')
-    budget = client.post('/api/device/fish-session', json=REQUEST, headers=headers)
+    budget = client.post('/api/device/fish-session', json={**REQUEST, 'request_id': 'next-request'}, headers=headers)
     assert budget.status_code == 429
     assert budget.headers['X-Manzanilla-Voice-Failure'] == 'admission:budget:0'
     assert 'testsecret' not in str(budget.headers) + budget.text
@@ -359,3 +474,41 @@ def test_livekit_room_deletion_uses_required_server_grant_and_classifies_confirm
         transport=httpx.MockTransport(handle), **kwargs))
     result = asyncio.run(route.delete_room('https://livekit.example.test', 'fake-key', 'fake-secret', 'manz-test-room'))
     assert result is expected and len(seen) == 1
+
+
+@pytest.mark.parametrize('setting', ['LIVEKIT_WORKER_ENABLED', 'FISH_API_KEY', 'FISH_VOICE_ID', 'GEMINI_API_KEY'])
+def test_managed_start_requires_explicit_worker_and_separate_provider_configuration(livekit_env, monkeypatch, setting):
+    store, headers, deleted = livekit_env
+    monkeypatch.delenv(setting)
+    monkeypatch.setenv('VOICE_ROUTE', 'fish')  # A legacy selector never restores hosted creation.
+    result = TestClient(server.app).post('/api/device/fish-session', json=REQUEST, headers=headers)
+    assert result.status_code == 503
+    assert result.headers['X-Manzanilla-Session-Creation'] == 'not-created'
+    assert store.rows('SELECT * FROM fish_sessions') == [] and deleted == []
+
+
+@pytest.mark.parametrize('url', ['ws://127.0.0.1:17880', 'ws://remote.example.test', 'wss://user:password@voice.example.test'])
+def test_managed_start_never_accepts_insecure_or_embedded_credential_transport(livekit_env, monkeypatch, url):
+    store, headers, _ = livekit_env
+    monkeypatch.setenv('LIVEKIT_URL', url)
+    response = TestClient(server.app).post('/api/device/fish-session', json=REQUEST, headers=headers)
+    assert response.status_code == 503 and store.rows('SELECT * FROM fish_sessions') == []
+
+
+def test_same_language_has_application_owned_manual_direction(livekit_env):
+    store, headers, _ = livekit_env
+    response = TestClient(server.app).post('/api/device/fish-session', json={**REQUEST, 'staff_language': 'es'}, headers=headers)
+    assert response.status_code == 200
+    metadata = json.loads(claims(response.json()['token'])['metadata'])
+    assert metadata == {'guest_language': 'es', 'staff_language': 'es'}
+
+
+@pytest.mark.parametrize('protocol', [None, 'language-v2'])
+def test_legacy_caption_clients_are_rejected_before_any_new_route_is_created(livekit_env, protocol):
+    store, headers, deleted = livekit_env
+    request = {key: value for key, value in REQUEST.items() if key != 'protocol'}
+    if protocol:
+        request['caption_protocol'] = protocol
+    response = TestClient(server.app).post('/api/device/fish-session', json=request, headers=headers)
+    assert response.status_code == 422
+    assert not store.rows('SELECT * FROM fish_sessions') and not deleted

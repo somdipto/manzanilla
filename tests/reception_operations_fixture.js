@@ -214,9 +214,9 @@ export async function runReceptionOperationsFixture(assetBase = new URL('../andr
   click('[data-action="setup-translation"]');
   assert(doc.querySelector('#content').dataset.page === 'translation_languages' && doc.documentElement.dataset.captureActive === 'false', 'Hotel setup leaves the guest chooser and microphone off until native staff setup returns');
   click('[data-action="back"]');
-  hotelInfo({distribution:'personal-test',bundled_key_available:true,configured:false,state:'unconfigured',services:null});
+  hotelInfo({distribution:'personal-test',configured:false,state:'unconfigured',services:null});
   assert(!doc.querySelector('#check-updates').hidden && doc.querySelector('[data-action="appearance"]'), 'Personal testing retains update and appearance controls');
-  assert(doc.querySelector('#content').textContent.includes('bundled Fish key'), 'Bundled-key personal testing is identified before entry');
+  assert(!/bundled|compiled key|shared key/i.test(doc.querySelector('#content').textContent), 'Personal testing does not advertise a compiled provider key');
   win.manzania.receive({type:'update',version:'99.0.0'});
   click('#update-offer');
   assert(actionMessages('apply_update').length === 1, 'Personal testing keeps the one-click update offer');

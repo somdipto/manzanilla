@@ -2,17 +2,13 @@
 
 One websocket per interpreter session. Streams 16 kHz PCM16 mono upstream and
 yields server events: speech_start, draft, committed, backchannel and errors.
-The provider performs per-turn language identification and turn detection; this
-client never guesses either. `agent_speaking` marks our own playback windows so
-the provider's echo gate can ignore our own synthesized voice.
+The provider performs per-turn language identification and turn detection.
+agent_speaking informs backchannel classification; it is not acoustic echo
+cancellation. The client must continuously supply its AEC-cleaned microphone.
 
 Protocol: https://docs.fish.audio/api-reference/endpoint/websocket/asr-realtime
 """
 import asyncio
-import json
-import logging
-import time
-from dataclasses import dataclass, field
 
 import msgpack
 import websockets
@@ -20,18 +16,7 @@ import websockets
 ENDPOINT = 'wss://api.fish.audio/v1/asr/realtime'
 MODEL = 'transcribe-stream-1'
 START_TIMEOUT_SECONDS = 15
-LOG = logging.getLogger('voice_worker.asr')
 
-
-@dataclass
-class Committed:
-    text: str
-    language_code: str
-    user_turn: bool
-    turn_kind: str
-    turn_index: int
-    audio_end_ms: int
-    received_at: float = field(default_factory=time.time)
 
 
 class FishASR:
@@ -42,8 +27,9 @@ class FishASR:
         self._endpoint = endpoint
         self._ws = None
         self._reader_task: asyncio.Task | None = None
-        self.events: asyncio.Queue = asyncio.Queue()
+        self.events: asyncio.Queue = asyncio.Queue(maxsize=128)
         self.session_id: str | None = None
+        self.started: dict | None = None
 
     async def __aenter__(self):
         await self.connect()
@@ -56,18 +42,28 @@ class FishASR:
         self._ws = await websockets.connect(
             self._endpoint,
             additional_headers={'Authorization': 'Bearer ' + self._key, 'model': MODEL},
-            open_timeout=15, max_size=2**20)
+            open_timeout=15, close_timeout=1, max_size=2**20, max_queue=16)
         try:
             await self._send({'type': 'config',
                               'audio': {'format': 'pcm_s16le', 'sample_rate': 16000, 'channels': 1},
-                              'turn_detection': {'mode': 'auto', 'eager': True},
-                              'results': {'drafts': False, 'vad_events': False}})
+                              'turn_detection': {'mode': 'auto', 'eager': False},
+                              'results': {'drafts': True, 'diarize': False, 'ignore_timestamps': False}})
             self._reader_task = asyncio.create_task(self._reader())
             async with asyncio.timeout(START_TIMEOUT_SECONDS):
                 while True:
                     event = await self.events.get()
                     if event.get('type') == 'session_started':
-                        self.session_id = event.get('session_id')
+                        effective = event.get('config', {})
+                        if (not isinstance(event.get('session_id'), str) or not event['session_id']
+                                or effective.get('audio') != {'format': 'pcm_s16le', 'sample_rate': 16000, 'channels': 1}
+                                or effective.get('turn_detection', {}).get('mode') != 'auto'
+                                or effective.get('turn_detection', {}).get('eager') is not False
+                                or effective.get('results', {}).get('drafts') is not True
+                                or effective.get('results', {}).get('diarize') is not False
+                                or effective.get('results', {}).get('ignore_timestamps') is not False):
+                            raise RuntimeError('Speech recognition configuration rejected')
+                        self.session_id = event['session_id']
+                        self.started = event
                         return self
                     if event.get('type') in ('error', 'closed'):
                         raise RuntimeError('speech recognition closed or rejected the session')
@@ -77,7 +73,7 @@ class FishASR:
 
     async def _send(self, message: dict):
         if self._ws is not None:
-            await self._ws.send(msgpack.packb(message))
+            await self._ws.send(msgpack.packb(message, use_bin_type=True))
 
     async def send_audio(self, pcm_s16le_16k: bytes):
         await self._send({'type': 'audio', 'data': pcm_s16le_16k})
@@ -92,14 +88,20 @@ class FishASR:
         try:
             async for frame in self._ws:
                 try:
+                    if not isinstance(frame, bytes):
+                        raise ValueError
                     event = msgpack.unpackb(frame, raw=False)
-                except Exception:
-                    continue
+                    if not isinstance(event, dict) or not isinstance(event.get('type'), str):
+                        raise ValueError
+                except (ValueError, TypeError, msgpack.UnpackException):
+                    await self.events.put({'type': 'error', 'error_type': 'invalid_protocol'})
+                    return
                 await self.events.put(event)
         except websockets.ConnectionClosed:
             pass
         finally:
-            await self.events.put({'type': 'closed'})
+            if not asyncio.current_task().cancelling():
+                await self.events.put({'type': 'closed'})
 
     async def close(self):
         ws, self._ws = self._ws, None

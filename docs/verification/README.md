@@ -4,6 +4,66 @@ Use synthetic fixtures and temporary databases. Never run verification writes
 against a live hotel service or guest data. See [the full test plan](../TEST-PLAN.md)
 for acoustic, Android ownership, update, quality and spending gates.
 
+## Application-controlled translation candidate (17.0.47/code 77)
+
+New conversations use one pipeline: Fish realtime recognition, application-owned
+direction, Gemini 3.8 Flash translation, and Fish S2.1 Pro synthesis. Neither
+APK compiles a provider key. Playback completes only after the receiver renders
+PCM, including EOF. This is not acoustic, provider-entitlement, or staff acceptance.
+
+- **Passed:** 721 Python tests and 53 Node tests. Coverage includes cancelled
+  Start ownership, completed-translation versus interrupted playback, and a
+  turn-loop interruption that clears the live task during notification.
+- **Passed:** Android `testDebugUnitTest`, `assembleDebug`, `assembleDebugAndroidTest`
+  and `lintDebug` with JDK 17, then all nine CI jobs on an API 29 disposable emulator:
+  the ten personal-test fixtures, both `voice-setup` variants (no screen lock and a
+  synthetic PIN) and the hotel fixture set, each with `INSTRUMENTATION_CODE: -1`.
+  No physical device was used.
+- **Reproduced and fixed during integration:** the personal setup rendered a pasted
+  Fish or Gemini key in cleartext. `setSingleLine()` installs
+  `SingleLineTransformationMethod`, which replaced the masking transformation installed
+  before it. Masking is now installed after layout, and the setup fixture asserts the
+  rendered glyphs, so a provider key field that ever shows its input fails the fixture.
+- **Passed:** Chromium 151 packaged reception fixtures, including same-language
+  explicit direction, Arabic physical guest-left/receptionist-right, welcome
+  failure, and key-free personal testing.
+- **Passed:** muted headless Chromium against the shipped web bundle, real local
+  LiveKit 1.13.10, and loopback Fish/Gemini substitutes. 106 checks covered one
+  Arabic welcome, X-X-X-Y-Y-X routing, exact originals, translation/TTS equality,
+  suspended-renderer credit, EOF acknowledgements, interruption, late-generation
+  rejection, continuous microphone packets, and exact cleanup. Zero paid calls.
+  Evidence: `/tmp/manzanilla-controlled-browser-fixture-20261030/evidence.json`.
+- **Passed (document contract, not entitlement):** the three protocol surfaces were
+  re-read against Fish's primary pages for
+  [realtime speech to text](https://docs.fish.audio/api-reference/endpoint/websocket/asr-realtime)
+  and [streaming TTS](https://docs.fish.audio/api-reference/endpoint/websocket/tts-live).
+  Endpoints and the `Authorization`/`model` headers match. The `config` sends exactly
+  the documented fields, because an unknown field is refused, and both clients check
+  their settings against `session_started.config`. Every message is one MessagePack map
+  in a binary frame with audio as `bin`: 80 ms from the worker, 100 ms from Android,
+  inside the documented 80–100 ms guidance. `agent_speaking` follows the documented
+  true/false timing, including a 2 s pause rule. Non-user turns
+  (`user_turn: false`, `turn_kind: backchannel`/`other`) stay visible but unspoken; a
+  missing `user_turn` is treated as true. Synthesis uses `start`/`text`/`flush`/`stop`
+  (the documented event is `stop`, not `close`) and only treats `finish.reason == stop`
+  as completion. `chunk_length` 120 sits inside 100–300, `format: pcm`, `sample_rate`
+  24000, `latency: normal`, and `prosody` within its documented bounds.
+- **Passed (live refusal shape, no session and no billing):** with an invalid
+  credential, `wss://api.fish.audio/v1/asr/realtime` and `/v1/tts/live` both refuse
+  the upgrade with HTTP 401 and the documented body `{"status": 401, "message":
+  "Invalid Token"}`, so those paths exist and read the `Authorization` header as
+  intended. Gemini's OpenAI-compatible surface answers `400 INVALID_ARGUMENT`,
+  "Please pass a valid API key"; a missing header answers `404`. Both clients fail
+  closed on any HTTP failure with a bounded message, which matches these codes. A
+  refused credential is answered before a session is assigned, so nothing was
+  billed. This is a refusal and reachability check: a valid credential, the model
+  alias in effect and current entitlement remain unverified. Evidence:
+  `/tmp/manzanilla-endpoint-shape-20261030/result.json`.
+- **Blocked:** real Fish/Gemini speech, physical echo/interruption/latency, and
+  bilingual or designated-staff review. No paid call was made. The signed update
+  is not published; it still requires this PR to be merged and the publication
+  workflow to verify the signed artifacts.
+
 ## User-main integration and version sequencing
 
 The user published main `e19f711be274330905beec3ac7e31699f9149c82` as

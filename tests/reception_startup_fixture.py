@@ -60,7 +60,6 @@ def run_startup_fixture(browser, legacy_object_api=False):
         assert set(loaded) == paths, f"Packaged resources not loaded: {paths - set(loaded)}"
         assert page.evaluate("fixtureMessages.some(event => event.action === 'info')"), "Native startup handshake missing"
         assert "/locales.js" in loaded, "The actual packaged page must load its offline catalogue under the shipped CSP"
-        assert page.evaluate("window.MANZANILLA_UI.languages.length") == 52
         assert page.locator('[data-action="translation"]').is_visible(), "Home did not render"
 
         def receive(event):
@@ -69,8 +68,7 @@ def run_startup_fixture(browser, legacy_object_api=False):
         receive({"type": "reception_info", "audio_available": True, "local_audio_state": "off", "staff_language": "en"})
         receive({"type": "language_preferences", "language": "en", "staff_language": "en"})
         page.locator('[data-action="translation"]').click()
-        assert page.locator('[data-action="start"]').is_disabled(), "Same-language start must be blocked"
-        assert "two different languages" in page.locator("#translation-readiness").inner_text()
+        assert page.locator('[data-action="start"]').is_enabled(), "Same-language sessions must support explicit per-turn direction"
         receive({"type": "reception_info", "audio_available": False, "local_audio_state": "off", "audio_gate": "Configure translation with your Fish Audio API key."})
         assert "Configure translation" in page.locator("#translation-readiness").inner_text()
         assert page.locator("#settings").is_visible(), "Configuration help must remain reachable"
@@ -315,8 +313,14 @@ def run_localized_fixture(browser, width=837, height=471, appearance="dark", all
         scoped({"type": "audio_state", "state": "recording"})
         scoped({"type": "reception_event", "phase": "listening"})
         for ident, language, text in [("guest", "ar", "أين الغرفة 204؟"), ("staff", "es", "Su habitación está a la izquierda.")]:
-            scoped({"type": "interpretation", "utterance_id": ident, "source_language": language,
-                    "language_attribution": "model", "original": text, "text": "204 · Alex"})
+            role = "guest" if language == "ar" else "receptionist"
+            scoped({"type": "translation.utterance", "record": {
+                "session_id": scope["session_id"], "utterance_id": ident, "revision": 1,
+                "source_language": language, "target_language": "es" if role == "guest" else "ar",
+                "role": role, "original": text, "translation": "204 · Alex",
+                "recognition_status": "final", "translation_status": "complete", "playback_status": "idle",
+                "output_generation": 0, "direction_reason": "recognized", "detected_language": language,
+            }})
         guest = page.locator(".caption-guest").bounding_box()
         staff = page.locator(".caption-reception").bounding_box()
         assert guest["x"] + guest["width"] / 2 < staff["x"] + staff["width"] / 2, "RTL must not swap physical guest-left and receptionist-right"

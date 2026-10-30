@@ -3,15 +3,14 @@
 Brings up a local livekit-server (--dev), the voice-worker, and a scripted
 reception device that plays a real synthesized utterance into the room and
 records everything the worker emits: agent audio, lk.agent.state attributes and
-agent-event captions. Every stage is a real provider call (Fish realtime ASR,
-an OpenAI-compatible LLM, Fish streaming TTS); nothing in the translation path
+agent-event utterance records. Every stage is a real provider call (Fish realtime ASR,
+Gemini translation, Fish streaming TTS); nothing in the translation path
 is canned. The only fixture is the device's own input speech, synthesized once
 by Fish TTS because the bench has no human speaker.
 
 Usage:
-  FISH_API_KEY=... FISH_VOICE_ID=... LLM_API_KEY=... \
-  python scripts/livekit_pipeline_bench.py [--llm-base URL] [--llm-model NAME] \
-      [--livekit-bin PATH] [--out DIR]
+  FISH_API_KEY=... FISH_VOICE_ID=... GEMINI_API_KEY=... \\
+  python scripts/livekit_pipeline_bench.py [--livekit-bin PATH] [--out DIR]
 
 Writes bench.jsonl (raw timing marks) and bench.md (measured table) to --out.
 """
@@ -27,6 +26,8 @@ from livekit import api, rtc  # noqa: E402
 
 from voice_worker.audio import load_wav_16k, wav_bytes  # noqa: E402
 from voice_worker.session import Bench  # noqa: E402
+from voice_worker.worker import GEMINI_MODEL
+from scripts.livekit_probe_playback import ProbePlayback
 
 DEV_KEY, DEV_SECRET = 'devkey', 'secret'
 # A real guest check-in utterance in Spanish; not curated for the pipeline.
@@ -54,9 +55,9 @@ def read_worker_marks(path: Path, room_name: str) -> dict:
     return marks
 
 
-def worker_mark(marks: dict, name: str, turn=None):
+def worker_mark(marks: dict, name: str, generation=None):
     for row in marks.get(name, []):
-        if turn is None or row.get('turn') == turn:
+        if generation is None or row.get('generation') == generation:
             return row['ts']
     return None
 
@@ -68,13 +69,14 @@ def probe_errors(caption, first_capture, received_audio_bytes):
         failures.append('no caption reached the device')
     else:
         payload = caption.get('payload')
-        params = payload.get('params') if isinstance(payload, dict) else None
-        if not isinstance(params, dict) or not params.get('translation'):
-            failures.append('caption translation empty')
+        params = payload.get('record') if isinstance(payload, dict) else None
+        if (not isinstance(params, dict) or not params.get('translation')
+                or params.get('translation_status') != 'complete'):
+            failures.append('translation record incomplete')
     if first_capture is None:
-        failures.append('no first-turn audio capture-frame attempt was recorded')
+        failures.append('no first-turn PCM publish attempt was recorded')
     if received_audio_bytes <= 0:
-        failures.append('no agent audio frames reached the SDK')
+        failures.append('no agent PCM reached the renderer')
     return failures
 
 
@@ -129,8 +131,7 @@ async def run(args):
                       LIVEKIT_API_KEY=DEV_KEY, LIVEKIT_API_SECRET=DEV_SECRET,
                       FISH_API_KEY=os.environ['FISH_API_KEY'],
                       FISH_VOICE_ID=os.environ['FISH_VOICE_ID'],
-                      LLM_BASE_URL=args.llm_base, LLM_API_KEY=os.environ['LLM_API_KEY'],
-                      LLM_MODEL=args.llm_model, LLM_EXTRA_JSON=args.llm_extra_json,
+                      GEMINI_API_KEY=os.environ['GEMINI_API_KEY'], LIVEKIT_WORKER_ENABLED='1',
                       ROOM_PREFIX='manz-bench-',
                       VOICE_BENCH_LOG=str(out / 'bench.jsonl'))
     worker = subprocess.Popen(
@@ -138,7 +139,12 @@ async def run(args):
         cwd=str(ROOT / 'voice-worker'),
         stdout=open(out / 'worker.log', 'w'), stderr=subprocess.STDOUT)
     room_name = 'manz-bench-' + uuid.uuid4().hex
+    room = rtc.Room()
+    playback = ProbePlayback(room, 'agent-' + room_name[:40])
+    connection = source = None
     try:
+        # Establish the actual browser renderer before making any paid call.
+        await playback.start()
         for _ in range(50):
             try:
                 urllib.request.urlopen('http://127.0.0.1:7880', timeout=1)
@@ -148,24 +154,16 @@ async def run(args):
         await synthesize(os.environ['FISH_API_KEY'], os.environ['FISH_VOICE_ID'],
                          UTTERANCE_ES, out / 'turn1.wav')
 
-        room = rtc.Room()
         events: list[dict] = []
-        agent_audio = bytearray()
+        agent_audio = playback.pcm
         attributes: list[tuple[float, str]] = []
 
-        @room.on('track_subscribed')
-        def _on_track(track, publication, participant):
-            if track.kind != rtc.TrackKind.KIND_AUDIO:
-                return
-            async def consume():
-                stream = rtc.AudioStream(track, sample_rate=48000, num_channels=1)
-                async for frame_event in stream:
-                    agent_audio.extend(bytes(frame_event.frame.data))
-            asyncio.create_task(consume())
 
         @room.on('data_received')
         def _on_data(packet):
-            if packet.topic == 'agent-event':
+            playback.accept(packet)
+            if (packet.topic == 'agent-event' and packet.participant
+                    and packet.participant.identity == playback.agent_identity):
                 events.append({'at': time.time(), 'payload': json.loads(packet.data)})
 
         @room.on('participant_attributes_changed')
@@ -174,16 +172,24 @@ async def run(args):
             if state:
                 attributes.append((time.time(), state))
 
-        await room.connect('ws://127.0.0.1:7880',
-                           device_token('bench-device', room_name,
-                                        {'guest_language': 'es', 'staff_language': 'en'}))
+        connection = asyncio.create_task(room.connect('ws://127.0.0.1:7880',
+                           device_token('device-' + room_name.removeprefix('manz-')[:24], room_name,
+                                        {'guest_language': 'es', 'staff_language': 'en'}),
+                           options=rtc.RoomOptions(connect_timeout=10)))
+        await asyncio.shield(connection)
         source = rtc.AudioSource(16000, 1)
         track = rtc.LocalAudioTrack.create_audio_track('mic', source)
         await room.local_participant.publish_track(track)
         marks.mark('device_joined')
-        # Let the contract greeting finish before the guest speaks; the worker's
-        # echo gate ignores the room during its own playback.
-        await asyncio.sleep(10)
+        # Wait for the actual welcome result, not an arbitrary delay. The
+        # microphone remains live; agent_speaking is not an acoustic echo gate.
+        async with asyncio.timeout(45):
+            while not any(event['payload'].get('type') == 'translation.welcome'
+                          and event['payload'].get('status') == 'complete' for event in events):
+                if any(event['payload'].get('type') == 'error'
+                       and event['payload'].get('recovered') is False for event in events):
+                    raise RuntimeError('Pipeline startup failed')
+                await asyncio.sleep(.05)
 
         # Turn 1: play the full utterance, expect translation audio, then a
         # caption with original + translation.
@@ -195,32 +201,35 @@ async def run(args):
         deadline = t_input_end + 60
         while time.time() < deadline:
             caption1 = next((e for e in events
-                             if e['payload'].get('toolName')
-                             == 'manzanilla_publish_interpretation_v2'), None)
+                             if e['payload'].get('type') == 'translation.utterance'
+                             and e['payload']['record'].get('translation_status') == 'complete'), None)
             if caption1:
                 break
             await asyncio.sleep(0.05)
         marks.mark('device_turn1_done', caption_received=bool(caption1))
+        if playback.error:
+            raise playback.error
 
         # Only the current, randomly named room may contribute marks: the log
         # is append-only and may include previous runs in the same directory.
         worker_marks = read_worker_marks(out / 'bench.jsonl', room_name)
         table = []
         committed = worker_mark(worker_marks, 'asr_committed')
-        llm_at = worker_mark(worker_marks, 'llm_requested', turn=1)
-        first_turn_audio = worker_mark(worker_marks, 'first_audio_published', turn=1)
-        caption_at = worker_mark(worker_marks, 'caption_sent', turn=1)
+        generation = caption1['payload']['record']['output_generation'] if caption1 else 2
+        llm_at = worker_mark(worker_marks, 'llm_requested', generation=generation)
+        first_turn_audio = worker_mark(worker_marks, 'first_audio_published', generation=generation)
+        caption_at = worker_mark(worker_marks, 'translation_complete', generation=generation)
         if committed:
             table.append(('local input playout end -> ASR commit (s)', round(committed - t_input_end, 2)))
         if llm_at is not None and first_turn_audio is not None:
-            table.append(('LLM request -> first worker capture-frame attempt (s)',
+            table.append(('LLM request -> first worker PCM publish attempt (s)',
                           round(first_turn_audio - llm_at, 2)))
         if first_turn_audio is not None:
-            table.append(('local input playout end -> first worker capture-frame attempt (s)', round(first_turn_audio - t_input_end, 2)))
+            table.append(('local input playout end -> first worker PCM publish attempt (s)', round(first_turn_audio - t_input_end, 2)))
         if caption_at:
             table.append(('input end -> caption emitted after playback (s)', round(caption_at - t_input_end, 2)))
         if caption1:
-            params = caption1['payload']['params']
+            params = caption1['payload']['record']
             table.append(('caption lag on device after emit (ms)', round((caption1['at'] - caption_at) * 1000, 1) if caption_at else '?'))
             table.append(('turn 1 original (real ASR transcript)', params['original']))
             table.append(('turn 1 translation (real LLM output)', params['translation']))
@@ -232,17 +241,18 @@ async def run(args):
         states = ', '.join(f'{state}' for _, state in attributes)
         table.append(('lk.agent.state change events observed on device', states or 'none (see note)'))
 
-        # This track includes the greeting and possibly silence: no claim that
-        # these bytes are exclusively the response or acoustically audible.
-        (out / 'agent-audio-session.wav').write_bytes(wav_bytes(bytes(agent_audio), 48000))
+        # The capture includes welcome PCM; Chromium worklet acknowledgements
+        # establish render consumption, never physical speaker audibility.
+        (out / 'agent-audio-session.wav').write_bytes(wav_bytes(bytes(agent_audio), 24000))
         lines = ['# Self-hosted route bench (issue #8)', '',
                  'Every stage below is a real provider call captured from live pipeline',
                  'events; the only fixture is the device input speech, synthesized by',
                  'Fish TTS because the bench has no human speaker.',
-                 f'LLM model: {args.llm_model}.',
+                 f'LLM model: {GEMINI_MODEL}.',
                  'Times use local SDK/worker wall-clock marks, not tablet acoustic input',
-                 'or audible speaker onset. The first capture-frame mark is an attempt,',
-                 'not proof of playout. agent-audio-session.wav includes the greeting.',
+                 'or audible speaker onset. The first PCM-publish mark is an attempt.',
+                 'Completion requires shipped AudioWorklet consumption in headless Chromium,',
+                 'not physical speaker output. agent-audio-session.wav includes the greeting.',
                  'No matched hosted baseline, speech correctness or blind naturalness',
                  'assessment is established by this smoke probe.', '',
                  '| measurement | value |', '| --- | --- |']
@@ -256,25 +266,24 @@ async def run(args):
             return 1
         return 0
     finally:
-        worker.terminate()
-        server.terminate()
-        marks.close()
+        try:
+            if connection:
+                await asyncio.gather(connection, return_exceptions=True)
+            if source:
+                await source.aclose()
+            await room.disconnect()
+            await playback.close()
+        finally:
+            worker.terminate()
+            server.terminate()
+            marks.close()
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--llm-base', default='https://integrate.api.nvidia.com/v1')
-    parser.add_argument('--llm-model', default='openai/gpt-oss-20b')
-    parser.add_argument('--llm-extra-json', default='{}',
-                        help='Optional provider-specific JSON object; default sends no extra fields')
     parser.add_argument('--livekit-bin', default='/tmp/lkbin/livekit-server')
     parser.add_argument('--out', default='/tmp/bench')
     args = parser.parse_args()
-    try:
-        if not isinstance(json.loads(args.llm_extra_json), dict):
-            raise ValueError('expected an object')
-    except ValueError:
-        parser.error('--llm-extra-json must be a JSON object')
     raise SystemExit(asyncio.run(run(args)))
 
 

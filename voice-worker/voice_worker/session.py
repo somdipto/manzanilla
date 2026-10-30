@@ -1,20 +1,10 @@
-"""One interpreter session inside one LiveKit room.
+"""Application-owned Fish ASR -> deterministic direction -> Gemini -> Fish TTS.
 
-Pipeline: room microphone -> Fish realtime recognition (turn detection and
-per-turn language identification on the provider side) -> streaming translation
--> Fish streaming synthesis -> room playback, first clause first. A user speech
-start during playback cancels generation and flushes queued audio, then the new
-utterance is heard in full.
-
-The session emits exactly the wire contract the reception client renders:
-lk.agent.state participant attributes and display-only caption reports on the
-agent-event data topic. Raw lk.transcription streams are agent-side timing
-signals only; identified captions never depend on them.
+The microphone remains live during every output. Reliable generation-tagged PCM
+has bounded receiver-render credit; only an acknowledged EOF completes playback.
 """
 import asyncio
-import audioop
 import json
-import re
 import logging
 import time
 
@@ -24,35 +14,43 @@ from . import contract
 from .asr import FishASR
 from .llm import TranslateStream
 from .prompt import MAX_SECONDS, interpreter_prompt
+from .records import Conversation, speech_input
 from .tts import FishTTS
 
 LOG = logging.getLogger('voice_worker.session')
-
 CLAUSE_END = tuple('.!?;:\n。！？；：')
-# transcribe-stream-1 may embed its own diarization/control tokens in committed
-# text; they are markup, never spoken language, so they never reach the model,
-# the voice or the caption.
-CONTROL_TOKEN = re.compile(r'<\|[^|]*\|>')
 MIN_CLAUSE = 12
-PLAYBACK_QUEUE_MS = 200
-TABLET_WAIT_SECONDS = 15
-FIRST_AUDIO_PAUSE_SECONDS = 2.0
-
-
-async def _wait_for_gate_pause(delay: float):
-    await asyncio.sleep(delay)
+PLAYBACK_ACK_SECONDS = 10
+SPEAKING_PAUSE_SECONDS = 2
+TABLET_WAIT_SECONDS = 30
 
 
 def pop_clause(buffer: str) -> str | None:
-    """Longest complete clause worth synthesizing, else None."""
     for index, char in enumerate(buffer):
         if char in CLAUSE_END and index + 1 >= MIN_CLAUSE:
             return buffer[:index + 1]
     return None
 
 
+def presentation(text: str) -> str:
+    # Fish interprets square brackets as performance directives. Render the
+    # same ordinary parentheses in both displayed translation and synthesis.
+    return text.replace('[', '(').replace(']', ')')
+
+
+def device_identity(room_name: str, room_prefix: str = 'manz-') -> str:
+    """The identity the backend puts in this room's device token.
+
+    `cloud/livekit_route.py` names a room `room_prefix + lease[:40]` and issues its
+    device token for `'device-' + lease[:24]`, so the worker must strip its own
+    configured namespace rather than a hard-coded prefix or it would ignore that
+    client's acknowledgements, direction controls and join metadata.
+    """
+    return 'device-' + room_name.removeprefix(room_prefix)[:24]
+
+
 class Bench:
-    """JSONL timing sink; one line per pipeline boundary, wall-clock stamps."""
+    """Boundary timings only: never transcript, provider body or credentials."""
     def __init__(self, path: str | None, session: str):
         self._file = open(path, 'a', buffering=1) if path else None
         self._session = session
@@ -69,434 +67,634 @@ class Bench:
 
 class InterpreterSession:
     def __init__(self, room_name: str, *, livekit_url: str, api_key: str, api_secret: str,
-                 fish_key: str, voice_id: str, llm: TranslateStream, greetings: dict,
-                 bench: Bench | None = None, max_seconds: int = MAX_SECONDS):
+                 fish_key: str, voice_id: str, llm: TranslateStream,
+                 bench: Bench | None = None, max_seconds: int = MAX_SECONDS,
+                 client_identity: str | None = None, guest: str | None = None,
+                 staff: str | None = None, session_id: str | None = None,
+                 room_prefix: str = 'manz-'):
+        if not fish_key or not voice_id:
+            raise ValueError('Fish credentials and voice are required')
         self.room_name = room_name
-        self._url = livekit_url
-        self._grant = (api_key, api_secret)
-        self._fish_key = fish_key
-        self._voice = voice_id
-        self._llm = llm
-        self._greetings = greetings
-        self._max_seconds = max_seconds
+        self.session_id = session_id or room_name
+        self.client_identity = client_identity or device_identity(room_name, room_prefix)
+        self._url, self._grant = livekit_url, (api_key, api_secret)
+        self._fish_key, self._voice, self._llm = fish_key, voice_id, llm
+        self._max_seconds = min(max_seconds, MAX_SECONDS)
         self.bench = bench or Bench(None, room_name)
         self.room = rtc.Room()
-        self.source: rtc.AudioSource | None = None
-        self.asr: FishASR | None = None
-        self.guest = ''
-        self.staff = ''
-        self.speaking = False
-        self.turn: asyncio.Task | None = None
+        self._connect_task = None
+        self._close_task = None
+        self.asr = None
+        self.guest, self.staff = guest or '', staff or ''
+        self.conversation = None
+        self.turn = None
+        self.turns = asyncio.Queue(maxsize=16)
+        self.controls = asyncio.Queue(maxsize=32)
         self._turn_lock = asyncio.Lock()
-        self.turns: asyncio.Queue = asyncio.Queue()
-        self.turn_count = 0
-        self.deadline = time.monotonic() + max_seconds
+        self._queued = set()
+        self._generation = 0
+        self._active_generation = 0
+        self._active_id = None
+        self._audio_sequence = 0
+        self._audio_ack = -1
+        self._audio_changed = asyncio.Event()
+        self._audio_error = False
+        self._last_audio = 0
+        self._speaking_hint = False
+        self._connected = False
+        self._closed = False
+        self._run_task = None
+        self._mic_ready = asyncio.Event()
+        self._capture_task = None
+        self._microphone = asyncio.Queue(maxsize=400)  # at most 32 seconds of 80 ms PCM
         self.ended = asyncio.Event()
+        self.speaking = False
         self.agent_identity = 'agent-' + room_name[:40]
+        self.deadline = time.monotonic() + self._max_seconds
+
+    async def start(self):
+        """Connect transport only; provider startup waits for the authorized mic."""
+        if self._connected:
+            return
+        if self.ended.is_set():
+            raise RuntimeError('Session ended')
+        key, secret = self._grant
+        token = (api.AccessToken(key, secret).with_identity(self.agent_identity)
+                 .with_name('Manzanilla interpreter')
+                 .with_grants(api.VideoGrants(room_join=True, room=self.room_name,
+                     can_publish=True, can_subscribe=True, can_update_own_metadata=True)).to_jwt())
+
+        @self.room.on('data_received')
+        def data(packet):
+            if (packet.topic != 'client-event' or not packet.participant
+                    or packet.participant.identity != self.client_identity
+                    or len(packet.data) > 2048 or self.ended.is_set()):
+                return
+            try:
+                value = json.loads(packet.data)
+                if isinstance(value, dict):
+                    if value.get('type') == 'translation.played':
+                        self.played(value)
+                    else:
+                        self.controls.put_nowait(value)
+            except (ValueError, asyncio.QueueFull):
+                pass
+
+        if self._connect_task is None:
+            # Cancelling Room.connect's Python await can orphan its Rust FFI
+            # connection. The SDK owns its signal timeout; we own settlement.
+            self._connect_task = asyncio.create_task(self.room.connect(
+                self._url, token, options=rtc.RoomOptions(connect_timeout=10)))
+        await asyncio.shield(self._connect_task)
+        self._connected = True
+        if self.ended.is_set():
+            await self._close()
+            raise RuntimeError('Session ended')
+        self.bench.mark('room_connected')
 
     async def run(self):
+        self._run_task = asyncio.current_task()
         try:
-            await self._connect()
-            await self._wait_tablet()
-            await self._open_asr()
-            try:
-                await asyncio.wait_for(self._main(), timeout=self._max_seconds + 60)
-            except asyncio.TimeoutError:
-                await self._send(contract.session_ended('conversation_timeout'))
+            async with asyncio.timeout(self._max_seconds):
+                await self.start()
+                await self._wait_tablet()
+                if self.ended.is_set():
+                    return False
+                self.conversation = Conversation(self.session_id, self.guest, self.staff)
+                self._capture_task = asyncio.create_task(self._capture_mic())
+                async with asyncio.TaskGroup() as startup:
+                    startup.create_task(self._llm.validate())
+                    startup.create_task(self._open_asr())
+                await self._main()
             return True
+        except asyncio.TimeoutError:
+            await self._send(contract.session_ended('conversation_timeout'))
+            return False
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            LOG.exception('interpreter session failed')
-            try:
+            # Provider exceptions can include request bodies/authorization.
+            LOG.warning('interpreter session failed')
+            if self._connected:
                 await self._send(contract.error(recovered=False))
-            except Exception:
-                pass
             return False
         finally:
             await self._close()
 
-    async def _set_state(self, value: str):
-        await self.room.local_participant.set_attributes(contract.state(value))
-        self.bench.mark('agent_state', state=value)
-
-    async def _connect(self):
-        key, secret = self._grant
-        token = (api.AccessToken(key, secret)
-                 .with_identity(self.agent_identity)
-                 .with_name('Manzanilla interpreter')
-                 .with_grants(api.VideoGrants(room_join=True, room=self.room_name,
-                                              can_publish=True, can_subscribe=True,
-                                              can_update_own_metadata=True))
-                 .to_jwt())
-        await self.room.connect(self._url, token)
-        self.source = rtc.AudioSource(48000, 1, queue_size_ms=PLAYBACK_QUEUE_MS)
-        track = rtc.LocalAudioTrack.create_audio_track('agent-voice', self.source)
-        await self.room.local_participant.publish_track(track)
-        await self._set_state('listening')
-        self.bench.mark('room_connected')
+    async def stop(self):
+        self.ended.set()
+        task = self._run_task
+        if task and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        # Another Stop may cancel the run task while it awaits shielded
+        # cleanup. Every Stop must still await that same owned cleanup.
+        await self._close()
 
     async def _wait_tablet(self):
-        deadline = time.monotonic() + TABLET_WAIT_SECONDS
-        while time.monotonic() < deadline and not self.ended.is_set():
-            for participant in self.room.remote_participants.values():
-                metadata = self._languages(participant)
-                if metadata:
-                    self.guest, self.staff = metadata
-                    self.bench.mark('tablet_present', guest=self.guest, staff=self.staff)
-                    return
-            await asyncio.sleep(0.2)
-        raise TimeoutError('no reception device joined with a language pair')
+        async with asyncio.timeout(TABLET_WAIT_SECONDS):
+            while not self.ended.is_set():
+                participant = self.room.remote_participants.get(self.client_identity)
+                if participant:
+                    try:
+                        value = json.loads(participant.metadata or '{}')
+                    except ValueError:
+                        value = {}
+                    guest = self.guest or value.get('guest_language')
+                    staff = self.staff or value.get('staff_language')
+                    if guest not in contract.LANGUAGES or staff not in contract.LANGUAGES:
+                        raise ValueError('Unsupported speech language')
+                    for publication in participant.track_publications.values():
+                        if publication.track and publication.kind == rtc.TrackKind.KIND_AUDIO:
+                            self.guest, self.staff = guest, staff
+                            self._mic_track = publication.track
+                            return
+                await asyncio.sleep(.05)
+        raise RuntimeError('Authorized microphone unavailable')
 
-    @staticmethod
-    def _languages(participant) -> tuple[str, str] | None:
-        try:
-            data = json.loads(participant.metadata or '{}')
-        except ValueError:
-            return None
-        guest, staff = data.get('guest_language'), data.get('staff_language')
-        if isinstance(guest, str) and isinstance(staff, str) and guest and staff and guest != staff:
-            return guest, staff
-        return None
+    def played(self, value):
+        """Authenticated receiver boundary, never packet arrival credit."""
+        if (self.ended.is_set() or not self._active_generation
+                or type(value.get('output_generation')) is not int
+                or value['output_generation'] != self._active_generation):
+            return False
+        sequence = value.get('sequence')
+        if (set(value) != {'type', 'output_generation', 'sequence'}
+                or value.get('type') != 'translation.played'
+                or type(sequence) is not int or sequence < 0
+                or sequence >= self._audio_sequence):
+            self._audio_error = True
+            self._audio_changed.set()
+            return False
+        if sequence <= self._audio_ack:
+            return False
+        self._audio_ack = sequence
+        self._audio_changed.set()
+        return True
+
+    async def _audio_wait(self, generation, *, drain=False):
+        async with asyncio.timeout(PLAYBACK_ACK_SECONDS):
+            while True:
+                if generation != self._active_generation:
+                    raise asyncio.CancelledError
+                if self._audio_error:
+                    raise RuntimeError('Invalid playback acknowledgement')
+                pending = self._audio_sequence - self._audio_ack - 1
+                if pending < (1 if drain else contract.AUDIO_CREDIT):
+                    return
+                self._audio_changed.clear()
+                await self._audio_changed.wait()
+
+    async def _publish_pcm(self, generation, pcm):
+        await self._audio_wait(generation)
+        packet = contract.audio_packet(generation, self._audio_sequence, pcm)
+        # Reserve before await: a receiver ACK may arrive before publish returns.
+        self._audio_sequence += 1
+        await asyncio.wait_for(self.room.local_participant.publish_data(
+            packet, reliable=True, topic=contract.AUDIO_TOPIC,
+            destination_identities=[self.client_identity]), PLAYBACK_ACK_SECONDS)
+
+    async def _speaking_watch(self, generation):
+        # Fish's backchannel hint includes committed model/TTS work. A pause
+        # exceeding two seconds without PCM clears it until PCM actually resumes.
+        while generation == self._active_generation:
+            await asyncio.sleep(.1)
+            if (self._speaking_hint and time.monotonic() - self._last_audio > SPEAKING_PAUSE_SECONDS
+                    and generation == self._active_generation):
+                self._speaking_hint = False
+                await self.asr.agent_speaking(False)
 
     async def _open_asr(self):
         self.asr = FishASR(self._fish_key)
         await self.asr.connect()
-        await self.asr.agent_speaking(False)
+        self.conversation.accept(self.asr.started)
         self.bench.mark('asr_started')
 
-    async def _greet(self):
-        text = self._greetings.get(self.guest) or self._greetings.get('en', '')
-        if not text:
-            return
-        await self._speak(text, caption=False, label='greeting')
-
     async def _main(self):
-        mic = asyncio.create_task(self._pump_mic())
-        turns = asyncio.create_task(self._turn_loop())
-        watchdog = asyncio.create_task(self._watchdog())
-        # Start receiving the microphone before the greeting is spoken. A guest
-        # may interrupt that greeting just like any other speech output.
-        greeting = asyncio.create_task(self._greet())
-        self.turn = greeting
-        def pipeline_done(task):
-            if not task.cancelled() and task.exception() is not None:
-                self.asr.events.put_nowait({'type': 'error'})
-        for task in (greeting, mic, turns, watchdog):
-            task.add_done_callback(pipeline_done)
+        tasks = [asyncio.create_task(self._pump_mic()), asyncio.create_task(self._events()),
+                 asyncio.create_task(self._controls()), asyncio.create_task(self._watchdog())]
+        if self._capture_task:
+            tasks.append(self._capture_task)
         stopped = asyncio.create_task(self.ended.wait())
-        event_task = None
+        ready = asyncio.create_task(self._mic_ready.wait())
         try:
-            while not self.ended.is_set():
-                event_task = asyncio.create_task(self.asr.events.get())
-                done, _ = await asyncio.wait((event_task, stopped), return_when=asyncio.FIRST_COMPLETED)
-                if stopped in done:
-                    break
-                event = event_task.result()
-                event_task = None
-                kind = event.get('type')
-                if kind == 'closed':
-                    raise RuntimeError('Speech recognition connection closed')
-                if kind == 'speech_start':
-                    self.bench.mark('asr_speech_start')
-                elif kind == 'user_turn_taken':
-                    # In auto mode a speech_start may be a backchannel or
-                    # background noise. Only a confirmed user turn interrupts.
-                    await self._interrupt()
-                elif kind == 'committed':
-                    committed = event
-                    self.bench.mark('asr_committed', language=committed.get('language_code'),
-                                    user_turn=committed.get('user_turn'))
-                    # Fish's auto-mode contract uses user_turn for ownership;
-                    # turn_kind can be absent on a valid user utterance.
-                    if committed.get('user_turn') is True:
-                        committed['text'] = CONTROL_TOKEN.sub('', committed.get('text', '')).strip()
-                        if committed['text']:
-                            committed['_received_monotonic'] = time.monotonic()
-                            await self.turns.put(committed)
-                        else:
-                            self.bench.mark('turn_skipped_markup_only')
-                    else:
-                        self.bench.mark('turn_skipped_backchannel')
-                elif kind == 'error':
-                    raise RuntimeError('Voice pipeline failed')
+            done, _ = await asyncio.wait([ready, stopped, *tasks], return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                if task not in (ready, stopped):
+                    await task
+            if stopped in done:
+                return
+            if not self._mic_ready.is_set():
+                raise RuntimeError('Microphone startup failed')
+            await self._send(contract.ready(self.session_id, self.guest, self.staff))
+            await self._set_state('listening')
+            tasks.append(asyncio.create_task(self._turn_loop()))
+            done, _ = await asyncio.wait([*tasks, stopped], return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                if task is not stopped:
+                    await task
+                    if not self.ended.is_set():
+                        raise RuntimeError('Pipeline stopped unexpectedly')
         finally:
-            tasks = [mic, turns, watchdog, greeting, stopped]
-            if event_task:
-                tasks.append(event_task)
-            for task in tasks:
+            for task in [*tasks, stopped, ready]:
                 task.cancel()
-            if self.turn:
-                self.turn.cancel()
-                tasks.append(self.turn)
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*tasks, stopped, ready, return_exceptions=True)
+            await self._interrupt()
 
     async def _watchdog(self):
         while not self.ended.is_set():
-            if time.monotonic() >= self.deadline:
-                await self._send(contract.session_ended('conversation_timeout'))
-                self.ended.set()
-                return
-            if not self.room.remote_participants:
+            if self.client_identity not in self.room.remote_participants:
                 self.ended.set()
                 return
             await asyncio.sleep(1)
 
-    async def _pump_mic(self):
-        tracks = []
-        for participant in self.room.remote_participants.values():
-            for publication in participant.track_publications.values():
-                if publication.track and publication.kind == rtc.TrackKind.KIND_AUDIO:
-                    tracks.append(publication.track)
-        if not tracks:
-            event = asyncio.Event()
-            @self.room.on('track_subscribed')
-            def _on_sub(track, publication, participant):
-                if track.kind == rtc.TrackKind.KIND_AUDIO:
-                    tracks.append(track)
-                    event.set()
-            await event.wait()
-        stream = rtc.AudioStream(tracks[0], sample_rate=16000, num_channels=1)
+    async def _capture_mic(self):
+        # Begin bounded capture before provider handshakes, retaining initial
+        # syllables. Overflow is a visible failure, not silent audio omission.
+        stream = rtc.AudioStream(self._mic_track, sample_rate=16000, num_channels=1,
+                                 frame_size_ms=80, capacity=25)
+        self._mic_ready.set()
         try:
-            async for frame_event in stream:
+            async for event in stream:
                 if self.ended.is_set():
-                    break
-                await self.asr.send_audio(bytes(frame_event.frame.data))
-            if not self.ended.is_set():
-                # Do not leave a seemingly active conversation with no microphone.
-                raise RuntimeError('Microphone audio stream ended')
+                    return
+                self._microphone.put_nowait(bytes(event.frame.data))
+            raise RuntimeError('Microphone stream ended')
         finally:
             await stream.aclose()
 
-    async def _turn_loop(self):
+    async def _pump_mic(self):
         while not self.ended.is_set():
-            committed = await self.turns.get()
-            self.turn_count += 1
-            turn = self.turn_count
-            language = (committed.get('language_code') or '').lower()
-            if language not in (self.guest, self.staff):
-                self.bench.mark('turn_uncertain_language', language=language)
-                await self._caption(turn, 'und', committed.get('text', ''), '')
-                continue
-            # A greeting may still be unwinding after barge-in. Do not overlap
-            # two TTS streams or let its cleanup reset the new turn's state.
-            async with self._turn_lock:
-                if self.turn:
-                    self.turn.cancel()
-                    await asyncio.gather(self.turn, return_exceptions=True)
-                self.turn = asyncio.create_task(self._translate(turn, committed.get('text', ''), language,
-                    committed_at=committed.get('_received_monotonic')))
+            frame = await self._microphone.get()
+            await asyncio.wait_for(self.asr.send_audio(frame), timeout=3)
+
+    async def _events(self):
+        while not self.ended.is_set():
+            await self._handle_event(await self.asr.events.get())
+
+    async def _handle_event(self, event):
+        kind = event.get('type')
+        if kind == 'user_turn_taken':
+            await self._interrupt()
+        elif kind in ('closed', 'session_done'):
+            raise RuntimeError('Speech recognition connection closed')
+        elif kind == 'error':
+            if (event.get('recoverable') is True
+                    and event.get('error_type') in ('engine_error', 'invalid_request')):
+                await self._send(contract.error(recovered=True))
+            else:
+                raise RuntimeError('Speech recognition failed')
+        elif kind in ('speech_start', 'draft', 'committed'):
             try:
-                await self.turn
-            except asyncio.CancelledError:
-                if asyncio.current_task().cancelling():
-                    raise
-                self.bench.mark('turn_cancelled', turn=turn)
-            finally:
+                record = self.conversation.accept(event)
+            except ValueError:
+                await self._send(contract.error(recovered=True))
+                return
+            if record:
+                if kind == 'committed':
+                    self.bench.mark('asr_committed')
+                await self._record(record)
+                if kind == 'committed' and record['translation_status'] == 'waiting':
+                    await self._enqueue(record['utterance_id'])
+
+    async def _controls(self):
+        while not self.ended.is_set():
+            await self.resolve(await self.controls.get())
+
+    async def resolve(self, value):
+        """Internal dispatch only; RTC admission authenticates the sender first."""
+        if (not self.conversation or self.ended.is_set() or not isinstance(value, dict)
+                or set(value) != {'type', 'utterance_id', 'revision', 'role'}
+                or value.get('type') != 'translation.resolve'):
+            return False
+        try:
+            record = self.conversation.resolve(value['utterance_id'], value['revision'], value['role'])
+        except (ValueError, KeyError, TypeError):
+            await self._send(contract.error(recovered=True))
+            return False
+        await self._record(record)
+        await self._enqueue(record['utterance_id'])
+        return True
+
+    async def _enqueue(self, ident):
+        if ident in self._queued:
+            return
+        try:
+            self.turns.put_nowait(ident)
+            self._queued.add(ident)
+        except asyncio.QueueFull:
+            await self._record(self.conversation.update(ident, translation_status='error', playback_status='error'))
+            await self._send(contract.error(recovered=True))
+
+    async def _turn_loop(self):
+        # Welcome is outside Conversation and can be interrupted, never replayed.
+        async with self._turn_lock:
+            self.turn = asyncio.create_task(self._output(None))
+        await self._await_turn()
+        while not self.ended.is_set():
+            ident = await self.turns.get()
+            async with self._turn_lock:
+                self._queued.discard(ident)
+                if self.conversation.get(ident)['translation_status'] != 'waiting':
+                    continue
+                self._active_id = ident
+                self.turn = asyncio.create_task(self._output(ident))
+            await self._await_turn()
+
+    async def _await_turn(self):
+        current = self.turn
+        try:
+            await current
+        except asyncio.CancelledError:
+            if asyncio.current_task().cancelling():
+                raise
+        finally:
+            if self.turn is current:
                 self.turn = None
 
-    async def _translate(self, turn: int, text: str, language: str, *, committed_at: float | None = None):
-        if not text.strip():
+    async def _output(self, ident):
+        if self.ended.is_set():
             return
-        await self._set_state('thinking')
-        self.bench.mark('llm_requested', turn=turn)
-        clauses: asyncio.Queue[str | None] = asyncio.Queue()
-        full: list[str] = []
-
-        async def generate():
-            buffer = ''
-            try:
-                async for delta in self._llm.stream(interpreter_prompt(self.guest, self.staff), text):
-                    buffer += delta
-                    full.append(delta)
-                    while (clause := pop_clause(buffer)):
-                        await clauses.put(clause)
-                        buffer = buffer[len(clause):]
-                if buffer.strip():
-                    await clauses.put(buffer)
-            finally:
-                # Wake synthesis even when the model fails; propagate that
-                # failure after playback settles instead of hanging forever.
-                await clauses.put(None)
-
-        producer = asyncio.create_task(generate())
+        self._generation += 1
+        generation = self._generation
+        self._active_generation, self._active_id = generation, ident
+        self._audio_sequence, self._audio_ack = 0, -1
+        self._audio_error = False
+        self._audio_changed.clear()
+        record = self.conversation.get(ident) if ident else None
+        target = record['target_language'] if record else self.guest
+        welcome = contract.greeting(self.guest) if not ident else None
+        clauses = asyncio.Queue(maxsize=8)
+        producer = hint = None
+        failed = False
         try:
-            await self._speak_stream(clauses, turn, committed_at=committed_at)
-            await producer
-            translation = ''.join(full).strip()
-            await self._caption(turn, language, text, translation)
-        finally:
-            producer.cancel()
-            try:
+            self.speaking = self._speaking_hint = True
+            self._last_audio = time.monotonic()
+            hint = asyncio.create_task(self._speaking_watch(generation))
+            await self.asr.agent_speaking(True)
+            if ident:
+                await self._record(self.conversation.update(ident, output_generation=generation,
+                    translation_status='streaming', playback_status='queued'))
+            else:
+                # Repeat readiness immediately before welcome. A client that missed
+                # the first packet must not discard the only greeting.
+                await self._send(contract.ready(self.session_id, self.guest, self.staff))
+                await self._send(contract.welcome(self.session_id, welcome, self.guest, 'queued', generation))
+            await self._set_state('thinking')
+            producer = asyncio.create_task(self._generate(record, welcome, clauses))
+            async with asyncio.timeout(90):
+                await self._speak_stream(clauses, target, generation, ident, welcome, producer)
                 await producer
-            except (asyncio.CancelledError, Exception):
-                pass
+            await self._finish_output(generation, 'complete')
+        except asyncio.CancelledError:
+            await self._finish_output(generation, 'interrupted')
+            raise
+        except Exception:
+            failed = True
+            await self._finish_output(generation, 'error')
+        finally:
+            for task in (producer, hint):
+                if task:
+                    task.cancel()
+            await asyncio.gather(*(task for task in (producer, hint) if task), return_exceptions=True)
+            self.speaking = False
+            if self._speaking_hint:
+                self._speaking_hint = False
+                await self.asr.agent_speaking(False)
+            if not self.ended.is_set():
+                await self._set_state('listening')
+            if failed:
+                await self._send(contract.error(recovered=bool(ident)))
+                if not ident:
+                    self.ended.set()
 
-    async def _speak(self, text: str, *, caption: bool, label: str):
-        queue: asyncio.Queue[str | None] = asyncio.Queue()
-        await queue.put(text)
-        await queue.put(None)
-        await self._speak_stream(queue, 0, label=label)
+    async def _finish_output(self, generation, status):
+        if not generation or generation != self._active_generation:
+            return
+        ident = self._active_id
+        # Fence both record and PCM before any network/provider await. Late
+        # producer callbacks and repeated finally paths cannot revive this turn.
+        self._active_generation, self._active_id = 0, None
+        self._audio_changed.set()
+        record = None
+        if ident:
+            previous = self.conversation.get(ident)['translation_status']
+            translation = previous if previous == 'complete' else {
+                'complete': 'complete', 'interrupted': 'cancelled', 'error': 'error'}[status]
+            record = self.conversation.update(ident, translation_status=translation, playback_status=status)
+        if status != 'complete':
+            self.bench.mark('playback_flushed', generation=generation)
+        await self._send(contract.output(self.session_id, generation, status))
+        if record:
+            await self._record(record)
+        else:
+            await self._send(contract.welcome(self.session_id, contract.greeting(self.guest),
+                                              self.guest, status, generation))
+        self.speaking = False
+        if self._speaking_hint:
+            self._speaking_hint = False
+            await self.asr.agent_speaking(False)
 
-    async def _speak_stream(self, clauses: asyncio.Queue, turn: int, label: str = 'turn',
-                            *, committed_at: float | None = None):
-        self.speaking = True
-        tts = FishTTS(self._fish_key, self._voice)
+    async def _generate(self, record, welcome, clauses):
+        generation = self._active_generation
+
+        async def remember(text):
+            if generation != self._active_generation:
+                raise asyncio.CancelledError
+            current = self.conversation.get(record['utterance_id'])
+            await self._record(self.conversation.update(record['utterance_id'],
+                                                        translation=current['translation'] + text))
+
+        if record is None:
+            await clauses.put(presentation(welcome))
+        elif record['source_language'] == record['target_language']:
+            text = presentation(speech_input(record['original']))
+            await remember(text)
+            await clauses.put(text)
+        else:
+            self.bench.mark('llm_requested', generation=self._active_generation)
+            buffer = ''
+            total = 0
+            async for delta in self._llm.stream(interpreter_prompt(record['source_language'], record['target_language']),
+                                                speech_input(record['original'])):
+                total += len(delta)
+                if total > 8000:
+                    raise RuntimeError('Translation too long')
+                delta = presentation(delta)
+                await remember(delta)
+                buffer += delta
+                while (clause := pop_clause(buffer)):
+                    await clauses.put(clause)
+                    buffer = buffer[len(clause):]
+            if buffer.strip():
+                await clauses.put(buffer)
+        if record is not None:
+            if generation != self._active_generation:
+                raise asyncio.CancelledError
+            await self._record(self.conversation.update(record['utterance_id'], translation_status='complete'))
+        await clauses.put(None)
+
+    async def _speak_stream(self, clauses, target, generation, ident, welcome, producer):
+        tts = FishTTS(self._fish_key, self._voice, language=target)
         feeder = None
-        pause_task = None
-        gate_lock = asyncio.Lock()
-        started_at = committed_at if committed_at is not None else time.monotonic()
-        paused = False
         first = True
-        resampler = None
-        raw = bytearray()
         pcm = bytearray()
+
         async def feed():
-            first_clause = True
-            pending = False
             while True:
                 clause = await clauses.get()
                 if clause is None:
                     break
+                if generation != self._active_generation:
+                    raise asyncio.CancelledError
                 await tts.send_text(clause)
-                pending = True
-                if first_clause:
-                    # Force the first meaningful clause through Fish's text
-                    # buffer without waiting for the entire model response.
-                    await tts.flush()
-                    first_clause = False
-                    pending = False
-            if pending:
                 await tts.flush()
             await tts.finish()
-        async def pause_if_silent(delay: float):
-            nonlocal paused
-            await _wait_for_gate_pause(delay)
-            async with gate_lock:
-                if first:
-                    await self.asr.agent_speaking(False)
-                    paused = True
-                    await self._set_state('thinking')
-                    self.bench.mark('first_audio_wait_paused', turn=turn, label=label)
-        async def start_audio():
-            nonlocal first, paused
-            async with gate_lock:
-                if first:
-                    if paused:
-                        await self.asr.agent_speaking(True)
-                        paused = False
-                        await self._set_state('speaking')
-                    first = False
-                    self.bench.mark('first_audio_published', turn=turn, label=label)
-        try:
-            remaining = FIRST_AUDIO_PAUSE_SECONDS - (time.monotonic() - started_at)
-            if remaining <= 0:
-                # This turn was already delayed by admission/previous cleanup.
-                paused = True
-                await self.asr.agent_speaking(False)
-                await self._set_state('thinking')
-            else:
-                await self._set_state('speaking')
+
+        async def publish(piece):
+            nonlocal first
+            if generation != self._active_generation:
+                raise asyncio.CancelledError
+            if not self._speaking_hint:
+                self._speaking_hint = True
                 await self.asr.agent_speaking(True)
-                # Measured from ASR commitment, including time spent waiting
-                # for model output or opening the TTS websocket.
-                remaining = max(0, FIRST_AUDIO_PAUSE_SECONDS - (time.monotonic() - started_at))
-                pause_task = asyncio.create_task(pause_if_silent(remaining))
-                def pause_done(task):
-                    if not task.cancelled() and task.exception() is not None:
-                        tts.audio.put_nowait(None)
-                pause_task.add_done_callback(pause_done)
+            if first:
+                await self._send(contract.output(self.session_id, generation, 'playing'))
+                if ident:
+                    await self._record(self.conversation.update(ident, playback_status='playing'))
+                else:
+                    await self._send(contract.welcome(self.session_id, welcome, self.guest, 'playing', generation))
+                await self._set_state('speaking')
+                self.bench.mark('first_audio_published', generation=generation)
+                first = False
+            await self._publish_pcm(generation, piece)
+            self._last_audio = time.monotonic()
+
+        try:
             await tts.connect()
             feeder = asyncio.create_task(feed())
-            def feed_done(task):
-                if not task.cancelled() and task.exception() is not None:
-                    tts.audio.put_nowait(None)
-            feeder.add_done_callback(feed_done)
             while True:
-                chunk = await asyncio.wait_for(tts.audio.get(), timeout=30)
+                receiver = asyncio.create_task(tts.audio.get())
+                try:
+                    watched = [receiver]
+                    for task in (producer, feeder):
+                        if task.done():
+                            await task
+                        else:
+                            watched.append(task)
+                    done, _ = await asyncio.wait(watched, timeout=.1, return_when=asyncio.FIRST_COMPLETED)
+                    for task in (producer, feeder):
+                        if task.done():
+                            await task
+                    if receiver not in done:
+                        continue
+                    chunk = receiver.result()
+                finally:
+                    if not receiver.done():
+                        receiver.cancel()
+                        await asyncio.gather(receiver, return_exceptions=True)
                 if chunk is None:
                     break
-                raw.extend(chunk)
-                aligned = len(raw) & ~1
-                if aligned:
-                    converted, resampler = audioop.ratecv(bytes(raw[:aligned]), 2, 1, 24000, 48000, resampler)
-                    del raw[:aligned]
-                    pcm.extend(converted)
-                while len(pcm) >= 960 * 2:
-                    piece = bytes(pcm[:960 * 2])
-                    del pcm[:960 * 2]
-                    frame = rtc.AudioFrame(data=piece, sample_rate=48000, num_channels=1,
-                                           samples_per_channel=960)
-                    if first:
-                        await start_audio()
-                    await self.source.capture_frame(frame)
-            if pause_task and pause_task.done():
-                await pause_task
-            if raw:
-                raise ValueError('Synthesis returned an incomplete PCM sample')
-            if pcm:
-                piece = bytes(pcm) + b'\x00' * (960 * 2 - len(pcm))
-                if first:
-                    await start_audio()
-                await self.source.capture_frame(rtc.AudioFrame(data=piece, sample_rate=48000,
-                    num_channels=1, samples_per_channel=960))
-            if tts.error:
-                raise RuntimeError('Synthesis provider returned an error')
+                # Retain at most one packet between provider chunks, including
+                # odd byte boundaries. No padding or first/last sample loss.
+                view = memoryview(chunk)
+                for offset in range(0, len(view), contract.AUDIO_CHUNK_BYTES):
+                    pcm.extend(view[offset:offset + contract.AUDIO_CHUNK_BYTES])
+                    if len(pcm) >= contract.AUDIO_CHUNK_BYTES:
+                        piece = bytes(pcm[:contract.AUDIO_CHUNK_BYTES])
+                        del pcm[:contract.AUDIO_CHUNK_BYTES]
+                        await publish(piece)
             await feeder
+            if tts.error or len(pcm) % 2:
+                raise RuntimeError('Synthesis failed or incomplete')
+            if pcm:
+                await publish(bytes(pcm))
             if first:
                 raise RuntimeError('Synthesis returned no audio')
-            # Keep the provider's echo/turn gate active until locally queued
-            # audio has played out, not merely until synthesis finishes.
-            await self.source.wait_for_playout()
+            await self._publish_pcm(generation, b'')
+            await self._audio_wait(generation, drain=True)
+            await self._finish_output(generation, 'complete')
+        except asyncio.CancelledError:
+            await self._finish_output(generation, 'interrupted')
+            raise
+        except Exception:
+            await self._finish_output(generation, 'error')
+            raise
         finally:
-            if pause_task:
-                pause_task.cancel()
-                await asyncio.gather(pause_task, return_exceptions=True)
             if feeder:
                 feeder.cancel()
                 await asyncio.gather(feeder, return_exceptions=True)
             await tts.close()
-            self.speaking = False
-            await self.asr.agent_speaking(False)
-            if not self.ended.is_set():
-                await self._set_state('listening')
 
     async def _interrupt(self):
         async with self._turn_lock:
-            if not self.speaking and (not self.turn or self.turn.done()):
-                return
-            self.bench.mark('interrupted')
-            previous = self.turn
-            if previous:
-                previous.cancel()
-            if self.source:
-                self.source.clear_queue()
-                self.bench.mark('playback_flushed')
-            if previous:
-                # Finish the old turn's cleanup before a queued new turn can
-                # set its own echo gate and state. The queue is cleared first.
-                await asyncio.gather(previous, return_exceptions=True)
-            self.speaking = False
-            await self.asr.agent_speaking(False)
-            await self._set_state('listening')
+            # The turn waiter clears self.turn as soon as this task settles.
+            # Keep the exact task: a later self.turn.cancel() can end the session.
+            current = self.turn
+            if current and not current.done():
+                self.bench.mark('interrupted')
+                if not self._active_generation and self._active_id:
+                    ident, self._active_id = self._active_id, None
+                    current.cancel()
+                    await self._record(self.conversation.update(ident,
+                        translation_status='cancelled', playback_status='interrupted'))
+                try:
+                    await self._finish_output(self._active_generation, 'interrupted')
+                finally:
+                    current.cancel()
+                    await asyncio.gather(current, return_exceptions=True)
+            while not self.turns.empty():
+                self.turns.get_nowait()
+            pending, self._queued = self._queued, set()
+            for ident in pending:
+                await self._record(self.conversation.update(ident,
+                    translation_status='cancelled', playback_status='interrupted'))
 
-    async def _caption(self, turn: int, language: str, original: str, translation: str):
-        call_id = f'lk-{self.room_name[-24:]}-{turn}'
-        await self._send(contract.caption(call_id, language, original, translation))
-        self.bench.mark('caption_sent', turn=turn, language=language)
+    async def _record(self, record):
+        await self._send(contract.utterance(record))
+        self.bench.mark('record_sent', revision=record['revision'])
+        if record['translation_status'] == 'complete':
+            self.bench.mark('translation_complete', generation=record['output_generation'])
 
-    async def _send(self, payload: bytes):
-        await self.room.local_participant.publish_data(payload, reliable=True,
-                                                       topic=contract.EVENT_TOPIC)
+    async def _set_state(self, value):
+        await self.room.local_participant.set_attributes(contract.state(value))
+
+    async def _send(self, payload):
+        await self.room.local_participant.publish_data(payload, reliable=True, topic=contract.EVENT_TOPIC)
 
     async def _close(self):
         self.ended.set()
-        if self.asr:
-            await self.asr.close()
-        if self.source:
-            await self.source.aclose()
-            self.source = None
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._close_owned())
+        await asyncio.shield(self._close_task)
+
+    async def _close_owned(self):
+        self._closed = True
+        if self._connect_task:
+            # Even a cancelled Start still owns a possibly successful late
+            # Rust connection. Stop acknowledges only after it is disconnected.
+            await asyncio.gather(self._connect_task, return_exceptions=True)
+        if self._capture_task:
+            self._capture_task.cancel()
+            await asyncio.gather(self._capture_task, return_exceptions=True)
         try:
-            await self.room.disconnect()
+            await self._interrupt()
         except Exception:
-            pass
-        self.bench.mark('session_closed')
-        self.bench.close()
+            LOG.warning('terminal output notification unavailable')
+        if self.conversation:
+            for record in list(self.conversation.records.values()):
+                if record['translation_status'] in ('waiting', 'streaming', 'needs_direction'):
+                    try:
+                        await self._record(self.conversation.update(record['utterance_id'],
+                            translation_status='cancelled', playback_status='interrupted'))
+                    except Exception:
+                        pass
+        try:
+            if self.asr:
+                await self.asr.close()
+        finally:
+            try:
+                await self.room.disconnect()
+            finally:
+                self.bench.mark('session_closed')
+                self.bench.close()

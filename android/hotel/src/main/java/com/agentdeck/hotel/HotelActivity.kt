@@ -6,8 +6,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
-import android.media.AudioManager
-import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -31,7 +29,6 @@ import org.json.JSONObject
 import java.util.UUID
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** Native capture, credentials and gateway ownership; the packaged guest UI has none. */
 class HotelActivity : Activity() {
@@ -41,21 +38,12 @@ class HotelActivity : Activity() {
                      language: String = owner.current?.request?.guest ?: deck.getString("reception_guest_language", "es").orEmpty()): String =
         UiText.text(this, language.takeIf(DeskLanguages::has) ?: "es", message, values)
 
-    private fun updateText(message: String): String {
-        Regex("^Update (.+) is downloaded\\. It will apply when reception is idle\\.$").matchEntire(message)?.let {
-            return text("Update {version} is downloaded. It will apply when reception is idle.", mapOf("version" to it.groupValues[1]))
-        }
-        Regex("^Could not check for updates \\(([a-z ]+), HTTP ([0-9]{3})\\)\\. Tap to retry\\.$").matchEntire(message)?.let {
-            return text("Could not check for updates ({stage}, HTTP {status}). Tap to retry.",
-                mapOf("stage" to it.groupValues[1], "status" to it.groupValues[2]))
-        }
-        return text(message)
-    }
+    private fun updateText(message: String): String =
+        UpdateStatusText.message(message) { id, values -> text(id, values) }
 
     private val owner = SessionOwner()
     private val ui = Handler(Looper.getMainLooper())
-    private val ringing = AtomicBoolean(false)
-    private val fishStore by lazy { SecretStore(this, "fish") }
+    private val translationCredentials by lazy { TranslationCredentials(this) }
     private var updateStatus: String? = null
     private val updater by lazy { Updater(this,
         onStatus = { status -> runOnUiThread { onUpdate(status) } },
@@ -67,7 +55,7 @@ class HotelActivity : Activity() {
             ui.postDelayed(this, 10 * 60_000L)
         }
     }
-    private val fishProvider = lazy { FishVoice(this, { event -> runOnUiThread { forward(event) } }) { fishStore.load().orEmpty().ifBlank { BuildConfig.FISH_API_KEY } } }
+    private val fishProvider = lazy { FishVoice(this, { event -> runOnUiThread { forward(event) } }) { translationCredentials.savedFishKey().orEmpty() } }
     private val fish by fishProvider
     private val hotelConnection by lazy { HotelConnection(this) }
     private var gateway: HotelGateway? = null
@@ -123,6 +111,7 @@ class HotelActivity : Activity() {
 
     private fun backendConfigured() = hotelConnection.load() != null
     private fun guestLocale() = deck.getString("reception_guest_language", "es").orEmpty().takeIf(DeskLanguages::has) ?: "es"
+    private fun capabilityLocale() = owner.current?.takeIf { it.request.mode == "reception" }?.request?.guest ?: guestLocale()
 
     private fun cancelHotelProbe() {
         hotelProbeGeneration++
@@ -133,7 +122,7 @@ class HotelActivity : Activity() {
     /** Configuration is not evidence of authenticated reachability. No operation or microphone is opened. */
     private fun refreshHotelStatus() {
         val connection = hotelConnection.load()
-        val language = guestLocale()
+        val language = capabilityLocale()
         if (connection != hotelIdentity || language != hotelLocale) {
             cancelHotelProbe()
             if (connection != hotelIdentity) { hotelConfigVersion = 0; hotelName = "" }
@@ -153,7 +142,7 @@ class HotelActivity : Activity() {
             hotelStatus = HotelStatus.checking
         val generation = ++hotelProbeGeneration
         val body = JSONObject().put("app_version", BuildConfig.VERSION_NAME).put("config_version", hotelConfigVersion)
-            .put("protocol", 1).put("language", language)
+            .put("protocol", 1).put("language", language).put("capabilities_only", true)
         val request = Request.Builder().url(connection.base.trimEnd('/') + "/api/device/heartbeat")
             .header("Authorization", "Bearer ${connection.token}")
             .post(body.toString().toRequestBody("application/json".toMediaType())).build()
@@ -190,7 +179,7 @@ class HotelActivity : Activity() {
             }
             private fun settle(status: HotelStatus, payload: JSONObject?) = runOnUiThread {
                 if (destroyed || !foreground || generation != hotelProbeGeneration || hotelProbe !== call ||
-                    hotelConnection.load() != connection || guestLocale() != language) return@runOnUiThread
+                    hotelConnection.load() != connection || capabilityLocale() != language) return@runOnUiThread
                 hotelProbe = null
                 hotelStatus = status
                 hotelStatusAt = SystemClock.elapsedRealtime()
@@ -212,7 +201,7 @@ class HotelActivity : Activity() {
     }
 
     private fun hotelBlockReason(action: String? = null): String {
-        if (hotelConnection.load() != hotelIdentity || guestLocale() != hotelLocale ||
+        if (hotelConnection.load() != hotelIdentity || capabilityLocale() != hotelLocale ||
             (hotelStatusAt != 0L && SystemClock.elapsedRealtime() - hotelStatusAt > 30_000L)) {
             hotelStatus = if (backendConfigured()) HotelStatus.checking else HotelStatus.unconfigured
             refreshHotelStatus()
@@ -245,7 +234,7 @@ class HotelActivity : Activity() {
     private fun pushState() {
         val page = reception ?: return
         val configured = backendConfigured()
-        val audioGate = AudioPolicy.blockReason(configured, fishStore.status(), BuildConfig.FISH_API_KEY.isNotBlank(),
+        val audioGate = AudioPolicy.blockReason(configured, translationCredentials.load() != null,
             TranslationSettings(this).directFishSelected, BuildConfig.DISTRIBUTION)
         if (owner.current == null) audioState = fish.localAudioState()
         val audioReady = audioGate.isEmpty()
@@ -255,7 +244,6 @@ class HotelActivity : Activity() {
             .put("sample_hotel", false).put("configured", configured).put("distribution", BuildConfig.DISTRIBUTION)
             .put("state", hotelStatus.name).put("services", safeServices())
             .put("services_supported", hotelServicesSupported)
-            .put("bundled_key_available", BuildConfig.DISTRIBUTION == "personal-test" && BuildConfig.FISH_API_KEY.isNotBlank())
             .put("audio_available", audioReady)
             .put("local_audio_state", audioState)
             .put("audio_gate", if (audioGate.isEmpty()) "" else text(audioGate))
@@ -302,7 +290,7 @@ class HotelActivity : Activity() {
                 }
             }
         }
-        if (type == "caption" && message.optString("field") == "original" && message.optString("text").isNotBlank())
+        if (type == "translation.utterance" && message.optJSONObject("record")?.optString("original")?.isNotBlank() == true)
             lastActivity = SystemClock.elapsedRealtime()
         if (current(lease)) reception?.push(message)
     }
@@ -393,9 +381,9 @@ class HotelActivity : Activity() {
             phase(lease, "ready")
             return
         } else {
-            // The only approved route is the Fish-hosted interpreter; never fall back to another provider.
+            // Application-controlled recognition, direction, translation and synthesis; no hosted fallback.
             engine = Engine.FISH
-            fish.start(request.guest, request.staff, request.mode, request.id, lease.generation, request.greeting)
+            fish.start(request.guest, request.staff, request.mode, request.id, lease.generation)
         }
     }
 
@@ -415,6 +403,7 @@ class HotelActivity : Activity() {
                     val off = audioState == "off"
                     audio(lease, if (off) "off" else "unknown")
                     owner.released(lease, off)
+                    if (lease.request.mode == "reception") refreshHotelStatus()
                     phase(lease, reason, text)
                     finishReleaseActions()
                 }
@@ -433,14 +422,6 @@ class HotelActivity : Activity() {
     }
 
 
-    private fun ringBell() {
-        if (!ringing.compareAndSet(false, true)) return
-        try {
-            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 60)
-            tone.startTone(ToneGenerator.TONE_PROP_ACK, 350)
-            ui.postDelayed({ tone.release(); ringing.set(false) }, 400)
-        } catch (_: Exception) { ringing.set(false) }
-    }
 
     private fun openStaffSetup(voiceOnly: Boolean = false) = stopSession(done = {
         if (!destroyed && foreground) {
@@ -468,6 +449,7 @@ class HotelActivity : Activity() {
 
     private fun onUpdate(status: String) {
         updateStatus = status
+        getSharedPreferences("update_staff_status", MODE_PRIVATE).edit().putString("status", status).apply()
         val page = reception ?: return
         if (BuildConfig.DISTRIBUTION == "hotel") return
         when {
@@ -499,6 +481,8 @@ class HotelActivity : Activity() {
         when (action) {
             "stop", "message", "confirm", "checkin", "operator", "taxi", "question" ->
                 if (!owner.accepts(message.optString("session_id"), message.optInt("generation", -1), duringClose = true)) return
+            "resolve_direction" -> if (!foreground || owner.current?.request?.mode != "translation" ||
+                !owner.accepts(message.optString("session_id"), message.optInt("generation", -1))) return
             "watch_request", "unwatch_request" ->
                 if (!foreground || owner.current?.request?.mode != "reception" ||
                     !owner.accepts(message.optString("session_id"), message.optInt("generation", -1))) return
@@ -524,10 +508,6 @@ class HotelActivity : Activity() {
                     pushState()
                 }
             }
-            "prepare_translation" -> if (foreground && !destroyed && owner.current == null) {
-                fish.prepare(message.optString("language"), message.optString("staff_language"))
-            }
-            "bell" -> ringBell()
             "settings" -> openStaffSetup()
             "voice_setup" -> openStaffSetup(voiceOnly = true)
             "info" -> pushState()
@@ -536,11 +516,12 @@ class HotelActivity : Activity() {
                 val mode = message.optString("mode")
                 val guest = message.optString("language"); val staff = message.optString("staff_language")
                 val validId = runCatching { UUID.fromString(id).toString() == id }.getOrDefault(false)
-                if (!validId || !DeskLanguages.has(guest) || !DeskLanguages.has(staff) || (mode != "translation" && mode != "reception") || (mode == "translation" && guest == staff)) {
-                    notice(text("Choose a supported mode and languages; translation needs two different languages."))
+                if (!validId || !DeskLanguages.has(guest) || !DeskLanguages.has(staff) || (mode != "translation" && mode != "reception") ||
+                    (mode == "translation" && (!SpeechLanguages.has(guest) || !SpeechLanguages.has(staff)))) {
+                    notice(text("Choose supported languages."))
                     return
                 }
-                begin(SessionOwner.Request(id, mode, guest, staff, message.optString("greet")))
+                begin(SessionOwner.Request(id, mode, guest, staff))
             }
             "stop" -> stopSession()
             "message" -> dispatchHotelAction(message)
@@ -560,6 +541,13 @@ class HotelActivity : Activity() {
             "watch_request" -> owner.current?.let { gateway?.watch(it, message.optString("item_id")) }
             "unwatch_request" -> owner.current?.let { gateway?.unwatch(it) }
             "activity" -> lastActivity = SystemClock.elapsedRealtime()
+            "resolve_direction" -> {
+                val id = message.optString("utterance_id")
+                val revision = message.optInt("revision", -1)
+                val role = message.optString("role")
+                if (id.isNotBlank() && id.length <= 256 && revision > 0 && role in setOf("guest", "receptionist"))
+                    fish.resolveDirection(id, revision, role)
+            }
             "mute" -> owner.current?.takeIf { current(it) && it.request.mode == "translation" }
                 ?.let { fish.setMuted(message.optBoolean("muted")) }
             "silence" -> if (owner.current != null) stopSession()
@@ -695,7 +683,6 @@ class HotelActivity : Activity() {
     }
     override fun onPause() {
         foreground = false
-        if (fishProvider.isInitialized()) fish.cancelPreparation()
         ui.removeCallbacks(updatePoll)
         ui.removeCallbacks(hotelPoll)
         cancelHotelProbe()

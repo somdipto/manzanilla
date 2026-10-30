@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 distribution="${ANDROID_QA_DISTRIBUTION:-personal-test}"
 case "$distribution" in
-  personal-test) fixtures=(reception-bridge reception-truth reception-request-tracking microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery hotel-readiness) ;;
-  hotel) fixtures=(reception-bridge reception-truth reception-request-tracking hotel-readiness hotel-setup-gates) ;;
+  personal-test) fixtures=(direct-cleanup-credential reception-bridge reception-truth reception-request-tracking microphone-permission microphone-permission-denied microphone-permission-background translation-startup update-delivery hotel-readiness) ;;
+  hotel) fixtures=(direct-cleanup-credential reception-bridge reception-truth reception-request-tracking hotel-readiness hotel-setup-gates) ;;
   *) echo "Unsupported fixture distribution" >&2; exit 1 ;;
 esac
 evidence="${ANDROID_QA_OUTPUT:-work/android-emulator-qa}"
@@ -39,8 +39,21 @@ run_fixture() {
   timeout 240s adb shell am instrument -w -r -e case "$fixture" \
     dev.orange.hotel.test/com.agentdeck.hotel.VoiceLifecycleFixture | tee "$evidence/$label.txt"
   # adb itself returns zero even when an instrumentation assertion fails.
-  grep -q "PASS case=$fixture " "$evidence/$label.txt"
-  grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$label.txt"
+  if ! grep -q "PASS case=$fixture " "$evidence/$label.txt" ||
+     ! grep -q '^INSTRUMENTATION_CODE: -1' "$evidence/$label.txt"; then
+    # An uncaught exception in this instrumentation process, which also hosts
+    # the target app, reports only "Process crashed." Keep the bounded crash
+    # buffer (exception class, message and top frames) and echo it to the job
+    # log so the cause is visible without downloading artifacts.
+    adb logcat -d -b crash -t 60 2>/dev/null | tail -50 > "$evidence/$label-crash.txt" || true
+    if [[ ! -s "$evidence/$label-crash.txt" ]]; then
+      adb shell dumpsys dropbox --print data_app_crash 2>/dev/null | tail -50 > "$evidence/$label-crash.txt" || true
+    fi
+    echo "--- bounded crash evidence: $label ---"
+    cat "$evidence/$label-crash.txt" || true
+    echo "--- end crash evidence ---"
+    return 1
+  fi
 }
 for fixture in "${fixtures[@]}"; do
   run_fixture "$fixture"

@@ -51,4 +51,17 @@ class ReceptionBridgeTest {
         assertNull(ReceptionBridge.decode("{\"action\":\"execute_script\"}"))
         assertNotNull(ReceptionBridge.decode("{\"action\":\"confirm\",\"approved\":false}"))
     }
+
+    @Test fun directionControlsCarryOnlyAnExactRecordReference() {
+        val control = JSONObject().put("action", "resolve_direction")
+            .put("session_id", "00000000-0000-4000-8000-000000000001").put("generation", 4)
+            .put("utterance_id", "asr-session:7").put("revision", 3).put("role", "guest")
+        assertNotNull(ReceptionBridge.decode(control.toString()))
+        assertNull(ReceptionBridge.decode(JSONObject(control.toString()).put("text", "injected").toString()))
+        assertNull(ReceptionBridge.decode(JSONObject(control.toString()).put("revision", 3.5).toString()))
+        assertNull(ReceptionBridge.decode(JSONObject(control.toString()).put("role", "assistant").toString()))
+        assertNull(ReceptionBridge.decode(JSONObject(control.toString()).put("generation", -1).toString()))
+        assertNull(ReceptionBridge.decode("{\"action\":\"prepare_translation\"}"))
+        assertNull(ReceptionBridge.decode("{\"action\":\"bell\"}"))
+    }
 }
