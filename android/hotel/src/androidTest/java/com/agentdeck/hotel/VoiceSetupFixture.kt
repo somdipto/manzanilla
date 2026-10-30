@@ -137,9 +137,15 @@ internal object VoiceSetupFixture {
             test.runOnMainSync {
                 @Suppress("UNCHECKED_CAST")
                 val inputs = fields.get(setup) as List<EditText>
+                val masked = inputs.map { it.transformationMethod != null }
+                val identities = inputs.map { it.contentDescription?.toString() }
                 check(inputs.size == 3) { "Personal setup must own Fish, Gemini and voice ID fields only" }
-                check(inputs.take(2).all { it.transformationMethod != null })
-                check(inputs[2].transformationMethod == null)
+                check(inputs.take(2).all { it.transformationMethod != null }) {
+                    "Key fields must be masked; masked=$masked identities=$identities"
+                }
+                check(inputs[2].transformationMethod == null) {
+                    "Voice field must stay unmasked; masked=$masked identities=$identities"
+                }
                 lengths = inputs.map { it.text.length }
             }
             return lengths
